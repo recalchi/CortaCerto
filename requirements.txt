@@ -1,0 +1,4 @@
+moviepy>=2.0.0
+pydub>=0.25.0
+speechrecognition>=3.10.0
+
