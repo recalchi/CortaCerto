@@ -1,4 +1,4 @@
-# Editor de Vídeo Automático
+# CortaCerto
 
 Um programa Python com interface gráfica para edição automática de vídeos que remove pausas longas e erros de fala prolongados.
 
@@ -7,24 +7,32 @@ Um programa Python com interface gráfica para edição automática de vídeos q
 - **Remoção automática de silêncios**: Remove pausas longas (configurável, padrão > 1 segundo)
 - **Detecção de erros de fala**: Remove segmentos muito curtos que podem ser erros como "eeeeh", "aah", etc.
 - **Aceleração por GPU (NVIDIA NVENC)**: Opção para usar a placa de vídeo NVIDIA para codificação de vídeo, acelerando o processo (requer FFmpeg com suporte a NVENC).
-- **Interface gráfica intuitiva**: Seleção fácil de arquivos e configurações
-- **Barra de progresso**: Acompanhe o processamento em tempo real
-- **Preservação de qualidade**: Mantém a qualidade original do vídeo
+- **Interface gráfica intuitiva**: Seleção fácil de arquivos e configurações, com um **terminal minimizado para logs**, **cálculo de tempo estimado para conclusão (ETA)** e **tema escuro** para melhor visualização.
+- **Botão de Cancelar**: Permite interromper o processamento a qualquer momento.
+- **Preservação de fala suave**: Adiciona um pequeno "padding" (margem) nos segmentos de fala para evitar cortes abruptos em palavras faladas mais baixo.
 - **Configurações ajustáveis**: Threshold de silêncio e duração mínima personalizáveis
 
 ## Requisitos do Sistema
 
-### Python
-- Python 3.7 ou superior
+- Python 3.x
+- **FFmpeg**: Essencial para processamento de vídeo e áudio. Veja as instruções de instalação abaixo.
 
-### Bibliotecas Python Necessárias
-```bash
-pip install moviepy pydub tkinter speechrecognition
-```
+### Instalação do FFmpeg (Windows)
 
-### Dependências Externas
-- **FFmpeg**: Instalado automaticamente pelo MoviePy na primeira execução
-- **FFplay**: Para preview de vídeo (opcional)
+1.  **Baixe o FFmpeg**: Acesse [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html), clique no ícone do Windows e baixe uma versão `release full` (por exemplo, de `BtbN`).
+2.  **Extraia os arquivos**: Descompacte o arquivo `.zip` para um local de fácil acesso, como `C:\ffmpeg`. Certifique-se de que a pasta `bin` (ex: `C:\ffmpeg\bin`) esteja dentro do diretório extraído.
+3.  **Adicione ao PATH do Windows**: 
+    *   Pressione `Win + R`, digite `sysdm.cpl` e Enter.
+    *   Vá para `Avançado` > `Variáveis de Ambiente...`.
+    *   Em `Variáveis do sistema`, selecione `Path` e clique em `Editar...`.
+    *   Clique em `Novo` e adicione o caminho completo para a pasta `bin` do FFmpeg (ex: `C:\ffmpeg\bin`).
+    *   Clique `OK` em todas as janelas.
+4.  **Verifique**: Abra um **novo** Prompt de Comando ou PowerShell e digite `ffmpeg -version`. Se a instalação estiver correta, você verá as informações da versão.
+
+### Instalação do FFmpeg (Linux/macOS)
+
+- **Linux (Ubuntu/Debian)**: `sudo apt update && sudo apt install ffmpeg`
+- **macOS (Homebrew)**: `brew install ffmpeg`
 
 ## Instalação
 
@@ -153,4 +161,10 @@ Para problemas ou dúvidas:
 ## Licença
 
 Este programa é fornecido como está, para uso educacional e pessoal.
+
+
+
+### Padding de Áudio
+- **Valor padrão**: 150 milissegundos
+- **Descrição**: Adiciona uma pequena margem (padding) no início e no final de cada segmento de fala para evitar cortes abruptos em palavras faladas mais baixo. Ajuste este valor se ainda notar cortes indesejados ou se o vídeo final estiver muito longo devido a inclusão de silêncios curtos.
 
