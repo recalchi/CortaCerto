@@ -132,16 +132,34 @@ class ContentForgeApp:
             btn.grid(row=2 + i, column=0, padx=10, pady=2)
             self._nav[key] = btn
 
-        # GPU label at bottom
+        # GPU + segmentation backend labels at bottom
+        sb.grid_rowconfigure(10, weight=0)
         self._gpu_lbl = ctk.CTkLabel(sb, text="GPU: detectando…",
                                       text_color="gray40", font=ctk.CTkFont(size=10))
-        self._gpu_lbl.grid(row=9, column=0, padx=12, pady=(0, 14), sticky="sw")
+        self._gpu_lbl.grid(row=9, column=0, padx=12, pady=(0, 2), sticky="sw")
+        self._seg_lbl = ctk.CTkLabel(sb, text="Seg: detectando…",
+                                      text_color="gray40", font=ctk.CTkFont(size=10))
+        self._seg_lbl.grid(row=10, column=0, padx=12, pady=(0, 14), sticky="sw")
+        self.root.after(800,  self._detect_seg_label)
         self.root.after(1500, self._detect_gpu_label)
 
     def _detect_gpu_label(self) -> None:
         def _task():
             lbl = encoder_label()
-            self.root.after(0, lambda: self._gpu_lbl.configure(text=f"Encoder: {lbl}"))
+            self.root.after(0, lambda: self._gpu_lbl.configure(text=f"GPU: {lbl}"))
+        threading.Thread(target=_task, daemon=True).start()
+
+    def _detect_seg_label(self) -> None:
+        def _task():
+            try:
+                from ..core.segmentation import get_backend
+                backend = get_backend()
+                colors = {"rembg": "#44cc88", "mediapipe": "#6699dd", "grabcut": "gray50"}
+                color  = colors.get(backend, "gray50")
+                self.root.after(0, lambda: self._seg_lbl.configure(
+                    text=f"Seg: {backend}", text_color=color))
+            except Exception:
+                pass
         threading.Thread(target=_task, daemon=True).start()
 
     def _build_content(self) -> None:
@@ -816,12 +834,19 @@ class ContentForgeApp:
             m, sec = divmod(int(s), 60)
             return f"{m:02d}:{sec:02d}"
 
+        try:
+            from ..core.segmentation import get_backend as _seg_backend
+            seg_backend = _seg_backend()
+        except Exception:
+            seg_backend = "n/a"
+
         lines: list[str] = [
             "── ESTATÍSTICAS ──────────────────────────────────",
             f"  Original:          {fmt(result.original_duration_s)}",
             f"  Final:             {fmt(result.final_duration_s)}",
             f"  Removido:          {fmt(result.silence_removed_s)}  ({result.compression_pct:.1f}%)",
             f"  Produção:          {fmt(result.production_time_s)}",
+            f"  Segmentação:       {seg_backend}",
         ]
         if result.render_stats:
             rs = result.render_stats
