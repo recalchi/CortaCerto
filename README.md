@@ -1,189 +1,259 @@
-# ContentForge — Editor de Vídeo Automatizado
+# ContentForge
 
-**ContentForge** é um software de produção de conteúdo para redes sociais que automatiza as etapas mais repetitivas da edição: corte de silêncios, color grade, efeitos de zoom, transições, geração de thumbnail e muito mais.
+Editor de vídeo profissional para criadores de conteúdo — YouTube, Instagram Reels, TikTok e Shorts.
 
----
-
-## 📦 Requisitos
-
-| Componente | Versão mínima | Link |
-|---|---|---|
-| Python | 3.9+ (testado em 3.14) | [python.org](https://www.python.org/downloads/) |
-| ffmpeg | 6.0+ | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) ou `winget install Gyan.FFmpeg` |
-
-> ⚠️ **ffmpeg deve estar no PATH do sistema.** O instalador verifica isso automaticamente.
+Corte automático de silêncios, color grade CapCut, bokeh de fundo, e geração de thumbnails com segmentação de pessoa.
 
 ---
 
-## 🚀 Instalação rápida (Windows)
+## Requisitos
+
+| Requisito | Versão mínima |
+|---|---|
+| Python | 3.10+ (testado em 3.14) |
+| ffmpeg | 6.0+ (instalado via winget) |
+| GPU NVIDIA | Opcional — usa NVENC se disponível |
+
+---
+
+## Instalação
+
+### 1. Clonar / baixar o projeto
 
 ```bat
-# 1. Clone ou extraia o projeto
-# 2. Execute o instalador:
+git clone https://github.com/seu-usuario/ContentForge.git
+cd ContentForge
+```
+
+### 2. Instalar dependências
+
+```bat
 install.bat
 ```
 
-O instalador:
-1. Verifica se Python e ffmpeg estão instalados
-2. Cria um ambiente virtual (`venv/`)
-3. Instala as dependências Python
-4. Detecta a GPU disponível (NVIDIA / AMD / Intel)
+O script detecta e instala o ffmpeg automaticamente (winget), depois instala os pacotes Python.
 
-### Instalação manual
+Ou manualmente:
 
 ```bat
-python -m venv venv
-venv\Scripts\activate
+winget install --id Gyan.FFmpeg
 pip install -r requirements.txt
+```
+
+### 3. Rodar
+
+```bat
+run.bat
+```
+
+Ou direto:
+
+```bat
 python main.py
 ```
 
 ---
 
-## ▶️ Como usar
+## Estrutura de arquivos
 
-### 1. Início
-- Clique em **Escolher vídeo…** e selecione seu arquivo (MP4, MOV, AVI, MKV, WebM)
-- Preencha o **título da thumbnail** (ou deixe em branco para usar o nome do arquivo)
-- Escolha a **plataforma de destino** (YouTube, Reels, TikTok, Shorts)
-- Opcionalmente, adicione uma **música de fundo** (MP3, WAV, AAC)
+```
+ContentForge/
+├── main.py                    ponto de entrada
+├── run.bat                    atalho de execução
+├── install.bat                instalação rápida
+├── setup_ml_env.bat           instala stack ML (Python 3.11 + rembg + MediaPipe)
+├── requirements.txt           dependências base
+├── requirements-ml.txt        dependências ML (opcional)
+│
+└── src/
+    ├── config.py              ProcessingConfig, Platform, presets de plataforma
+    ├── pipeline.py            orquestrador principal
+    ├── ffmpeg_env.py          detecção de ffmpeg + encoder GPU (NVENC/AMF/QSV)
+    │
+    ├── core/
+    │   ├── analyzer.py        detecção de silêncios via ffmpeg silencedetect
+    │   ├── editor.py          corte, color grade, bokeh, loudnorm EBU R128
+    │   ├── color_grade.py     presets de cor (CapCut, Cinematic, Neutral)
+    │   ├── frame_scoring.py   seleção de frames (face + nitidez + composição)
+    │   ├── segmentation.py    recorte de pessoa (rembg / MediaPipe / GrabCut)
+    │   ├── thumbnail.py       geração de thumbnail básica
+    │   ├── thumbnail_pro.py   engine profissional (5 temas, glow, tipografia)
+    │   └── process_manager.py registro centralizado de processos ffmpeg
+    │
+    └── ui/
+        └── app.py             interface CustomTkinter (dark theme)
+```
 
-### 2. Configurações
-Acesse a aba **Configurações** para ajustar:
+---
 
-| Parâmetro | Padrão | Descrição |
+## Como usar
+
+### Fluxo básico
+
+1. Abrir — `run.bat` ou `python main.py`
+2. Escolher vídeo — clique em "Escolher vídeo…"
+3. Configurar — ajuste silêncio, plataforma, música de fundo
+4. Cor & Efeitos — color grade e bokeh com preview em tempo real
+5. Processar — clique em "▶ Processar Vídeo"
+6. Resultado — veja as 5 thumbnails, escolha a principal, abra a pasta
+
+### Arquivos gerados
+
+Salvos em `ContentForge_output/` na mesma pasta do vídeo original:
+
+| Arquivo | Descrição |
+|---|---|
+| `{nome}_editado.mp4` | Vídeo com silêncios removidos + cor + bokeh |
+| `{nome}_vertical.mp4` | Versão 9:16 para Reels / TikTok / Shorts |
+| `{nome}_thumb_1.jpg` … `_5.jpg` | 5 thumbnails profissionais |
+
+---
+
+## Configurações
+
+### Detecção de silêncios
+
+| Modo | Pausa mínima | Quando usar |
 |---|---|---|
-| Estilo de corte | Natural (900ms) | Agressivo corta mais; Leve mantém pausas |
-| Limiar de silêncio | -40 dBFS | Mais negativo = detecta silêncios mais suaves |
-| Padding de áudio | 150ms | Margem antes/depois de cada fala |
+| Agressivo | ≥ 600 ms | Vídeos bem editados, cortes precisos |
+| Natural | ≥ 900 ms | Padrão — mantém pausas naturais de fala |
+| Leve | ≥ 1400 ms | Remove só silêncios muito longos |
 
-### 3. Cor & Áudio
-Preset padrão baseado no CapCut de referência:
-- **Temperatura** -10 (tom mais frio/azulado)
-- **Matiz** -15
-- **Saturação** +10
-- **Contraste** +10, **Brilho** +10
-- **Sombras** -5, **Brancos** +10, **Pretos** -5
-- **Nitidez** +5
-- **Redução de ruído** ativada (afftdn)
-- **Volume da voz** 1.8× (compensa gravações baixas)
+**Limiar (dBFS):** `-40` é o padrão. Use `-50` se estiver cortando demais; `-30` se cortar pouco.
 
-### 4. Processamento
-A barra de progresso mostra o segmento atual e o tempo estimado restante. O botão **Cancelar** interrompe imediatamente o processo ffmpeg em execução.
+### Color Grade — preset CapCut padrão
 
-### 5. Resultado
-- **5 variações de thumbnail** geradas em frames diferentes — clique para selecionar a melhor
-- Estatísticas de produção: duração original × final, % removido, tempo de render, encoder usado
-- Botão para abrir a pasta de saída diretamente
-
----
-
-## 🗂️ Estrutura de arquivos gerados
-
-```
-ContentForge_output/
-├── nome_editado.mp4          ← vídeo editado (silêncio removido + efeitos)
-├── nome_vertical.mp4         ← versão 9:16 (se habilitado)
-├── nome_thumb_1.jpg          ← thumbnail — frame 10%
-├── nome_thumb_2.jpg          ← thumbnail — frame 25%
-├── nome_thumb_3.jpg          ← thumbnail — frame 40%
-├── nome_thumb_4.jpg          ← thumbnail — frame 55%
-└── nome_thumb_5.jpg          ← thumbnail — frame 70%
-```
-
----
-
-## 🎞️ Efeitos aplicados automaticamente
-
-| Efeito | Frequência | Descrição |
+| Parâmetro | Valor | Efeito |
 |---|---|---|
-| Zoom estático 1.06× | A cada 4° segmento | Aproxima levemente a cena |
-| Fade de abertura | Primeiro segmento | 0.5s fade-in |
-| Fade de fechamento | Último segmento | 0.6s fade-out |
-| Transição suave | Em ~75% e penúltimo segmento | Fade-out/in de 0.4s |
+| Temperatura | -10 | Ligeiramente mais frio / azulado |
+| Matiz | -15 | Desloca levemente para ciano |
+| Saturação | +10 | Cores mais vivas |
+| Contraste | +10 | Mais definição |
+| Brilho | +10 | Imagem um pouco mais clara |
+| Sombras | -5 | Sombras mais profundas |
+| Brancos | +10 | Altas luzes mais abertas |
+| Pretos | -5 | Pretos mais escuros |
+| Nitidez | +5 | Leve sharpening |
+
+Presets disponíveis: **CapCut ref**, **Cinematico**, **Neutro**. Salve seus próprios na tela Cor & Efeitos.
+
+### Bokeh (desfoque de fundo)
+
+Desfoca o fundo mantendo a pessoa nítida, usando detecção de face para centrar a máscara.
+
+| Intensidade | Resultado |
+|---|---|
+| 0% | Desativado |
+| 20–40% | Efeito sutil, cinematográfico |
+| 60–100% | Desfoque forte / retrato |
+
+### Thumbnails
+
+5 variações automáticas com temas: **Ocean**, **Fire**, **Purple**, **Gold**, **Noir**.
+
+Cada thumbnail usa o melhor frame do vídeo selecionado por:
+- Presença e tamanho do rosto (40%)
+- Nitidez (30%)
+- Composição — regra dos terços (20%)
+- Brilho adequado (10%)
 
 ---
 
-## ⚡ GPU / Performance
+## Encoder de vídeo
 
-O ContentForge detecta automaticamente a melhor forma de codificar:
+Detectado automaticamente na inicialização:
 
-| Encoder | GPU necessária | Velocidade |
+| Encoder | Hardware | Velocidade |
 |---|---|---|
-| `h264_nvenc` | NVIDIA (GeForce/Quadro) | 5-10× mais rápido que CPU |
-| `h264_amf` | AMD (Radeon RX) | 3-5× mais rápido |
-| `h264_qsv` | Intel (UHD/Iris Xe) | 2-4× mais rápido |
-| `libx264` | CPU (fallback) | Referência |
+| `h264_nvenc` | NVIDIA GPU | ★★★★★ |
+| `h264_amf` | AMD GPU | ★★★★☆ |
+| `h264_qsv` | Intel GPU | ★★★★☆ |
+| `libx264` | CPU (fallback) | ★★★☆☆ |
 
-O encoder detectado é exibido na barra lateral e nos logs de processamento.
-
----
-
-## 🖼️ Layout de thumbnail
-
-```
-┌─────────────────────────────────────────────────────┐
-│                                    │                 │
-│  [texto grande em maiúsculo]       │   [pessoa]      │
-│  com gradiente colorido            │   bem visível   │
-│  atrás do texto                    │   sem cobertura │
-│                                    │                 │
-│  [subtítulo menor]                 │                 │
-└─────────────────────────────────────────────────────┘
-Zona escura/blur (esquerda)    Zona brilhante (direita)
-```
-
-Temas disponíveis: `dark` (azul), `fire` (laranja/vermelho), `gold` (dourado), `purple` (roxo)
+O encoder ativo aparece na sidebar (canto inferior esquerdo).
 
 ---
 
-## 🔧 Arquitetura do projeto
+## Stack ML — segmentação de alta qualidade (opcional)
 
+Por padrão o app usa **GrabCut** (OpenCV) para recortar a pessoa nas thumbnails.
+Para qualidade superior instale o stack ML:
+
+```bat
+setup_ml_env.bat
 ```
-CortaCerto/
-├── main.py                  ← ponto de entrada
-├── requirements.txt
-├── run.bat                  ← atalho para iniciar sem ativar venv
-├── install.bat              ← instalador Windows
-├── src/
-│   ├── config.py            ← ProcessingConfig, Platform, SilenceStyle
-│   ├── pipeline.py          ← orquestra todos os passos
-│   ├── ffmpeg_env.py        ← resolução de PATH + detecção de GPU
-│   ├── core/
-│   │   ├── analyzer.py      ← detecção de silêncio via ffmpeg silencedetect
-│   │   ├── editor.py        ← corte, efeitos, áudio (tudo via ffmpeg subprocess)
-│   │   ├── color_grade.py   ← preset CapCut → filtro ffmpeg -vf
-│   │   └── thumbnail.py     ← geração de thumbnail (Pillow, duas camadas)
-│   └── ui/
-│       └── app.py           ← interface CustomTkinter
-└── installer/
-    ├── setup.iss            ← script Inno Setup
-    └── build_installer.bat  ← compila o instalador
+
+Isso instala Python 3.11 + **rembg** (U2Net ONNX) + MediaPipe numa venv separada (`venv311/`).
+
+Para usar com ML ativo:
+
+```bat
+venv311\Scripts\python.exe main.py
+```
+
+O backend aparece na sidebar:
+
+- Verde **rembg** — melhor qualidade (modelo U2Net, ~170 MB download na primeira execução)
+- Azul **mediapipe** — rápido, boa qualidade para talking-head
+- Cinza **grabcut** — padrão sem dependências extras
+
+---
+
+## Áudio
+
+Normalização **EBU R128** automática (`loudnorm I=-16 TP=-1.5 LRA=11`) — padrão do YouTube e Netflix. Garante volume consistente sem clipping em qualquer microfone.
+
+Redução de ruído com `afftdn` (FFT noise gate -25 dBFS) ativada por padrão.
+
+---
+
+## Problemas comuns
+
+**"ffmpeg não encontrado"**
+
+```bat
+winget install --id Gyan.FFmpeg
+```
+
+Feche e reabra o terminal. Se persistir, o `install.bat` faz a busca automática.
+
+**Silêncio cortando demais / de menos**
+
+Ajuste o limiar na tela Configurações:
+- Cortando demais → use `-50 dBFS` ou modo Leve
+- Cortando pouco → use `-35 dBFS` ou modo Agressivo
+
+**Thumbnail sem a pessoa recortada corretamente**
+
+Garanta que o rosto apareça nos primeiros 30 segundos do vídeo.
+Para melhor qualidade: `setup_ml_env.bat`
+
+**Processamento lento (sem GPU)**
+
+Verifique na sidebar: se mostrar "CPU (x264)" em vez de "NVIDIA NVENC":
+1. Atualize drivers NVIDIA
+2. Reinstale ffmpeg: `winget upgrade --id Gyan.FFmpeg`
+
+**Erro com arquivo .MOV (iPhone)**
+
+Suportado nativamente. Se falhar converta primeiro:
+
+```bat
+ffmpeg -i entrada.MOV -c copy saida.mp4
 ```
 
 ---
 
-## ❓ Problemas comuns
+## Roadmap
 
-### ffmpeg não encontrado
-```
-Instale via: winget install --id Gyan.FFmpeg
-Abra um NOVO terminal após instalar.
-```
-
-### Vídeo de iPhone (HEVC/H.265)
-Suportado nativamente. O ContentForge usa `-hwaccel auto` para decodificação acelerada por hardware.
-
-### Processamento lento mesmo com GPU
-1. Verifique o encoder na barra lateral — se exibir `CPU (x264)`, a GPU não foi detectada
-2. Atualize os drivers da placa de vídeo
-3. Confirme que ffmpeg foi compilado com suporte NVENC/AMF: `ffmpeg -encoders | findstr nvenc`
-
-### Áudio muito alto após processamento
-Reduza o **Volume da voz** na aba "Cor & Áudio" (padrão: 1.8×)
-
----
-
-## 📋 Licença
-
-Uso pessoal. ffmpeg é distribuído sob licença LGPL/GPL — veja [ffmpeg.org/legal](https://ffmpeg.org/legal.html).
+- [x] Corte de silêncios (ffmpeg silencedetect)
+- [x] Encoder GPU — NVENC / AMF / QSV
+- [x] Color grade CapCut + bokeh face-aware
+- [x] Normalização EBU R128 (sem clipping)
+- [x] Thumbnails profissionais — 5 temas
+- [x] Segmentação multi-backend (GrabCut / MediaPipe / rembg)
+- [x] ProcessManager — limpeza garantida de processos ffmpeg
+- [ ] Segmentação por frame com optical flow anti-flickering
+- [ ] Timeline drag-and-drop (Electron + React + PixiJS)
+- [ ] Preview em tempo real (WebCodecs)
+- [ ] Multi-track — FastAPI backend + Yjs undo/redo

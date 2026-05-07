@@ -1,47 +1,53 @@
 @echo off
+setlocal enabledelayedexpansion
+title ContentForge — Instalacao
 echo ============================================================
-echo  ContentForge — Instalador
+echo  ContentForge — Instalacao rapida
 echo ============================================================
 echo.
 
+:: ── Python ───────────────────────────────────────────────────────────────────
 where python >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERRO] Python nao encontrado. Instale em https://python.org
-    pause
-    exit /b 1
+    echo [ERRO] Python nao encontrado.
+    echo Instale em: https://python.org ^(marque "Add to PATH"^)
+    pause & exit /b 1
 )
+for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo Python: %%v
 
-where ffmpeg >nul 2>&1
+:: ── ffmpeg ────────────────────────────────────────────────────────────────────
+echo.
+echo Verificando ffmpeg...
+python -c "from src.ffmpeg_env import ensure_ffmpeg; p=ensure_ffmpeg(); print('ffmpeg:', p)" 2>nul
 if %errorlevel% neq 0 (
-    echo [AVISO] ffmpeg nao encontrado no PATH.
-    echo.
-    echo  Instale o ffmpeg:
-    echo  1. Acesse: https://www.gyan.dev/ffmpeg/builds/
-    echo     Baixe "ffmpeg-release-essentials.zip"
-    echo  2. Extraia para C:\ffmpeg
-    echo  3. Adicione C:\ffmpeg\bin ao PATH do sistema:
-    echo     Win+R > sysdm.cpl > Avancado > Variaveis de Ambiente
-    echo     Em "Path" do sistema, adicione: C:\ffmpeg\bin
-    echo  4. Reinicie este terminal e execute install.bat novamente
-    echo.
-    pause
-    exit /b 1
+    echo [AVISO] ffmpeg nao encontrado automaticamente.
+    echo Instalando via winget...
+    winget install --id Gyan.FFmpeg --silent --accept-source-agreements --accept-package-agreements
+    if %errorlevel% neq 0 (
+        echo.
+        echo [ERRO] Instalacao automatica falhou.
+        echo Instale manualmente: winget install --id Gyan.FFmpeg
+        echo Ou baixe em: https://www.gyan.dev/ffmpeg/builds/
+        pause & exit /b 1
+    )
 )
 
+:: ── Dependencias Python ───────────────────────────────────────────────────────
+echo.
 echo [1/2] Instalando dependencias Python...
 pip install -r requirements.txt
 if %errorlevel% neq 0 (
     echo [ERRO] Falha ao instalar dependencias.
-    pause
-    exit /b 1
+    pause & exit /b 1
 )
 
 echo.
 echo [2/2] Instalacao concluida!
 echo.
-echo  Para iniciar o ContentForge:
-echo      python main.py
+echo  ╔══════════════════════════════════════════╗
+echo  ║  Para iniciar:  python main.py           ║
+echo  ║  Ou clique em:  run.bat                  ║
+echo  ║  Stack ML:      setup_ml_env.bat         ║
+echo  ╚══════════════════════════════════════════╝
 echo.
 pause
-
-

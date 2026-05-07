@@ -1,8 +1,4 @@
 customtkinter>=5.2.0
 Pillow>=10.0.0
 opencv-python-headless>=4.8.0
-
-# System dependency (must be installed separately):
-# ffmpeg — https://ffmpeg.org/download.html
-# Add ffmpeg to PATH after installation.
-
+numpy>=1.26.0
