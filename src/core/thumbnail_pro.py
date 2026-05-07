@@ -3,7 +3,8 @@ Professional YouTube-style thumbnail engine (v2).
 
 Pipeline (per frame):
   1. Score & pick best frames (frame_scoring.py)
-  2. Segment subject with GrabCut (segmentation.py)
+  2. Segment subject via best available backend (segmentation.py):
+       rembg (U2Net ONNX) > MediaPipe > GrabCut fallback
   3. Build artistic background:
        original heavily-blurred + diagonal gradient overlay + vignette
   4. Enhance subject:
@@ -12,8 +13,6 @@ Pipeline (per frame):
   6. Compose left-side text block:
        big bold uppercase + black stroke + drop shadow
   7. Variant generator: 5 versions with rotated themes / zoom / accent colors
-
-Designed to run on Python 3.14 with only OpenCV + Pillow (no MediaPipe / YOLO).
 """
 from __future__ import annotations
 
@@ -29,7 +28,7 @@ from PIL import (
 )
 
 from .frame_scoring  import FrameScore, select_best_frames
-from .segmentation   import segment_person
+from .segmentation   import segment_person, get_backend as _seg_backend
 from .thumbnail      import _extract_frame, _load_font   # reuse helpers
 
 
@@ -98,8 +97,9 @@ def generate_thumbnails_pro(
     """
     os.makedirs(output_dir, exist_ok=True)
 
+    backend = _seg_backend()
     if on_progress:
-        on_progress("Selecionando melhores frames…")
+        on_progress(f"Selecionando melhores frames… [segmentação: {backend}]")
 
     candidates: list[FrameScore] = select_best_frames(
         video_path, count=max(count, 5),
