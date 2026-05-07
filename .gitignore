@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# PyInstaller
+*.spec.bak
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project outputs (large generated files)
+output/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.ico
+
+# Logs and temp
+*.log
+*.tmp
+tmp/
+
+# Secrets / config overrides
+*.env
+config_local.py
+presets.json
