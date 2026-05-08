@@ -14,15 +14,15 @@ from typing import Callable, Optional
 
 from .config import ProcessingConfig, PRESETS
 from .core.analyzer import analyze_video, AudioAnalysis
+from .core.effect_renderer import render_effects_pass
 from .core.editor import (
     cut_silence, convert_to_vertical,
-    get_video_duration, RenderStats, CancelledError,
+    get_video_duration, RenderStats, CancelledError, _mix_music,
 )
-from .core.thumbnail import (
-    generate_thumbnail, generate_multi_thumbnails,
-    detect_person_from_video,
-)
+from .core.process_manager import ProcessManager
+from .core.thumbnail import detect_person_from_video
 from .core.thumbnail_pro import generate_thumbnails_pro
+from .ffmpeg_env import ffmpeg
 
 
 @dataclass
@@ -78,26 +78,26 @@ def run_pipeline(
 
         # ── 1b. Face/person detection (used for bokeh + thumbnail layout) ───
         if config.bokeh_intensity >= 0.05 or config.generate_thumbnail:
-            prog("Detectando pessoa na cena…", 0.02)
+            prog("[1/6] Detectando sujeito na cena...", 0.02)
             fx, fy, fs = detect_person_from_video(video_path, at_second=5.0)
             config.face_x    = fx
             config.face_y    = fy
             config.face_size = fs
-            prog(f"Pessoa detectada em x={fx:.2f} y={fy:.2f} (tamanho {fs:.2f})", 0.03)
+            prog(f"[1/6] Sujeito detectado em x={fx:.2f} y={fy:.2f} (tamanho {fs:.2f})", 0.05)
 
         # ── 2. Audio analysis ───────────────────────────────────────────────
-        prog("Analisando áudio…", 0.04)
+        prog("[2/6] Analisando audio...", 0.06)
         analysis = analyze_video(
             video_path,
             silence_threshold_db=config.silence_threshold_db,
             min_silence_ms=config.min_silence_ms,
             audio_padding_ms=config.audio_padding_ms,
             min_segment_s=config.min_segment_s,
-            on_progress=lambda msg: prog(msg, 0.08),
+            on_progress=lambda msg: prog(f"[2/6] {msg}", 0.10),
         )
         result.analysis = analysis
         pct = analysis.silence_ratio * 100
-        prog(f"Análise: {pct:.1f}% silêncio — {len(analysis.speech_segments)} segmentos.", 0.14)
+        prog(f"[2/6] Analise: {pct:.1f}% silencio e {len(analysis.speech_segments)} segmentos.", 0.16)
 
         # ── 3. Cut silence + effects ────────────────────────────────────────
         source = video_path
@@ -109,31 +109,99 @@ def run_pipeline(
                 main_out,
                 crf=config.video_crf,
                 preset=config.video_preset,
-                color_grade=config.color_grade if config.color_grade.enabled else None,
-                music_path=config.music_path,
-                noise_reduction=config.noise_reduction,
-                bokeh_intensity=config.bokeh_intensity,
+                color_grade=None,
+                music_path=None,
+                noise_reduction=False,
+                bokeh_intensity=0.0,
                 face_x=config.face_x,
                 face_y=config.face_y,
                 face_size=config.face_size,
                 cancel=cancel,
-                on_progress=lambda msg, p: prog(msg, 0.14 + p * 0.55),
+                on_progress=lambda msg, p: prog(f"[3/6] {msg}", 0.16 + p * 0.34),
             )
             result.main_video   = main_out
             result.render_stats = render_stats
             source = main_out
-            prog(f"Vídeo editado  [{render_stats.encoder_used}].", 0.70)
+            prog(f"[3/6] Timeline consolidada [{render_stats.encoder_used}].", 0.50)
         else:
             result.main_video = video_path
-            prog("Corte desativado.", 0.70)
+            prog("[3/6] Corte de silencio desativado.", 0.50)
 
+        result.final_duration_s = get_video_duration(source)
+
+        if config.color_grade.enabled or config.bokeh_intensity >= 0.05:
+            effect_out = os.path.join(output_dir, f"{base}_effects.mp4")
+            rendered = render_effects_pass(
+                source,
+                effect_out,
+                color_grade=config.color_grade if config.color_grade.enabled else None,
+                bokeh_intensity=config.bokeh_intensity,
+                cancel=cancel,
+                on_progress=lambda msg, p: prog(f"[4/6] {msg}", 0.50 + p * 0.20),
+            )
+            muxed_out = os.path.join(output_dir, f"{base}_effects_muxed.mp4")
+            with ProcessManager(cancel) as pm:
+                pm.run_checked(
+                    [
+                        ffmpeg(), "-y",
+                        "-i", rendered,
+                        "-i", source,
+                        "-map", "0:v:0",
+                        "-map", "1:a:0?",
+                        "-c:v", "copy",
+                        "-c:a", "copy",
+                        "-shortest",
+                        muxed_out,
+                    ],
+                    context="mux efeitos",
+                    timeout_s=max(120.0, result.final_duration_s * 6.0),
+                )
+            source = muxed_out
+            prog("[4/6] Passe de efeitos sincronizado com a timeline.", 0.70)
+        else:
+            prog("[4/6] Sem efeitos pesados para renderizar.", 0.70)
+
+        if config.noise_reduction or config.music_path:
+            with ProcessManager(cancel) as pm:
+                af_parts: list[str] = []
+                if config.noise_reduction:
+                    af_parts.append("afftdn=nf=-25")
+                af_parts.append("loudnorm=I=-16:TP=-1.5:LRA=11")
+
+                audio_out = os.path.join(output_dir, f"{base}_audio.mp4")
+                prog("[5/6] Normalizando audio...", 0.74)
+                pm.run_checked(
+                    [
+                        ffmpeg(), "-y",
+                        "-i", source,
+                        "-c:v", "copy",
+                        "-af", ",".join(af_parts),
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        audio_out,
+                    ],
+                    context="audio",
+                    timeout_s=max(60.0, result.final_duration_s * 5.0),
+                )
+                source = audio_out
+                prog("[5/6] Audio normalizado com loudnorm.", 0.82)
+
+                if config.music_path and os.path.exists(config.music_path):
+                    music_out = os.path.join(output_dir, f"{base}_master.mp4")
+                    _mix_music(source, config.music_path, music_out, result.final_duration_s, pm=pm)
+                    source = music_out
+                prog("[5/6] Trilha final pronta.", 0.86)
+        else:
+            prog("[5/6] Audio mantido sem pos-processamento.", 0.86)
+
+        result.main_video = source
         result.final_duration_s = get_video_duration(source)
 
         # ── 4. Vertical version ─────────────────────────────────────────────
         if config.generate_vertical:
             preset_info = PRESETS[config.platform]
             vert_out = os.path.join(output_dir, f"{base}_vertical.mp4")
-            prog("Gerando versão vertical…", 0.72)
+            prog("[6/6] Gerando versao vertical...", 0.88)
             convert_to_vertical(
                 source, vert_out,
                 target_width=preset_info.width,
@@ -141,7 +209,7 @@ def run_pipeline(
                 crf=config.video_crf,
                 preset=config.video_preset,
                 cancel=cancel,
-                on_progress=lambda msg, p: prog(msg, 0.72 + p * 0.12),
+                on_progress=lambda msg, p: prog(f"[6/6] {msg}", 0.88 + p * 0.06),
             )
             result.vertical_video = vert_out
 
@@ -149,7 +217,7 @@ def run_pipeline(
         # Uses frame scoring → GrabCut segmentation → artistic background
         # → enhanced subject + glow → big bold typography.
         if config.generate_thumbnail:
-            prog("Selecionando frames + recorte + composição…", 0.86)
+            prog("[6/6] Selecionando frames e thumbnails...", 0.88)
             title    = config.thumbnail_title    or base.replace("_"," ").replace("-"," ").title()
             subtitle = config.thumbnail_subtitle or PRESETS[config.platform].label
 
@@ -160,11 +228,11 @@ def run_pipeline(
                 title=title,
                 subtitle=subtitle,
                 count=config.thumbnail_count,
-                on_progress=lambda msg: prog(msg, 0.90),
+                on_progress=lambda msg: prog(f"[6/6] {msg}", 0.92),
             )
             result.thumbnails_all = thumbs
             result.thumbnail      = thumbs[0] if thumbs else None
-            prog(f"{len(thumbs)} thumbnails profissionais geradas.", 0.96)
+            prog(f"[6/6] {len(thumbs)} thumbnails profissionais geradas.", 0.98)
 
         # ── 6. Stats ────────────────────────────────────────────────────────
         result.production_time_s = time.monotonic() - t_start
@@ -174,7 +242,7 @@ def run_pipeline(
             return f"{m:02d}:{sec:02d}"
 
         prog(
-            f"Concluido em {fmt(result.production_time_s)} | "
+            f"[6/6] Concluido em {fmt(result.production_time_s)} | "
             f"Original: {fmt(result.original_duration_s)} -> "
             f"Final: {fmt(result.final_duration_s)} "
             f"(-{result.compression_pct:.1f}%)",
