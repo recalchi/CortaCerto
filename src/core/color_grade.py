@@ -12,8 +12,10 @@ from dataclasses import dataclass
 class ColorGrade:
     enabled: bool = True
     temperature: float = -10   # -100..100 (negative = cooler/bluer)
+    tint: float = 0            # -100..100 (negative = greener)
     hue: float = -15           # degrees (-180..180)
     saturation: float = 10     # -100..100
+    vibrance: float = 0        # -100..100
     contrast: float = 10       # -100..100
     brightness: float = 10     # -100..100
     shadows: float = -5        # -100..100
@@ -28,7 +30,7 @@ PRESET_CAPCUT = ColorGrade()
 
 PRESET_NEUTRAL = ColorGrade(
     enabled=True,
-    temperature=0, hue=0, saturation=0, contrast=0,
+    temperature=0, tint=0, hue=0, saturation=0, vibrance=0, contrast=0,
     brightness=0, shadows=0, whites=0, blacks=0,
     highlights=0, sharpen=0,
 )
@@ -76,6 +78,14 @@ def build_filter(grade: ColorGrade) -> str:
             f"bs={t * 0.60:.4f}:bm={t * 0.40:.4f}"
         )
 
+    if abs(getattr(grade, "tint", 0.0)) > 1:
+        tint = getattr(grade, "tint", 0.0) / 100.0 * 0.18
+        parts.append(
+            f"colorbalance="
+            f"gm={-tint * 0.50:.4f}:gs={-tint * 0.35:.4f}:"
+            f"rm={tint * 0.25:.4f}:bm={tint * 0.25:.4f}"
+        )
+
     # 4. Tonal curve: blacks / shadows / highlights / whites
     need_curves = any(
         abs(v) > 1
@@ -95,6 +105,10 @@ def build_filter(grade: ColorGrade) -> str:
         ]
         curve = " ".join(f"{x:.2f}/{y:.3f}" for x, y in pts)
         parts.append(f"curves=master='{curve}'")
+
+    if abs(getattr(grade, "vibrance", 0.0)) > 1:
+        vib = 1.0 + getattr(grade, "vibrance", 0.0) / 100.0 * 0.6
+        parts.append(f"eq=saturation={max(0.0, vib):.4f}")
 
     # 5. Sharpen via unsharp mask
     if grade.sharpen > 0.5:

@@ -26,7 +26,10 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
 from ..config import ProcessingConfig, Platform, SilenceStyle, PRESETS
+from ..core.audio_waveform import extract_waveform
 from ..core.color_grade import ColorGrade, PRESET_CAPCUT
+from ..core.preview_engine import PreviewEngine, PreviewFrame, PreviewSettings
+from ..core.timeline_model import TimelineModel, build_timeline_model
 from ..pipeline import run_pipeline, PipelineResult
 from ..ffmpeg_env import encoder_label
 
@@ -71,7 +74,10 @@ class ContentForgeApp:
         self._thumb_imgs:   list                     = []
 
         # Video player state
-        self._cap           = None          # cv2.VideoCapture
+        self._preview_engine = PreviewEngine(self._on_preview_frame_ready)
+        self._preview_settings_key: tuple = ()
+        self._preview_backend = "preview"
+        self._preview_render_ms = 0.0
         self._total_frames  = 0
         self._fps           = 30.0
         self._duration_s    = 0.0
@@ -82,9 +88,17 @@ class ContentForgeApp:
         # Analysis state (filled after background analysis)
         self._segments:     list[tuple[float,float]] = []
         self._analysis_done = False
+        self._timeline_model: Optional[TimelineModel] = None
+        self._waveform_zoom = 1.0
+        self._export_modal = None
+        self._export_stage_var = None
+        self._export_msg_var = None
+        self._export_stage_progress = None
+        self._export_overall_progress = None
 
         self._build_ui()
         self._poll_queue()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def run(self) -> None:
         self.root.mainloop()
@@ -272,9 +286,16 @@ class ContentForgeApp:
         self._tl_info = tk.Label(hdr, text="", bg=C_PANEL, fg=C_MUTED,
                                   font=("Segoe UI", 9))
         self._tl_info.pack(side="left", padx=12)
+        self._tl_zoom = ctk.CTkSlider(
+            hdr, from_=1.0, to=3.0, number_of_steps=20, width=140,
+            fg_color=C_SURFACE, progress_color=C_ACCENT, button_color=C_ACCENT2,
+            command=self._on_timeline_zoom,
+        )
+        self._tl_zoom.set(1.0)
+        self._tl_zoom.pack(side="right", padx=(8, 0))
 
         # Canvas
-        self._tl_canvas = tk.Canvas(tl_outer, bg=TL_BG, height=90,
+        self._tl_canvas = tk.Canvas(tl_outer, bg=TL_BG, height=120,
                                      highlightthickness=0, cursor="hand2")
         self._tl_canvas.grid(row=1, column=0, sticky="nsew", padx=4, pady=(2,4))
         self._tl_canvas.bind("<Configure>", lambda e: self._redraw_timeline())
@@ -372,6 +393,100 @@ class ContentForgeApp:
         self._seek_to(frame)
 
     # ── Properties panel ──────────────────────────────────────────────────────
+
+    def _on_timeline_zoom(self, value: float) -> None:
+        self._waveform_zoom = float(value)
+        self._redraw_timeline()
+
+    def _redraw_timeline(self) -> None:
+        c = self._tl_canvas
+        c.delete("all")
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w < 10 or h < 10:
+            return
+
+        c.create_rectangle(0, 0, w, h, fill="#14141a", outline="")
+        if self._duration_s <= 0:
+            c.create_text(w // 2, h // 2, text="Nenhum vídeo carregado", fill=C_MUTED, font=("Segoe UI", 10))
+            return
+
+        if not self._timeline_model:
+            c.create_text(w // 2, h // 2, text="Analisando áudio e gerando waveform...", fill=C_MUTED, font=("Segoe UI", 10))
+            return
+
+        label_w = 74
+        top = 8
+        video_y1, video_y2 = top + 12, top + 40
+        audio_y1, audio_y2 = top + 56, h - 18
+
+        c.create_rectangle(0, 0, label_w, h, fill="#101015", outline="")
+        c.create_text(label_w // 2, (video_y1 + video_y2) // 2, text="VIDEO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
+        c.create_text(label_w // 2, (audio_y1 + audio_y2) // 2, text="AUDIO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
+
+        c.create_rectangle(label_w, video_y1, w - 8, video_y2, fill="#1b2130", outline="")
+        c.create_rectangle(label_w, audio_y1, w - 8, audio_y2, fill="#171b24", outline="")
+
+        for clip in self._timeline_model.video_track.clips:
+            x1 = self._time_to_x(clip.start_s, label_w, w - 8)
+            x2 = self._time_to_x(clip.end_s, label_w, w - 8)
+            c.create_rectangle(x1, video_y1 + 2, x2, video_y2 - 2, fill=TL_SPEECH, outline="")
+            if x2 - x1 > 56:
+                c.create_text((x1 + x2) // 2, (video_y1 + video_y2) // 2, text=clip.label, fill="#d6e6ff", font=("Segoe UI", 8))
+
+        for start_s, end_s in self._timeline_model.removed_ranges:
+            x1 = self._time_to_x(start_s, label_w, w - 8)
+            x2 = self._time_to_x(end_s, label_w, w - 8)
+            c.create_rectangle(x1, video_y1 + 6, x2, video_y2 - 6, fill=TL_SILENCE, outline="", stipple="gray50")
+
+        self._draw_waveform_track(c, self._timeline_model.waveform, label_w, w - 8, audio_y1, audio_y2)
+
+        tick_step = max(1, int(self._duration_s / 12))
+        for t in range(0, int(self._duration_s) + 1, tick_step):
+            x = self._time_to_x(float(t), label_w, w - 8)
+            c.create_line(x, 4, x, h - 4, fill="#222734")
+            mm, ss = divmod(t, 60)
+            c.create_text(x, h - 7, text=f"{mm}:{ss:02d}", fill=C_MUTED, font=("Courier New", 8))
+
+        pos = self._current_frame / max(1, self._total_frames)
+        px = int(label_w + pos * (w - label_w - 8))
+        self._tl_playhead = c.create_line(px, 2, px, h - 2, fill=TL_HEAD, width=2)
+
+        kept = sum(clip.end_s - clip.start_s for clip in self._timeline_model.video_track.clips)
+        self._tl_info.configure(
+            text=f"Mantido: {_fmt(kept)}  |  Cortado: {_fmt(self._timeline_model.saved_time_s)}  |  Tracks: 2  |  Preview: {self._preview_backend}"
+        )
+
+    def _draw_waveform_track(
+        self,
+        canvas: tk.Canvas,
+        samples: list[float],
+        x1: int,
+        x2: int,
+        y1: int,
+        y2: int,
+    ) -> None:
+        if not samples:
+            canvas.create_text((x1 + x2) // 2, (y1 + y2) // 2, text="Waveform indisponível", fill=C_MUTED, font=("Segoe UI", 9))
+            return
+
+        width = max(1, x2 - x1)
+        half_h = (y2 - y1) / 2
+        center_y = y1 + half_h
+        visible = max(8, int(len(samples) / max(1.0, self._waveform_zoom)))
+        stride = max(1, len(samples) // visible)
+        bars = samples[::stride]
+        bar_w = max(1, width / max(1, len(bars)))
+
+        for idx, amp in enumerate(bars):
+            x = x1 + idx * bar_w
+            peak = max(1.0, amp * (half_h - 3))
+            canvas.create_line(x, center_y - peak, x, center_y + peak, fill="#7dc0ff")
+
+    def _time_to_x(self, time_s: float, x1: int, x2: int) -> int:
+        span = max(1, x2 - x1)
+        pct = 0.0 if self._duration_s <= 0 else max(0.0, min(1.0, time_s / self._duration_s))
+        return int(x1 + pct * span)
 
     def _build_properties(self, parent: tk.Frame) -> None:
         props = tk.Frame(parent, bg=C_PANEL, width=300)
@@ -614,27 +729,23 @@ class ContentForgeApp:
         self._load_video(path)
 
     def _load_video(self, path: str) -> None:
-        import cv2
-        # Release previous
-        if self._cap:
-            self._playing = False
-            time.sleep(0.1)
-            self._cap.release()
-            self._cap = None
+        self._playing = False
+        self._play_btn.configure(text="▶")
+        self._preview_engine.open(path)
 
         self.video_path    = path
         self._segments     = []
         self._analysis_done= False
-        self._cap          = cv2.VideoCapture(path)
-        self._total_frames = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self._fps          = max(1.0, self._cap.get(cv2.CAP_PROP_FPS))
-        self._duration_s   = self._total_frames / self._fps
+        self._timeline_model = None
+        self._total_frames = self._preview_engine.total_frames
+        self._fps          = self._preview_engine.fps
+        self._duration_s   = self._preview_engine.duration_s
         self._current_frame= 0
 
         name = Path(path).name
         size_mb = os.path.getsize(path) / 1_000_000
         self._vid_info.configure(
-            text=f"{name}\n{_fmt(self._duration_s)}  |  {size_mb:.1f} MB",
+            text=f"{name}\n{_fmt(self._duration_s)}  |  {size_mb:.1f} MB  |  {self._fps:.1f} fps",
             fg=C_TEXT)
 
         # Auto-fill title
@@ -644,9 +755,10 @@ class ContentForgeApp:
 
         # Update UI
         self._export_btn.configure(state="normal")
-        self._seek_bar.configure(to=self._total_frames)
+        self._seek_bar.configure(to=max(1, self._total_frames - 1))
         self._seek_bar.set(0)
         self.root.title(f"ContentForge — {name}")
+        self._tb_status.configure(text="Gerando preview e timeline...")
 
         # Show first frame
         self._draw_frame_at(0)
@@ -676,7 +788,14 @@ class ContentForgeApp:
             )
             self._segments = analysis.speech_segments
             self._analysis_done = True
+            waveform = extract_waveform(self.video_path, self._duration_s, bins=420)
+            self._timeline_model = build_timeline_model(
+                self._duration_s,
+                analysis.speech_segments,
+                waveform=waveform,
+            )
             self.root.after(0, self._redraw_timeline)
+            self.root.after(0, lambda: self._tb_status.configure(text="Preview pronto. Timeline atualizada."))
         except Exception:
             pass
 
@@ -852,14 +971,91 @@ class ContentForgeApp:
         self._preview_timer = self.root.after(400, self._update_color_preview)
 
     def _update_color_preview(self) -> None:
-        if not self._cap:
+        if not self.video_path:
             return
-        frame = self._current_frame
-        def _worker():
-            self._draw_frame_at(frame)
-        threading.Thread(target=_worker, daemon=True).start()
+        self._draw_frame_at(self._current_frame)
 
     # ── Music ─────────────────────────────────────────────────────────────────
+
+    def _on_preview_resize(self, event=None) -> None:
+        if self.video_path:
+            self._draw_frame_at(self._current_frame)
+
+    def _draw_frame_at(self, frame_idx: int) -> None:
+        if not self.video_path:
+            return
+        self._current_frame = max(0, min(frame_idx, self._total_frames - 1))
+        settings = PreviewSettings(
+            color_grade=self._build_color_grade(),
+            bokeh_intensity=float(self._sliders["bokeh"].get()) / 100.0,
+        )
+        self._preview_settings_key = settings.cache_key()
+        self._tb_status.configure(text="Atualizando preview...")
+        self._preview_engine.request_frame(self._current_frame, settings)
+
+    def _on_preview_frame_ready(self, preview: PreviewFrame) -> None:
+        self.root.after(0, self._render_preview_frame, preview)
+
+    def _render_preview_frame(self, preview: PreviewFrame) -> None:
+        if preview.frame_index != self._current_frame:
+            return
+        if preview.settings_key != self._preview_settings_key:
+            return
+
+        from PIL import ImageTk
+
+        pil = preview.image
+        cw = self._preview_canvas.winfo_width()
+        ch = self._preview_canvas.winfo_height()
+        if cw < 10 or ch < 10:
+            cw, ch = 800, 450
+
+        iw, ih = pil.size
+        scale = min(cw / iw, ch / ih)
+        nw, nh = int(iw * scale), int(ih * scale)
+        pil = pil.resize((nw, nh), Image.LANCZOS)
+
+        photo = ImageTk.PhotoImage(pil)
+        self._preview_photo = photo
+        self._preview_backend = preview.backend
+        self._preview_render_ms = preview.render_ms
+
+        c = self._preview_canvas
+        c.delete("frame")
+        x = (cw - nw) // 2
+        y = (ch - nh) // 2
+        c.create_image(x, y, image=photo, anchor="nw", tags="frame")
+        c.itemconfigure(self._no_video_id, state="hidden")
+        self._tb_status.configure(text=f"Preview {preview.backend}  |  {preview.render_ms:.0f} ms")
+
+    def _toggle_play(self) -> None:
+        if not self.video_path:
+            return
+        if self._playing:
+            self._playing = False
+            self._play_btn.configure(text="▶")
+        else:
+            self._playing = True
+            self._play_btn.configure(text="⏸")
+            self._play_thread = threading.Thread(target=self._play_loop, daemon=True)
+            self._play_thread.start()
+
+    def _play_loop(self) -> None:
+        interval = 1.0 / max(1.0, self._fps)
+        while self._playing and self.video_path:
+            t0 = time.monotonic()
+            frame_idx = self._current_frame + 1
+            if frame_idx >= self._total_frames:
+                self._playing = False
+                self.root.after(0, lambda: self._play_btn.configure(text="▶"))
+                break
+
+            self._current_frame = frame_idx
+            self.root.after(0, self._draw_frame_at, frame_idx)
+            self.root.after(0, self._update_time_label)
+            self.root.after(0, self._update_tl_playhead)
+            elapsed = time.monotonic() - t0
+            time.sleep(max(0.001, interval - elapsed))
 
     def _pick_music(self) -> None:
         path = filedialog.askopenfilename(
@@ -923,6 +1119,69 @@ class ContentForgeApp:
             music_path           = self._music_path,
         )
 
+    def _open_export_modal(self) -> None:
+        if self._export_modal and self._export_modal.winfo_exists():
+            self._export_modal.destroy()
+
+        modal = ctk.CTkToplevel(self.root)
+        modal.title("Exportação")
+        modal.geometry("520x220")
+        modal.resizable(False, False)
+        modal.transient(self.root)
+        modal.grab_set()
+
+        self._export_modal = modal
+        self._export_stage_var = tk.StringVar(value="Preparando exportação...")
+        self._export_msg_var = tk.StringVar(value="Organizando pipeline")
+
+        ctk.CTkLabel(modal, text="Exportando projeto", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(18, 8))
+        ctk.CTkLabel(modal, textvariable=self._export_stage_var, text_color=C_TEXT, font=ctk.CTkFont(size=14)).pack()
+        ctk.CTkLabel(modal, textvariable=self._export_msg_var, text_color=C_MUTED, font=ctk.CTkFont(size=11)).pack(pady=(4, 12))
+
+        self._export_overall_progress = ctk.CTkProgressBar(modal, height=12, width=420, progress_color=C_ACCENT)
+        self._export_overall_progress.set(0)
+        self._export_overall_progress.pack(pady=(0, 10))
+
+        self._export_stage_progress = ctk.CTkProgressBar(modal, height=8, width=420, progress_color=C_GREEN)
+        self._export_stage_progress.set(0)
+        self._export_stage_progress.pack()
+
+    def _update_export_modal(self, message: str, progress: float) -> None:
+        if not self._export_modal or not self._export_modal.winfo_exists():
+            return
+
+        stage_text = message
+        detail_text = message
+        if message.startswith("[") and "]" in message:
+            stage_text, detail_text = message.split("]", 1)
+            stage_text = stage_text + "]"
+            detail_text = detail_text.strip()
+
+        if self._export_stage_var is not None:
+            self._export_stage_var.set(stage_text or "Exportando")
+        if self._export_msg_var is not None:
+            self._export_msg_var.set(detail_text or "Processando")
+        if self._export_overall_progress is not None and 0.0 <= progress <= 1.0:
+            self._export_overall_progress.set(progress)
+
+        stage_progress = progress
+        if message.startswith("[") and "/" in message:
+            try:
+                head = message[1:message.index("]")]
+                current, total = head.split("/")
+                current_n = max(1, int(current))
+                total_n = max(1, int(total))
+                stage_progress = min(1.0, (progress * total_n) - (current_n - 1))
+            except Exception:
+                stage_progress = progress
+        if self._export_stage_progress is not None:
+            self._export_stage_progress.set(max(0.0, min(1.0, stage_progress)))
+
+    def _close_export_modal(self) -> None:
+        if self._export_modal and self._export_modal.winfo_exists():
+            self._export_modal.destroy()
+        self._export_modal = None
+
     def _start(self) -> None:
         if not self.video_path:
             messagebox.showwarning("Aviso", "Abra um vídeo primeiro.")
@@ -937,6 +1196,7 @@ class ContentForgeApp:
         self._cancel_btn.configure(state="normal", text="■  Cancelar")
         self._tb_progress.set(0)
         self._tb_status.configure(text="Iniciando pipeline…")
+        self._open_export_modal()
 
         config     = self._build_config()
         output_dir = str(Path(self.video_path).parent / "ContentForge_output")
@@ -955,6 +1215,7 @@ class ContentForgeApp:
         self._cancel_ev.set()
         self._cancel_btn.configure(state="disabled", text="Cancelando…")
         self._tb_status.configure(text="Cancelando…")
+        self._update_export_modal("Cancelando exportação...", 0.0)
 
     def _poll_queue(self) -> None:
         try:
@@ -966,6 +1227,7 @@ class ContentForgeApp:
                     self._tb_status.configure(text=msg[:80])
                     if isinstance(val, float) and 0.0 <= val <= 1.0:
                         self._tb_progress.set(val)
+                        self._update_export_modal(msg, val)
         except queue.Empty:
             pass
         self.root.after(80, self._poll_queue)
@@ -977,10 +1239,12 @@ class ContentForgeApp:
         if result.cancelled:
             self._tb_status.configure(text="Cancelado.")
             self._tb_progress.set(0)
+            self._close_export_modal()
             return
 
         if not result.success:
             self._tb_status.configure(text=f"Erro: {result.error}")
+            self._close_export_modal()
             messagebox.showerror("Erro no processamento", result.error or "Erro desconhecido")
             return
 
@@ -994,6 +1258,7 @@ class ContentForgeApp:
                  f"Original: {_fmt(result.original_duration_s)}  →  "
                  f"Final: {_fmt(kept)}  (-{result.compression_pct:.0f}%)  |  "
                  f"Encoder: {enc}")
+        self._close_export_modal()
 
         # Show output thumbnails in a popup carousel
         self._show_output_popup(result)
@@ -1085,6 +1350,11 @@ class ContentForgeApp:
         for btn in frame.winfo_children():
             if isinstance(btn, tk.Button):
                 btn.configure(bd=3)
+
+    def _on_close(self) -> None:
+        self._playing = False
+        self._preview_engine.stop()
+        self.root.destroy()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
