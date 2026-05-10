@@ -15,9 +15,13 @@ venv/
 env/
 
 # PyInstaller
+*.spec
 *.spec.bak
 dist/
 build/
+
+# Generated installer metadata
+LICENSE.txt
 
 # IDE
 .vscode/

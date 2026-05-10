@@ -39,6 +39,7 @@ Notas atuais do instalador:
 - Depois do `winget install --id Gyan.FFmpeg`, revalida o `ffmpeg` de verdade antes de declarar erro.
 - Inclui caminhos comuns do WinGet/WindowsApps na sessão atual para reduzir a necessidade de reiniciar o terminal.
 - Se ainda falhar, mostra instruções manuais claras sem travar a inicialização do app.
+- O build do instalador usa o Python da venv explicitamente, evitando chamadas acidentais para outro `python` do sistema.
 
 Ou manualmente:
 
@@ -197,6 +198,7 @@ Principais pontos já estabilizados:
 - Primeiro frame volta a aparecer após carregar vídeo.
 - Sliders de color grade e bokeh solicitam novo frame sem bloquear a UI.
 - Callback do preview agora entrega frames pela fila da UI, mantendo renderização no thread principal.
+- Timeline, play loop e diagnósticos de encode/segmentação também retornam para a UI pela fila principal.
 - Play, pause e seek usam o mesmo caminho de preview.
 - Export sem bokeh usa caminho rápido e registra que a segmentação foi pulada.
 - Color grade sem bokeh usa ffmpeg quando possível, sem cair no pipeline frame a frame.
@@ -205,6 +207,7 @@ Principais pontos já estabilizados:
 - Timeline foi protegida contra sobreposição de labels e playhead.
 - Diagnóstico de encode diferencia CPU, NVENC, AMF e QSV.
 - Instalador foi reforçado para não acusar falha quando o FFmpeg foi instalado mas o shell ainda não atualizou o PATH.
+- Artefatos gerados pelo PyInstaller (`*.spec`, `LICENSE.txt`, `dist/`, `build/`) ficam fora do versionamento.
 
 Limitações conhecidas:
 

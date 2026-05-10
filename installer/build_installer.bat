@@ -39,10 +39,11 @@ if not exist venv\Scripts\activate.bat (
     )
 )
 call venv\Scripts\activate.bat
+set "VENV_PYTHON=%CD%\venv\Scripts\python.exe"
 
 echo Instalando dependencias de build...
-python -m pip install --upgrade pip --quiet
-python -m pip install -r requirements.txt pyinstaller --quiet
+"%VENV_PYTHON%" -m pip install --upgrade pip --quiet
+"%VENV_PYTHON%" -m pip install -r requirements.txt pyinstaller --quiet
 if errorlevel 1 (
     echo [ERRO] Falha ao instalar dependencias de build.
     pause
@@ -50,7 +51,7 @@ if errorlevel 1 (
 )
 
 echo [4/6] Convertendo icone...
-python -c "from PIL import Image; img=Image.open('corta_certo_icon.png'); img.save('corta_certo_icon.ico', format='ICO', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+"%VENV_PYTHON%" -c "from PIL import Image; img=Image.open('corta_certo_icon.png'); img.save('corta_certo_icon.ico', format='ICO', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
 if errorlevel 1 (
     echo [ERRO] Falha ao converter icone.
     pause
@@ -65,7 +66,7 @@ if not exist LICENSE.txt (
 
 echo.
 echo [6/6] Gerando executavel com PyInstaller...
-pyinstaller --noconfirm --onedir --windowed ^
+"%VENV_PYTHON%" -m PyInstaller --noconfirm --onedir --windowed ^
     --name "ContentForge" ^
     --icon "corta_certo_icon.ico" ^
     --add-data "corta_certo_icon.png;." ^
