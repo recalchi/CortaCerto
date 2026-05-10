@@ -196,6 +196,8 @@ Principais pontos já estabilizados:
 
 - Preview usa `PreviewEngine` com fila de requests drenada corretamente, evitando frame preto por descarte indevido.
 - Primeiro frame volta a aparecer após carregar vídeo.
+- Carregamento de vídeo pede primeiro um frame rápido sem efeitos, depois atualiza o preview completo.
+- Resize do preview tem teste unitário para evitar regressão como `Image`/`ImageTk` quebrado.
 - Sliders de color grade e bokeh solicitam novo frame sem bloquear a UI.
 - Callback do preview agora entrega frames pela fila da UI, mantendo renderização no thread principal.
 - Timeline, play loop e diagnósticos de encode/segmentação também retornam para a UI pela fila principal.
