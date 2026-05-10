@@ -1,17 +1,4 @@
-"""
-ContentForge — Editor de vídeo profissional.
-
-Layout tipo NLE (CapCut / DaVinci):
-  ┌─ Toolbar ──────────────────────────────────────────────────────────┐
-  │ [Abrir] [Exportar]  logo  [GPU label] [Seg label] [Cancel]        │
-  ├─ Preview (centro-esq) ────────┬─ Propriedades (direita) ──────────┤
-  │  Vídeo 16:9                   │  Título / Plataforma               │
-  │  ▶ 00:14 / 04:37  [controls] │  Silêncio / Cor / Bokeh / Thumb    │
-  ├─ Timeline ────────────────────┘                                    │
-  │  ████░░███████░░░████░░████  (speech=azul, silence=cinza)         │
-  │  ────────────────────────────── waveform ─────────────────────────│
-  └────────────────────────────────────────────────────────────────────┘
-"""
+"""ContentForge desktop video editor UI."""
 from __future__ import annotations
 
 import os
@@ -36,7 +23,7 @@ from ..ffmpeg_env import encoder_label
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# ── Colors ────────────────────────────────────────────────────────────────────
+# -- Colors --------------------------------------------------------------------
 C_BG        = "#1a1a1f"
 C_PANEL     = "#22222a"
 C_SURFACE   = "#2a2a35"
@@ -103,7 +90,7 @@ class ContentForgeApp:
     def run(self) -> None:
         self.root.mainloop()
 
-    # ── Icon ──────────────────────────────────────────────────────────────────
+    # -- Icon ------------------------------------------------------------------
 
     def _set_icon(self) -> None:
         root_dir = Path(__file__).parent.parent.parent
@@ -120,7 +107,7 @@ class ContentForgeApp:
             try: self.root.iconbitmap(str(ico))
             except Exception: pass
 
-    # ── Build UI ──────────────────────────────────────────────────────────────
+    # -- Build UI --------------------------------------------------------------
 
     def _build_ui(self) -> None:
         self.root.grid_rowconfigure(1, weight=1)
@@ -128,7 +115,7 @@ class ContentForgeApp:
         self._build_toolbar()
         self._build_body()
 
-    # ── Toolbar ───────────────────────────────────────────────────────────────
+    # -- Toolbar ---------------------------------------------------------------
 
     def _build_toolbar(self) -> None:
         tb = tk.Frame(self.root, bg="#111116", height=48)
@@ -137,22 +124,22 @@ class ContentForgeApp:
         tb.grid_columnconfigure(4, weight=1)
 
         # Logo
-        tk.Label(tb, text="⬡  ContentForge", bg="#111116", fg=C_ACCENT2,
+        tk.Label(tb, text="ContentForge", bg="#111116", fg=C_ACCENT2,
                  font=("Segoe UI", 13, "bold")).grid(row=0, column=0, padx=(14,18), pady=8)
 
         # Open
-        self._open_btn = self._tb_btn(tb, "📂  Abrir vídeo", self._pick_video,
+        self._open_btn = self._tb_btn(tb, "Abrir vídeo", self._pick_video,
                                        fg=C_TEXT)
         self._open_btn.grid(row=0, column=1, padx=4, pady=8)
 
         # Export
-        self._export_btn = self._tb_btn(tb, "▶  Exportar", self._start,
+        self._export_btn = self._tb_btn(tb, "Exportar", self._start,
                                          fg="#ffffff", bg=C_ACCENT)
         self._export_btn.grid(row=0, column=2, padx=4, pady=8)
         self._export_btn.configure(state="disabled")
 
         # Cancel
-        self._cancel_btn = self._tb_btn(tb, "■  Cancelar", self._cancel,
+        self._cancel_btn = self._tb_btn(tb, "Cancelar", self._cancel,
                                          fg="#ffffff", bg=C_RED)
         self._cancel_btn.grid(row=0, column=3, padx=(4, 16), pady=8)
         self._cancel_btn.configure(state="disabled")
@@ -170,7 +157,7 @@ class ContentForgeApp:
         self._tb_status.grid(row=0, column=5, padx=8)
 
         # GPU / Seg labels (right side)
-        self._gpu_lbl = tk.Label(tb, text="GPU: …", bg="#111116", fg=C_MUTED,
+        self._gpu_lbl = tk.Label(tb, text="Encode: verificando", bg="#111116", fg=C_MUTED,
                                   font=("Segoe UI", 9))
         self._gpu_lbl.grid(row=0, column=6, padx=(0,8))
         self._seg_lbl = tk.Label(tb, text="Seg: grabcut", bg="#111116", fg=C_MUTED,
@@ -189,7 +176,7 @@ class ContentForgeApp:
                          font=("Segoe UI", 10), cursor="hand2",
                          bd=0, highlightthickness=0)
 
-    # ── Body: preview + props ─────────────────────────────────────────────────
+    # -- Body: preview + props -------------------------------------------------
 
     def _build_body(self) -> None:
         body = tk.Frame(self.root, bg=C_BG)
@@ -203,7 +190,7 @@ class ContentForgeApp:
         self._build_timeline(body)
         self._build_properties(body)
 
-    # ── Preview area ──────────────────────────────────────────────────────────
+    # -- Preview area ----------------------------------------------------------
 
     def _build_preview_area(self, parent: tk.Frame) -> None:
         area = tk.Frame(parent, bg=C_BG)
@@ -221,7 +208,7 @@ class ContentForgeApp:
 
         # "No video" placeholder text
         self._no_video_id = self._preview_canvas.create_text(
-            400, 200, text="Abra um vídeo para começar  (📂 ou arraste)",
+            400, 200, text="Abra um vídeo para começar  (selecione um arquivo)",
             fill=C_MUTED, font=("Segoe UI", 14), anchor="center")
         self._preview_photo = None   # keeps ref
 
@@ -251,10 +238,10 @@ class ContentForgeApp:
                                            activebackground=C_SURFACE,
                                            activeforeground=C_TEXT)
 
-        btn("⏮", self._seek_start).grid(row=1, column=0, padx=(8,2), pady=2)
+        btn("Início", self._seek_start).grid(row=1, column=0, padx=(8,2), pady=2)
         self._play_btn = btn("▶", self._toggle_play)
         self._play_btn.grid(row=1, column=1, padx=2, pady=2)
-        btn("⏭", self._seek_end).grid(row=1, column=2, padx=2, pady=2)
+        btn("Fim", self._seek_end).grid(row=1, column=2, padx=2, pady=2)
 
         self._time_lbl = tk.Label(ctrl, text="00:00 / 00:00",
                                    bg=C_PANEL, fg=C_MUTED,
@@ -262,15 +249,10 @@ class ContentForgeApp:
         self._time_lbl.grid(row=1, column=3, padx=12)
 
         # Volume (cosmetic for now)
-        tk.Label(ctrl, text="🔊", bg=C_PANEL, fg=C_MUTED,
+        tk.Label(ctrl, text="Vol", bg=C_PANEL, fg=C_MUTED,
                  font=("Segoe UI", 10)).grid(row=1, column=4, padx=(0,4), sticky="e")
 
-    def _on_preview_resize(self, event=None) -> None:
-        """Redraw current frame when canvas is resized."""
-        if self._preview_photo and self._cap:
-            self._draw_frame_at(self._current_frame)
-
-    # ── Timeline ──────────────────────────────────────────────────────────────
+    # -- Timeline --------------------------------------------------------------
 
     def _build_timeline(self, parent: tk.Frame) -> None:
         tl_outer = tk.Frame(parent, bg=C_PANEL, bd=0)
@@ -278,7 +260,6 @@ class ContentForgeApp:
         tl_outer.grid_rowconfigure(1, weight=1)
         tl_outer.grid_columnconfigure(0, weight=1)
 
-        # Header
         hdr = tk.Frame(tl_outer, bg=C_PANEL)
         hdr.grid(row=0, column=0, sticky="ew", padx=8, pady=(4,0))
         tk.Label(hdr, text="TIMELINE", bg=C_PANEL, fg=C_MUTED,
@@ -294,7 +275,6 @@ class ContentForgeApp:
         self._tl_zoom.set(1.0)
         self._tl_zoom.pack(side="right", padx=(8, 0))
 
-        # Canvas
         self._tl_canvas = tk.Canvas(tl_outer, bg=TL_BG, height=120,
                                      highlightthickness=0, cursor="hand2")
         self._tl_canvas.grid(row=1, column=0, sticky="nsew", padx=4, pady=(2,4))
@@ -304,86 +284,6 @@ class ContentForgeApp:
         self._tl_playhead = None
         self._redraw_timeline()
 
-    def _redraw_timeline(self) -> None:
-        c = self._tl_canvas
-        c.delete("all")
-        w = c.winfo_width()
-        h = c.winfo_height()
-        if w < 10 or h < 10:
-            return
-
-        dur = self._duration_s
-        segs = self._segments
-
-        # Background track
-        c.create_rectangle(0, 4, w, h - 4, fill="#1a1a22", outline="")
-
-        if dur <= 0:
-            c.create_text(w // 2, h // 2,
-                          text="Nenhum vídeo carregado",
-                          fill=C_MUTED, font=("Segoe UI", 10))
-            return
-
-        # Draw segments
-        TRACK_Y1, TRACK_Y2 = 8, 46
-        WAV_Y    = h - 22
-
-        if segs:
-            for (s, e) in segs:
-                x1 = int(s / dur * w)
-                x2 = int(e / dur * w)
-                # Speech block (kept)
-                c.create_rectangle(x1, TRACK_Y1, x2, TRACK_Y2,
-                                   fill=TL_SPEECH, outline="")
-                # Small label
-                if x2 - x1 > 30:
-                    c.create_text((x1+x2)//2, (TRACK_Y1+TRACK_Y2)//2,
-                                  text="●", fill="#a0c8ff",
-                                  font=("Segoe UI", 7))
-
-            # Draw silence gaps differently
-            prev_end = 0.0
-            for (s, e) in segs:
-                if s > prev_end + 0.1:
-                    x1 = int(prev_end / dur * w)
-                    x2 = int(s / dur * w)
-                    c.create_rectangle(x1, TRACK_Y1 + 6, x2, TRACK_Y2 - 6,
-                                       fill="#333344", outline="",
-                                       stipple="gray50")
-                prev_end = e
-
-            # Timeline ticks (every 10s)
-            tick_step = max(1, int(dur / 10))
-            for t in range(0, int(dur) + 1, tick_step):
-                x = int(t / dur * w)
-                c.create_line(x, TRACK_Y2 + 2, x, TRACK_Y2 + 8,
-                              fill=C_MUTED)
-                if t % (tick_step * 2) == 0:
-                    m, s2 = divmod(t, 60)
-                    c.create_text(x, TRACK_Y2 + 16,
-                                  text=f"{m}:{s2:02d}",
-                                  fill=C_MUTED, font=("Courier New", 8))
-
-            # Info
-            kept = sum(e - s for s, e in segs)
-            cut  = dur - kept
-            self._tl_info.configure(
-                text=f"  Mantido: {_fmt(kept)}  |  Cortado: {_fmt(cut)}  "
-                     f"|  {len(segs)} segmentos")
-        else:
-            # No analysis yet — show full bar as unknown
-            c.create_rectangle(0, TRACK_Y1, w, TRACK_Y2,
-                               fill=C_SURFACE, outline="")
-            c.create_text(w // 2, (TRACK_Y1+TRACK_Y2)//2,
-                          text="Análise pendente — clique em Exportar para processar",
-                          fill=C_MUTED, font=("Segoe UI", 9))
-
-        # Playhead
-        pos = self._current_frame / max(1, self._total_frames)
-        px  = int(pos * w)
-        self._tl_playhead = c.create_line(px, 2, px, h - 2,
-                                           fill=TL_HEAD, width=2)
-
     def _tl_click(self, event: tk.Event) -> None:
         if self._duration_s <= 0:
             return
@@ -392,7 +292,7 @@ class ContentForgeApp:
         frame = int(pct * self._total_frames)
         self._seek_to(frame)
 
-    # ── Properties panel ──────────────────────────────────────────────────────
+    # -- Properties panel ------------------------------------------------------
 
     def _on_timeline_zoom(self, value: float) -> None:
         self._waveform_zoom = float(value)
@@ -421,8 +321,8 @@ class ContentForgeApp:
         audio_y1, audio_y2 = top + 56, h - 18
 
         c.create_rectangle(0, 0, label_w, h, fill="#101015", outline="")
-        c.create_text(label_w // 2, (video_y1 + video_y2) // 2, text="VIDEO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
-        c.create_text(label_w // 2, (audio_y1 + audio_y2) // 2, text="AUDIO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
+        c.create_text(label_w // 2, (video_y1 + video_y2) // 2, text="VÍDEO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
+        c.create_text(label_w // 2, (audio_y1 + audio_y2) // 2, text="ÁUDIO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
 
         c.create_rectangle(label_w, video_y1, w - 8, video_y2, fill="#1b2130", outline="")
         c.create_rectangle(label_w, audio_y1, w - 8, audio_y2, fill="#171b24", outline="")
@@ -504,13 +404,13 @@ class ContentForgeApp:
 
         s = scroll
 
-        # ── Vídeo info ────────────────────────────────────────────────────
+        # -- Vídeo info ----------------------------------------------------
         self._section(s, "VÍDEO", 0)
         self._vid_info = self._info_label(s, "Nenhum vídeo selecionado", 1)
 
-        # Título e subtítulo
+        # Título
         self._section(s, "TÍTULO DA THUMBNAIL", 2)
-        self._title_entry = self._entry(s, "Título…", 3)
+        self._title_entry = self._entry(s, "Título", 3)
         self._subtitle_entry = self._entry(s, "Subtítulo (ex: CRONOLOGIA)", 4)
 
         # Plataforma
@@ -527,7 +427,7 @@ class ContentForgeApp:
                            activeforeground=C_TEXT, font=("Segoe UI", 10),
                            relief="flat").grid(row=i//2, column=i%2, sticky="w", padx=4)
 
-        # ── Corte de Silêncio ─────────────────────────────────────────────
+        # -- Corte de Silêncio ---------------------------------------------
         self._section(s, "CORTE DE SILÊNCIO", 7)
         self._rm_silence_var = tk.BooleanVar(value=True)
         self._check(s, "Ativar corte de silêncios", self._rm_silence_var, 8)
@@ -548,12 +448,12 @@ class ContentForgeApp:
 
         self._sliders: dict[str, ctk.CTkSlider] = {}
         self._slider_lbl: dict[str, ctk.CTkLabel] = {}
-        self._prop_slider(s, "Limiar silêncio (dBFS)", "silence_db",
+        self._prop_slider(s, "Limiar de silêncio (dBFS)", "silence_db",
                           -70, -10, -40, 1, 10)
         self._prop_slider(s, "Padding de áudio (ms)", "padding",
                           0, 500, 150, 10, 11)
 
-        # ── Color Grade ───────────────────────────────────────────────────
+        # -- Color Grade ---------------------------------------------------
         self._section(s, "COLOR GRADE", 12)
         self._color_enabled = tk.BooleanVar(value=True)
         cf = tk.Frame(s, bg=C_PANEL)
@@ -585,13 +485,13 @@ class ContentForgeApp:
             self._color_slider(s, label, key, lo, hi, default, fc, pc,
                                row=14 + row_off)
 
-        # ── Bokeh ─────────────────────────────────────────────────────────
+        # -- Bokeh ---------------------------------------------------------
         self._section(s, "BOKEH  (desfoque de fundo)", 21)
         self._bokeh_slider = self._prop_slider(
             s, "Intensidade", "bokeh", 0, 100, 0, 1, 22,
             suffix="%", color="#223366", prog="#6699dd")
 
-        # ── Audio ─────────────────────────────────────────────────────────
+        # -- Audio ---------------------------------------------------------
         self._section(s, "ÁUDIO", 23)
         self._noise_var = tk.BooleanVar(value=True)
         self._check(s, "Redução de ruído + loudnorm EBU R128", self._noise_var, 24)
@@ -604,29 +504,29 @@ class ContentForgeApp:
         self._music_label = tk.Label(mf, text="Nenhuma", bg=C_PANEL,
                                       fg=C_MUTED, font=("Segoe UI", 9))
         self._music_label.grid(row=0, column=1, sticky="w", padx=6)
-        tk.Button(mf, text="…", command=self._pick_music, bg=C_SURFACE,
+        tk.Button(mf, text="...", command=self._pick_music, bg=C_SURFACE,
                   fg=C_TEXT, relief="flat", padx=6, font=("Segoe UI", 9),
                   cursor="hand2", bd=0).grid(row=0, column=2, padx=2)
-        tk.Button(mf, text="✕", command=self._clear_music, bg=C_SURFACE,
+        tk.Button(mf, text="X", command=self._clear_music, bg=C_SURFACE,
                   fg=C_MUTED, relief="flat", padx=4, font=("Segoe UI", 9),
                   cursor="hand2", bd=0).grid(row=0, column=3)
 
-        # ── Thumbnails ────────────────────────────────────────────────────
+        # -- Thumbnails ----------------------------------------------------
         self._section(s, "THUMBNAILS", 26)
         self._gen_thumb_var  = tk.BooleanVar(value=True)
         self._gen_vert_var   = tk.BooleanVar(value=False)
         self._check(s, "Gerar 5 thumbnails profissionais", self._gen_thumb_var, 27)
         self._check(s, "Versão vertical 9:16", self._gen_vert_var, 28)
 
-        # ── Preview update btn ────────────────────────────────────────────
-        ctk.CTkButton(s, text="🔄  Atualizar preview",
+        # -- Preview update btn --------------------------------------------
+        ctk.CTkButton(s, text="Atualizar preview",
                       height=32, corner_radius=6,
                       fg_color=C_SURFACE, hover_color=C_BORDER,
                       font=ctk.CTkFont(size=12),
                       command=self._update_color_preview).grid(
             row=29, column=0, padx=10, pady=(8,4), sticky="ew")
 
-    # ── Widget helpers ────────────────────────────────────────────────────────
+    # -- Widget helpers --------------------------------------------------------
 
     def _section(self, parent, text: str, row: int) -> None:
         f = tk.Frame(parent, bg=C_BORDER, height=1)
@@ -717,7 +617,7 @@ class ContentForgeApp:
         self._c_sliders[key] = sl
         self._c_labels[key]  = val_lbl
 
-    # ── Video player ──────────────────────────────────────────────────────────
+    # -- Video player ----------------------------------------------------------
 
     def _pick_video(self) -> None:
         path = filedialog.askopenfilename(
@@ -731,7 +631,14 @@ class ContentForgeApp:
     def _load_video(self, path: str) -> None:
         self._playing = False
         self._play_btn.configure(text="▶")
-        self._preview_engine.open(path)
+        try:
+            self._preview_engine.open(path)
+        except Exception as exc:
+            self.video_path = None
+            self._export_btn.configure(state="disabled")
+            self._tb_status.configure(text=f"Erro ao abrir vídeo: {exc}")
+            messagebox.showerror("Erro ao abrir vídeo", str(exc))
+            return
 
         self.video_path    = path
         self._segments     = []
@@ -741,6 +648,7 @@ class ContentForgeApp:
         self._fps          = self._preview_engine.fps
         self._duration_s   = self._preview_engine.duration_s
         self._current_frame= 0
+        print(f"[PREVIEW] Video loaded: {path}")
 
         name = Path(path).name
         size_mb = os.path.getsize(path) / 1_000_000
@@ -757,7 +665,7 @@ class ContentForgeApp:
         self._export_btn.configure(state="normal")
         self._seek_bar.configure(to=max(1, self._total_frames - 1))
         self._seek_bar.set(0)
-        self.root.title(f"ContentForge — {name}")
+        self.root.title(f"ContentForge - {name}")
         self._tb_status.configure(text="Gerando preview e timeline...")
 
         # Show first frame
@@ -798,91 +706,6 @@ class ContentForgeApp:
             self.root.after(0, lambda: self._tb_status.configure(text="Preview pronto. Timeline atualizada."))
         except Exception:
             pass
-
-    def _draw_frame_at(self, frame_idx: int) -> None:
-        """Extract and display a video frame on the preview canvas."""
-        if not self._cap:
-            return
-        import cv2
-        from PIL import Image, ImageTk
-
-        cap = self._cap
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ok, bgr = cap.read()
-        if not ok or bgr is None:
-            return
-
-        # Convert BGR → RGB
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        pil = Image.fromarray(rgb)
-
-        # Scale to fit canvas keeping 16:9
-        cw = self._preview_canvas.winfo_width()
-        ch = self._preview_canvas.winfo_height()
-        if cw < 10 or ch < 10:
-            cw, ch = 800, 450
-
-        # Fit inside canvas
-        ih, iw = bgr.shape[:2]
-        scale = min(cw / iw, ch / ih)
-        nw, nh = int(iw * scale), int(ih * scale)
-        pil = pil.resize((nw, nh), Image.LANCZOS)
-
-        # Apply live color preview if grade enabled
-        try:
-            if self._color_enabled.get():
-                from ..core.thumbnail import apply_grade_preview
-                grade = self._build_color_grade()
-                bokeh = float(self._sliders["bokeh"].get()) / 100.0
-                pil = apply_grade_preview(pil, grade, bokeh_intensity=bokeh)
-        except Exception:
-            pass
-
-        photo = ImageTk.PhotoImage(pil)
-        self._preview_photo = photo   # prevent GC
-
-        c = self._preview_canvas
-        c.delete("frame")
-        x = (cw - nw) // 2
-        y = (ch - nh) // 2
-        c.create_image(x, y, image=photo, anchor="nw", tags="frame")
-        # Hide placeholder
-        c.itemconfigure(self._no_video_id, state="hidden")
-
-    def _toggle_play(self) -> None:
-        if not self._cap:
-            return
-        if self._playing:
-            self._playing = False
-            self._play_btn.configure(text="▶")
-        else:
-            self._playing = True
-            self._play_btn.configure(text="⏸")
-            self._play_thread = threading.Thread(
-                target=self._play_loop, daemon=True)
-            self._play_thread.start()
-
-    def _play_loop(self) -> None:
-        import cv2
-        from PIL import Image, ImageTk
-
-        interval = 1.0 / self._fps
-        while self._playing and self._cap:
-            t0 = time.monotonic()
-            frame_idx = self._current_frame + 1
-            if frame_idx >= self._total_frames:
-                self._playing = False
-                self.root.after(0, lambda: self._play_btn.configure(text="▶"))
-                break
-
-            self._current_frame = frame_idx
-            self.root.after(0, self._draw_frame_at, frame_idx)
-            self.root.after(0, self._update_time_label)
-            self.root.after(0, self._update_tl_playhead)
-
-            elapsed = time.monotonic() - t0
-            sleep_t = max(0.001, interval - elapsed)
-            time.sleep(sleep_t)
 
     def _on_seek(self, val: float) -> None:
         frame = int(float(val))
@@ -931,7 +754,7 @@ class ContentForgeApp:
             self._tl_playhead = c.create_line(
                 px, 2, px, h - 2, fill=TL_HEAD, width=2)
 
-    # ── Color grade helpers ───────────────────────────────────────────────────
+    # -- Color grade helpers ---------------------------------------------------
 
     def _build_color_grade(self) -> "ColorGrade":
         return ColorGrade(
@@ -975,7 +798,7 @@ class ContentForgeApp:
             return
         self._draw_frame_at(self._current_frame)
 
-    # ── Music ─────────────────────────────────────────────────────────────────
+    # -- Music -----------------------------------------------------------------
 
     def _on_preview_resize(self, event=None) -> None:
         if self.video_path:
@@ -1027,6 +850,11 @@ class ContentForgeApp:
         c.create_image(x, y, image=photo, anchor="nw", tags="frame")
         c.itemconfigure(self._no_video_id, state="hidden")
         self._tb_status.configure(text=f"Preview {preview.backend}  |  {preview.render_ms:.0f} ms")
+        print(
+            f"[PREVIEW] Frame rendered successfully | "
+            f"frame={preview.frame_index} backend={preview.backend} "
+            f"render_ms={preview.render_ms:.0f}"
+        )
 
     def _toggle_play(self) -> None:
         if not self.video_path:
@@ -1070,12 +898,12 @@ class ContentForgeApp:
         self._music_path = None
         self._music_label.configure(text="Nenhuma", fg=C_MUTED)
 
-    # ── Labels ────────────────────────────────────────────────────────────────
+    # -- Labels ----------------------------------------------------------------
 
     def _detect_gpu_label(self) -> None:
         def _task():
             lbl = encoder_label()
-            self.root.after(0, lambda: self._gpu_lbl.configure(text=f"GPU: {lbl}"))
+            self.root.after(0, lambda: self._gpu_lbl.configure(text=f"Encode: {lbl}"))
         threading.Thread(target=_task, daemon=True).start()
 
     def _detect_seg_label(self) -> None:
@@ -1092,7 +920,7 @@ class ContentForgeApp:
                 pass
         threading.Thread(target=_task, daemon=True).start()
 
-    # ── Pipeline ──────────────────────────────────────────────────────────────
+    # -- Pipeline --------------------------------------------------------------
 
     def _build_config(self) -> ProcessingConfig:
         plat_map  = {p.value: p for p in Platform}
@@ -1193,9 +1021,9 @@ class ContentForgeApp:
 
         self._cancel_ev.clear()
         self._export_btn.configure(state="disabled")
-        self._cancel_btn.configure(state="normal", text="■  Cancelar")
+        self._cancel_btn.configure(state="normal", text="Cancelar")
         self._tb_progress.set(0)
-        self._tb_status.configure(text="Iniciando pipeline…")
+        self._tb_status.configure(text="Iniciando pipeline...")
         self._open_export_modal()
 
         config     = self._build_config()
@@ -1213,9 +1041,11 @@ class ContentForgeApp:
 
     def _cancel(self) -> None:
         self._cancel_ev.set()
-        self._cancel_btn.configure(state="disabled", text="Cancelando…")
-        self._tb_status.configure(text="Cancelando…")
+        print("[CANCEL] Export cancel requested")
+        self._cancel_btn.configure(state="disabled", text="Cancelando...")
+        self._tb_status.configure(text="Cancelando...")
         self._update_export_modal("Cancelando exportação...", 0.0)
+        self._queue.put(("[CANCEL] Export cancel requested", 0.0))
 
     def _poll_queue(self) -> None:
         try:
@@ -1233,7 +1063,7 @@ class ContentForgeApp:
         self.root.after(80, self._poll_queue)
 
     def _on_done(self, result: PipelineResult) -> None:
-        self._cancel_btn.configure(state="disabled", text="■  Cancelar")
+        self._cancel_btn.configure(state="disabled", text="Cancelar")
         self._export_btn.configure(state="normal")
 
         if result.cancelled:
@@ -1254,8 +1084,8 @@ class ContentForgeApp:
         ptime  = result.production_time_s
         enc    = result.render_stats.encoder_used if result.render_stats else "?"
         self._tb_status.configure(
-            text=f"✓  Concluído em {_fmt(ptime)}  |  "
-                 f"Original: {_fmt(result.original_duration_s)}  →  "
+            text=f"Concluído em {_fmt(ptime)}  |  "
+                 f"Original: {_fmt(result.original_duration_s)}  ->  "
                  f"Final: {_fmt(kept)}  (-{result.compression_pct:.0f}%)  |  "
                  f"Encoder: {enc}")
         self._close_export_modal()
@@ -1265,7 +1095,7 @@ class ContentForgeApp:
 
     def _show_output_popup(self, result: PipelineResult) -> None:
         popup = ctk.CTkToplevel(self.root)
-        popup.title("Resultado — ContentForge")
+        popup.title("Resultado - ContentForge")
         popup.geometry("900x500")
         popup.grab_set()
 
@@ -1275,7 +1105,7 @@ class ContentForgeApp:
         # Stats
         rs = result.render_stats
         stats_txt = (
-            f"Original: {_fmt(result.original_duration_s)}   →   "
+            f"Original: {_fmt(result.original_duration_s)}   ->   "
             f"Final: {_fmt(result.final_duration_s)}   "
             f"(-{result.compression_pct:.0f}%)   |   "
             f"Produção: {_fmt(result.production_time_s)}   |   "
@@ -1286,7 +1116,7 @@ class ContentForgeApp:
 
         # Thumbnail carousel
         if result.thumbnails_all:
-            ctk.CTkLabel(popup, text="Thumbnails geradas — clique para selecionar a principal",
+            ctk.CTkLabel(popup, text="Thumbnails geradas - clique para selecionar a principal",
                          text_color=C_MUTED, font=ctk.CTkFont(size=11)).pack()
             carousel = tk.Frame(popup, bg=C_SURFACE)
             carousel.pack(fill="x", padx=20, pady=8)
@@ -1325,13 +1155,13 @@ class ContentForgeApp:
         af = tk.Frame(popup, bg=popup.cget("bg") if hasattr(popup, "cget") else C_BG)
         af.pack(fill="x", padx=20, pady=12)
 
-        ctk.CTkButton(af, text="📂  Abrir pasta de saída",
+        ctk.CTkButton(af, text="Abrir pasta de saída",
                       command=lambda: os.startfile(result.output_dir),
                       height=38).pack(side="left", padx=4)
-        ctk.CTkButton(af, text="🔄  Processar outro vídeo",
+        ctk.CTkButton(af, text="Processar outro vídeo",
                       fg_color=C_SURFACE, hover_color=C_BORDER,
                       command=popup.destroy, height=38).pack(side="left", padx=4)
-        ctk.CTkButton(af, text="✕  Fechar", fg_color=C_SURFACE,
+        ctk.CTkButton(af, text="Fechar", fg_color=C_SURFACE,
                       hover_color=C_BORDER,
                       command=popup.destroy, height=38).pack(side="right", padx=4)
 
@@ -1357,7 +1187,7 @@ class ContentForgeApp:
         self.root.destroy()
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# -- Helpers -------------------------------------------------------------------
 
 def _fmt(s: float) -> str:
     m, sec = divmod(int(s), 60)

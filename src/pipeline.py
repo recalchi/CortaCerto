@@ -22,7 +22,7 @@ from .core.editor import (
 from .core.process_manager import ProcessManager
 from .core.thumbnail import detect_person_from_video
 from .core.thumbnail_pro import generate_thumbnails_pro
-from .ffmpeg_env import ffmpeg
+from .ffmpeg_env import detect_video_encoder, ffmpeg
 
 
 @dataclass
@@ -75,6 +75,8 @@ def run_pipeline(
     try:
         # ── 1. Original duration ────────────────────────────────────────────
         result.original_duration_s = get_video_duration(video_path)
+        encoder, _ = detect_video_encoder()
+        prog(f"[GPU] Selected mode: encode={encoder}; efeitos OpenCV/bokeh rodam em CPU.", 0.01)
 
         # ── 1b. Face/person detection (used for bokeh + thumbnail layout) ───
         if config.bokeh_intensity >= 0.05 or config.generate_thumbnail:
@@ -86,7 +88,7 @@ def run_pipeline(
             prog(f"[1/6] Sujeito detectado em x={fx:.2f} y={fy:.2f} (tamanho {fs:.2f})", 0.05)
 
         # ── 2. Audio analysis ───────────────────────────────────────────────
-        prog("[2/6] Analisando audio...", 0.06)
+        prog("[2/6] Analisando áudio...", 0.06)
         analysis = analyze_video(
             video_path,
             silence_threshold_db=config.silence_threshold_db,
@@ -97,7 +99,7 @@ def run_pipeline(
         )
         result.analysis = analysis
         pct = analysis.silence_ratio * 100
-        prog(f"[2/6] Analise: {pct:.1f}% silencio e {len(analysis.speech_segments)} segmentos.", 0.16)
+        prog(f"[2/6] Análise: {pct:.1f}% silêncio e {len(analysis.speech_segments)} segmentos.", 0.16)
 
         # ── 3. Cut silence + effects ────────────────────────────────────────
         source = video_path
@@ -125,9 +127,14 @@ def run_pipeline(
             prog(f"[3/6] Timeline consolidada [{render_stats.encoder_used}].", 0.50)
         else:
             result.main_video = video_path
-            prog("[3/6] Corte de silencio desativado.", 0.50)
+            prog("[3/6] Corte de silêncio desativado; mantendo timeline original.", 0.50)
 
         result.final_duration_s = get_video_duration(source)
+
+        if config.bokeh_intensity < 0.05:
+            prog("[EXPORT] Bokeh desativado; pulando segmentação.", 0.51)
+            if config.generate_thumbnail:
+                prog("[EXPORT] Observação: thumbnails usam segmentação própria quando ativadas.", 0.52)
 
         if config.color_grade.enabled or config.bokeh_intensity >= 0.05:
             effect_out = os.path.join(output_dir, f"{base}_effects.mp4")
@@ -159,7 +166,7 @@ def run_pipeline(
             source = muxed_out
             prog("[4/6] Passe de efeitos sincronizado com a timeline.", 0.70)
         else:
-            prog("[4/6] Sem efeitos pesados para renderizar.", 0.70)
+            prog("[4/6] Sem color grade/bokeh; usando caminho rápido sem passe frame a frame.", 0.70)
 
         if config.noise_reduction or config.music_path:
             with ProcessManager(cancel) as pm:
@@ -169,7 +176,7 @@ def run_pipeline(
                 af_parts.append("loudnorm=I=-16:TP=-1.5:LRA=11")
 
                 audio_out = os.path.join(output_dir, f"{base}_audio.mp4")
-                prog("[5/6] Normalizando audio...", 0.74)
+                prog("[5/6] Normalizando áudio...", 0.74)
                 pm.run_checked(
                     [
                         ffmpeg(), "-y",
@@ -184,7 +191,7 @@ def run_pipeline(
                     timeout_s=max(60.0, result.final_duration_s * 5.0),
                 )
                 source = audio_out
-                prog("[5/6] Audio normalizado com loudnorm.", 0.82)
+                prog("[5/6] Áudio normalizado com loudnorm.", 0.82)
 
                 if config.music_path and os.path.exists(config.music_path):
                     music_out = os.path.join(output_dir, f"{base}_master.mp4")
@@ -192,7 +199,7 @@ def run_pipeline(
                     source = music_out
                 prog("[5/6] Trilha final pronta.", 0.86)
         else:
-            prog("[5/6] Audio mantido sem pos-processamento.", 0.86)
+            prog("[5/6] Áudio mantido sem pós-processamento.", 0.86)
 
         result.main_video = source
         result.final_duration_s = get_video_duration(source)
@@ -201,7 +208,7 @@ def run_pipeline(
         if config.generate_vertical:
             preset_info = PRESETS[config.platform]
             vert_out = os.path.join(output_dir, f"{base}_vertical.mp4")
-            prog("[6/6] Gerando versao vertical...", 0.88)
+            prog("[6/6] Gerando versão vertical...", 0.88)
             convert_to_vertical(
                 source, vert_out,
                 target_width=preset_info.width,
@@ -242,7 +249,7 @@ def run_pipeline(
             return f"{m:02d}:{sec:02d}"
 
         prog(
-            f"[6/6] Concluido em {fmt(result.production_time_s)} | "
+            f"[6/6] Concluído em {fmt(result.production_time_s)} | "
             f"Original: {fmt(result.original_duration_s)} -> "
             f"Final: {fmt(result.final_duration_s)} "
             f"(-{result.compression_pct:.1f}%)",
@@ -254,7 +261,7 @@ def run_pipeline(
         result.error     = "Cancelado pelo usuário."
         result.production_time_s = time.monotonic() - t_start
         if on_progress:
-            on_progress("Cancelado.", 0.0)
+            on_progress("[CANCEL] Export cancelado pelo usuário.", 0.0)
 
     except Exception as exc:
         result.error = str(exc)

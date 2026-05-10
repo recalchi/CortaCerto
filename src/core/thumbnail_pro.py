@@ -9,7 +9,7 @@ Pipeline (per frame):
        original heavily-blurred + diagonal gradient overlay + vignette
   4. Enhance subject:
        sharpen + contrast bump + subtle outer glow
-  5. Place subject anchored bottom-right at 1.05× scale
+  5. Place subject anchored bottom-right at 1.05x scale
   6. Compose left-side text block:
        big bold uppercase + black stroke + drop shadow
   7. Variant generator: 5 versions with rotated themes / zoom / accent colors
@@ -32,7 +32,7 @@ from .segmentation   import segment_person, get_backend as _seg_backend
 from .thumbnail      import _extract_frame, _load_font   # reuse helpers
 
 
-# ── Color themes (background gradient + text accents) ───────────────────────
+# -- Color themes (background gradient + text accents) -----------------------
 
 @dataclass
 class ProTheme:
@@ -79,7 +79,7 @@ THEMES_PRO: dict[str, ProTheme] = {
 }
 
 
-# ── Public API ───────────────────────────────────────────────────────────────
+# -- Public API ---------------------------------------------------------------
 
 def generate_thumbnails_pro(
     video_path:       str,
@@ -99,7 +99,7 @@ def generate_thumbnails_pro(
 
     backend = _seg_backend()
     if on_progress:
-        on_progress(f"Selecionando melhores frames… [segmentação: {backend}]")
+        on_progress(f"Selecionando melhores frames... [segmentação: {backend}]")
 
     candidates: list[FrameScore] = select_best_frames(
         video_path, count=max(count, 5),
@@ -114,7 +114,7 @@ def generate_thumbnails_pro(
 
     for idx, score in enumerate(candidates[:count]):
         if on_progress:
-            on_progress(f"Compondo thumbnail {idx + 1}/{count}…")
+            on_progress(f"Compondo thumbnail {idx + 1}/{count}...")
 
         try:
             theme = THEMES_PRO[theme_names[idx % len(theme_names)]]
@@ -136,7 +136,7 @@ def generate_thumbnails_pro(
     return paths
 
 
-# ── Composition pipeline ─────────────────────────────────────────────────────
+# -- Composition pipeline -----------------------------------------------------
 
 def _compose_thumbnail(
     frame:        Image.Image,
@@ -151,20 +151,20 @@ def _compose_thumbnail(
     w, h = size
     canvas = Image.new("RGB", size, theme.bg_top)
 
-    # ── Step 1: Background ──────────────────────────────────────────────────
+    # -- Step 1: Background --------------------------------------------------
     bg = _build_background(frame, size, theme, variant_seed)
     canvas.paste(bg, (0, 0))
 
-    # ── Step 2: Segment subject ─────────────────────────────────────────────
+    # -- Step 2: Segment subject ---------------------------------------------
     rgba_subject, _alpha = segment_person(
         frame, face_box=score.face_box, iterations=4, feather_radius=10
     )
 
-    # ── Step 3: Enhance subject ─────────────────────────────────────────────
+    # -- Step 3: Enhance subject ---------------------------------------------
     rgba_subject = _enhance_subject(rgba_subject, theme)
 
-    # ── Step 4: Place subject (right-anchored, slightly oversized) ──────────
-    # Scale so subject height ≈ 95 % of canvas height
+    # -- Step 4: Place subject (right-anchored, slightly oversized) ----------
+    # Scale so subject height ~= 95 % of canvas height
     sub_w, sub_h = rgba_subject.size
     scale = (h * 0.98) / sub_h
     new_w = int(sub_w * scale)
@@ -179,17 +179,17 @@ def _compose_thumbnail(
     canvas_rgba.alpha_composite(rgba_subject, (px, py))
     canvas = canvas_rgba.convert("RGB")
 
-    # ── Step 5: Text block (left side) ──────────────────────────────────────
+    # -- Step 5: Text block (left side) --------------------------------------
     canvas = _draw_text_block(canvas, title, subtitle, theme, variant_seed)
 
-    # ── Step 6: Final polish ────────────────────────────────────────────────
+    # -- Step 6: Final polish ------------------------------------------------
     canvas = ImageEnhance.Sharpness(canvas).enhance(1.15)
     canvas = ImageEnhance.Contrast(canvas).enhance(1.06)
 
     return canvas
 
 
-# ── Background engine ────────────────────────────────────────────────────────
+# -- Background engine --------------------------------------------------------
 
 def _build_background(
     frame: Image.Image,
@@ -212,7 +212,7 @@ def _build_background(
     dark = Image.new("RGBA", size, (0, 0, 0, 130))
     bg = Image.alpha_composite(bg.convert("RGBA"), dark).convert("RGB")
 
-    # Diagonal gradient overlay (top-left → bottom-right)
+    # Diagonal gradient overlay (top-left -> bottom-right)
     grad = _diagonal_gradient(size, theme.bg_top, theme.bg_bottom)
     bg = Image.blend(bg, grad, alpha=0.55)
 
@@ -264,7 +264,7 @@ def _apply_vignette(img: Image.Image, strength: float = 0.6) -> Image.Image:
     return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB")
 
 
-# ── Subject enhancement ──────────────────────────────────────────────────────
+# -- Subject enhancement ------------------------------------------------------
 
 def _enhance_subject(rgba: Image.Image, theme: ProTheme) -> Image.Image:
     """Sharpen + contrast bump + subtle glow halo behind subject."""
@@ -289,7 +289,7 @@ def _enhance_subject(rgba: Image.Image, theme: ProTheme) -> Image.Image:
     return canvas
 
 
-# ── Text engine ──────────────────────────────────────────────────────────────
+# -- Text engine --------------------------------------------------------------
 
 def _draw_text_block(
     canvas: Image.Image,
@@ -311,7 +311,7 @@ def _draw_text_block(
     title_text = title.upper().strip()
     max_text_w = int(w * 0.52)        # use only left ~52% of canvas
 
-    # Pick auto font size: try sizes from large to small until fits ≤ 3 lines
+    # Pick auto font size: try sizes from large to small until fits = 3 lines
     title_font, title_lines, line_height = _autofit_title(
         title_text, max_text_w, max_lines=3, max_size=120, min_size=58,
     )
@@ -380,7 +380,7 @@ def _autofit_title(
     min_size:  int = 58,
 ) -> tuple[ImageFont.FreeTypeFont, list[str], int]:
     """
-    Find the largest font size where the title wraps into ≤ max_lines lines
+    Find the largest font size where the title wraps into = max_lines lines
     that all fit in max_width_px.  Returns (font, lines, line_height_px).
     """
     for size in range(max_size, min_size - 1, -4):
@@ -389,7 +389,7 @@ def _autofit_title(
         if len(lines) <= max_lines and all(
             font.getbbox(ln)[2] <= max_width_px for ln in lines
         ):
-            # Line height ≈ font size * 1.05 (tight)
+            # Candidate fits; keep this font size.
             ascent, descent = font.getmetrics()
             return font, lines, int((ascent + descent) * 1.0)
     # Min size fallback
