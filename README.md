@@ -203,6 +203,7 @@ Principais pontos já estabilizados:
 - Export sem bokeh usa caminho rápido e registra que a segmentação foi pulada.
 - Color grade sem bokeh usa ffmpeg quando possível, sem cair no pipeline frame a frame.
 - Bokeh fast mantém progresso por frame e deixa claro que o efeito roda em CPU com encode selecionado.
+- Cleanup do bokeh fast fecha pipe/captura com mais previsibilidade quando há erro ou cancelamento.
 - Cancelamento de export aciona o evento de cancelamento e registra `[CANCEL]`.
 - `ProcessManager` mantém o registro central de subprocessos ffmpeg/ffprobe e documenta claramente o fluxo de cleanup/cancelamento.
 - Timeline foi protegida contra sobreposição de labels e playhead.

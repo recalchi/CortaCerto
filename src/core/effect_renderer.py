@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import contextlib
 from typing import Callable, Optional
 
 import cv2
@@ -104,23 +105,24 @@ def render_effects_pass(
 
             if on_progress and rendered_frames % 3 == 0:
                 on_progress(
-                    f"Etapa 5/7 - Aplicando bokeh fast | Frame {rendered_frames}/{total_frames} | CPU + {encoder}",
+                    f"Aplicando bokeh fast | Frame {rendered_frames}/{total_frames} | CPU + {encoder}",
                     rendered_frames / total_frames,
                 )
     except Exception:
-        if proc.stdin:
-            try:
+        with contextlib.suppress(Exception):
+            if proc.stdin:
                 proc.stdin.close()
-            except Exception:
-                pass
-        proc.kill()
-        proc.wait(timeout=5)
-        cap.release()
+        with contextlib.suppress(Exception):
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
         raise
+    finally:
+        cap.release()
 
-    cap.release()
-    if proc.stdin:
-        proc.stdin.close()
+    with contextlib.suppress(Exception):
+        if proc.stdin:
+            proc.stdin.close()
     ret = proc.wait(timeout=max(30, total_frames // max(1, int(fps)) * 4))
     if ret != 0:
         tail = b"".join(stderr_chunks).decode("utf-8", errors="replace")[-1200:]
