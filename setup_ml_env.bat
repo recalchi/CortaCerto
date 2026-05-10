@@ -1,9 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
-title ContentForge — Setup ML Environment (Python 3.11)
+title CortaCerto — Setup ML Environment (Python 3.11)
 
 echo ============================================================
-echo  ContentForge ML Environment Setup
+echo  CortaCerto ML Environment Setup
 echo  Requires Python 3.11 + CUDA GPU for full ML stack
 echo ============================================================
 echo.
@@ -88,7 +88,7 @@ echo.
 echo ============================================================
 echo  Setup concluido!
 echo.
-echo  Para usar o ContentForge com ML:
+echo  Para usar o CortaCerto com ML:
 echo    venv311\Scripts\python.exe main.py
 echo.
 echo  Para usar sem ML (Python 3.14, GrabCut):

@@ -2,9 +2,9 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title ContentForge - Instalacao
+title CortaCerto - Instalacao
 echo ============================================================
-echo  ContentForge - Instalacao rapida
+echo  CortaCerto - Instalacao rapida
 echo ============================================================
 echo.
 

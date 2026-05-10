@@ -3,7 +3,7 @@ setlocal EnableExtensions
 cd /d "%~dp0.."
 
 echo ============================================================
-echo  ContentForge - Build do Instalador
+echo  CortaCerto - Build do Instalador
 echo ============================================================
 echo.
 
@@ -60,14 +60,14 @@ if errorlevel 1 (
 
 echo [5/6] Preparando LICENSE.txt...
 if not exist LICENSE.txt (
-    echo ContentForge - Uso pessoal. > LICENSE.txt
+    echo CortaCerto - Uso pessoal. > LICENSE.txt
     echo ffmpeg: https://ffmpeg.org/legal.html >> LICENSE.txt
 )
 
 echo.
 echo [6/6] Gerando executavel com PyInstaller...
 "%VENV_PYTHON%" -m PyInstaller --noconfirm --onedir --windowed ^
-    --name "ContentForge" ^
+    --name "CortaCerto" ^
     --icon "corta_certo_icon.ico" ^
     --add-data "corta_certo_icon.png;." ^
     --hidden-import "PIL._tkinter_finder" ^
@@ -97,7 +97,7 @@ if exist "%ISCC%" (
 ) else (
     echo [AVISO] Inno Setup nao encontrado.
     echo Baixe em: https://jrsoftware.org/isinfo.php
-    echo O executavel standalone esta disponivel em: dist\ContentForge\
+    echo O executavel standalone esta disponivel em: dist\CortaCerto\
 )
 
 echo.

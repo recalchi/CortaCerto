@@ -1,4 +1,4 @@
-# ContentForge
+# CortaCerto
 
 Editor de vídeo profissional para criadores de conteúdo — YouTube, Instagram Reels, TikTok e Shorts.
 
@@ -21,8 +21,8 @@ Corte automático de silêncios, color grade CapCut, bokeh de fundo, e geração
 ### 1. Clonar / baixar o projeto
 
 ```bat
-git clone https://github.com/seu-usuario/ContentForge.git
-cd ContentForge
+git clone https://github.com/seu-usuario/CortaCerto.git
+cd CortaCerto
 ```
 
 ### 2. Instalar dependências
@@ -65,7 +65,7 @@ python main.py
 ## Estrutura de arquivos
 
 ```
-ContentForge/
+CortaCerto/
 ├── main.py                    ponto de entrada
 ├── run.bat                    atalho de execução
 ├── install.bat                instalação rápida
@@ -107,7 +107,7 @@ ContentForge/
 
 ### Arquivos gerados
 
-Salvos em `ContentForge_output/` na mesma pasta do vídeo original:
+Salvos em `CortaCerto_output/` na mesma pasta do vídeo original:
 
 | Arquivo | Descrição |
 |---|---|
