@@ -2,7 +2,7 @@ import unittest
 
 from PIL import Image
 
-from src.ui.app import _fit_preview_image
+from src.ui.app import _fit_preview_image, _removed_ranges_from_segments
 
 
 class PreviewUiTests(unittest.TestCase):
@@ -19,6 +19,11 @@ class PreviewUiTests(unittest.TestCase):
         resized = _fit_preview_image(image, 1, 1)
 
         self.assertEqual(resized.size, (1, 1))
+
+    def test_removed_ranges_from_segments(self) -> None:
+        removed = _removed_ranges_from_segments(10.0, [(1.0, 3.0), (5.0, 8.0)])
+
+        self.assertEqual(removed, [(0.0, 1.0), (3.0, 5.0), (8.0, 10.0)])
 
 
 if __name__ == "__main__":

@@ -57,6 +57,7 @@ class ProcessingConfig:
     remove_silence:     bool = True
     generate_thumbnail: bool = True
     generate_vertical:  bool = False
+    manual_segments:    list[tuple[float, float]] | None = None
 
     # Render quality (used for CPU fallback; GPU auto-selects optimal settings)
     video_crf:    int = 18

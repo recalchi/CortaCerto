@@ -198,11 +198,15 @@ Principais pontos já estabilizados:
 - Primeiro frame volta a aparecer após carregar vídeo.
 - Carregamento de vídeo pede primeiro um frame rápido sem efeitos, depois atualiza o preview completo.
 - Resize do preview tem teste unitário para evitar regressão como `Image`/`ImageTk` quebrado.
+- Reprodução no preview usa caminho rápido sem efeitos por frame para ficar assistível durante a edição.
+- Timeline permite selecionar clipe, dividir no playhead e excluir clipe; export respeita os segmentos editados.
+- Controle de silêncio ganhou ajuste de fala mínima para evitar microclipes e cortes nervosos.
 - Sliders de color grade e bokeh solicitam novo frame sem bloquear a UI.
 - Callback do preview agora entrega frames pela fila da UI, mantendo renderização no thread principal.
 - Timeline, play loop e diagnósticos de encode/segmentação também retornam para a UI pela fila principal.
 - Play, pause e seek usam o mesmo caminho de preview.
 - Export sem bokeh usa caminho rápido e registra que a segmentação foi pulada.
+- Export limpa arquivos intermediários (`_effects`, `_effects_muxed`, `_audio`) e mantém o vídeo final como `{nome}_editado.mp4`.
 - Color grade sem bokeh usa ffmpeg quando possível, sem cair no pipeline frame a frame.
 - Bokeh fast mantém progresso por frame e deixa claro que o efeito roda em CPU com encode selecionado.
 - Cleanup do bokeh fast fecha pipe/captura com mais previsibilidade quando há erro ou cancelamento.
