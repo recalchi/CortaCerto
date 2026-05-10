@@ -1,6 +1,6 @@
 """
 Audio analysis: silence detection via ffmpeg silencedetect filter.
-No pydub/audioop dependency — works on any Python version.
+No pydub/audioop dependency - works on any Python version.
 """
 import re
 import subprocess
@@ -26,7 +26,7 @@ def analyze_video(
     on_progress: Optional[Callable[[str], None]] = None,
 ) -> AudioAnalysis:
     if on_progress:
-        on_progress("Detectando silêncios com ffmpeg…")
+        on_progress("Detectando silêncios com ffmpeg...")
 
     duration_s = _get_duration(video_path)
     silence_periods = _run_silencedetect(video_path, silence_threshold_db, min_silence_ms / 1000.0)
@@ -42,7 +42,7 @@ def _get_duration(video_path: str) -> float:
     try:
         return float(result.stdout.strip())
     except ValueError:
-        raise RuntimeError("Não foi possível obter a duração do vídeo — verifique se o arquivo é válido.")
+        raise RuntimeError("Não foi possível obter a duração do vídeo; verifique se o arquivo é válido.")
 
 
 def _run_silencedetect(video_path: str, noise_db: float, min_silence_s: float) -> List[Tuple[float, float]]:
@@ -77,7 +77,7 @@ def _build_analysis(
     padding_s: float,
     min_segment_s: float,
 ) -> AudioAnalysis:
-    # Invert silence → speech
+    # Invert silence -> speech
     speech: List[List[float]] = []
     cursor = 0.0
     for sil_start, sil_end in sorted(silence_periods):

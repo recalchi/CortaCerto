@@ -1,10 +1,4 @@
-"""
-Garante que ffmpeg esteja disponível no PATH do processo Python.
-
-O winget adiciona ffmpeg ao PATH do usuário (HKCU), mas processos já em execução
-não herdam essa mudança. Este módulo relê o PATH do registro e também busca
-em locais conhecidos de instalação (WinGet, Chocolatey, Scoop).
-"""
+"""Ensure ffmpeg/ffprobe are available to the Python process."""
 import os
 import shutil
 import subprocess
@@ -15,6 +9,8 @@ from pathlib import Path
 _FFMPEG_BIN: str | None = None
 
 _FALLBACK_LOCATIONS = [
+    # WinGet/App Execution Aliases
+    Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/WindowsApps",
     # WinGet (Gyan.FFmpeg)
     Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/WinGet/Packages",
     # Chocolatey
@@ -48,6 +44,14 @@ def _find_in_winget_packages(base: Path) -> str | None:
     return None
 
 
+def _append_path(path: Path | str) -> None:
+    path_s = str(path)
+    current = os.environ.get("PATH", "")
+    parts = [p.lower() for p in current.split(os.pathsep) if p]
+    if path_s.lower() not in parts:
+        os.environ["PATH"] = path_s + os.pathsep + current
+
+
 def ensure_ffmpeg() -> str:
     """
     Return the resolved path to the ffmpeg executable.
@@ -61,7 +65,8 @@ def ensure_ffmpeg() -> str:
     # 1. Merge current process PATH with User registry PATH
     user_path = _read_registry_path()
     current_path = os.environ.get("PATH", "")
-    merged = current_path + os.pathsep + user_path
+    windows_apps = str(Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/WindowsApps")
+    merged = current_path + os.pathsep + user_path + os.pathsep + windows_apps
     os.environ["PATH"] = merged
 
     found = shutil.which("ffmpeg")
@@ -72,7 +77,7 @@ def ensure_ffmpeg() -> str:
     # 2. Scan fallback locations
     for loc in _FALLBACK_LOCATIONS:
         if loc.is_dir() and (loc / "ffmpeg.exe").exists():
-            os.environ["PATH"] = str(loc) + os.pathsep + os.environ["PATH"]
+            _append_path(loc)
             _FFMPEG_BIN = str(loc / "ffmpeg.exe")
             return _FFMPEG_BIN
 
@@ -80,7 +85,7 @@ def ensure_ffmpeg() -> str:
     winget_base = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/WinGet/Packages"
     winget_bin = _find_in_winget_packages(winget_base)
     if winget_bin:
-        os.environ["PATH"] = winget_bin + os.pathsep + os.environ["PATH"]
+        _append_path(winget_bin)
         _FFMPEG_BIN = str(Path(winget_bin) / "ffmpeg.exe")
         return _FFMPEG_BIN
 
@@ -107,7 +112,7 @@ def ffprobe() -> str:
     raise RuntimeError("ffprobe não encontrado.")
 
 
-# ── GPU / encoder detection ──────────────────────────────────────────────────
+# -- GPU / encoder detection --------------------------------------------------
 
 _ENCODER_CACHE: tuple[str, list[str]] | None = None
 
@@ -116,7 +121,7 @@ def detect_video_encoder(force: bool = False) -> tuple[str, list[str]]:
     """
     Detect best available H.264 encoder.
     Returns (encoder_name, extra_ffmpeg_args).
-    Order: NVENC → AMF → QSV → libx264 (CPU fallback).
+    Order: NVENC - AMF - QSV - libx264 (CPU fallback).
     Result is cached after first call.
     """
     global _ENCODER_CACHE
@@ -129,8 +134,8 @@ def detect_video_encoder(force: bool = False) -> tuple[str, list[str]]:
         "-frames:v", "3",
     ]
 
-    # NVENC requires minimum ~256×144; use 320×240 to be safe.
-    # Use mp4 output — some encoders fail with -f null.
+    # NVENC requires minimum ~256x144; use 320x240 to be safe.
+    # Use mp4 output; some encoders fail with -f null.
     null_out = "NUL" if os.name == "nt" else "/dev/null"
     _base = [
         ffmpeg(), "-y", "-f", "lavfi",

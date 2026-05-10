@@ -31,13 +31,13 @@ from .process_manager import ProcessManager, CancelledError          # canonical
 from ..ffmpeg_env import ffmpeg, ffprobe, detect_video_encoder
 
 
-# ── Re-export CancelledError so existing imports from .editor still work ────
+# -- Re-export CancelledError so existing imports from .editor still work ----
 __all__ = ["CancelledError", "cut_silence", "convert_to_vertical",
            "get_video_duration", "get_video_fps", "RenderStats",
            "build_bokeh_filter_complex"]
 
 
-# ── Data ────────────────────────────────────────────────────────────────────
+# -- Data --------------------------------------------------------------------
 
 @dataclass
 class SegmentEffect:
@@ -55,7 +55,7 @@ class RenderStats:
     render_time_s:         float = 0.0
 
 
-# ── Public ───────────────────────────────────────────────────────────────────
+# -- Public -------------------------------------------------------------------
 
 def cut_silence(
     video_path: str,
@@ -131,7 +131,7 @@ def cut_silence(
                 processed_s += seg_dur
 
             pm.check_cancel()
-            prog("Unindo segmentos…", 0.80)
+            prog("Unindo segmentos...", 0.80)
 
             concat_input = "concat:" + "|".join(seg_paths)
             needs_postprocess = music_path or noise_reduction
@@ -145,7 +145,7 @@ def cut_silence(
                 context="unir segmentos", timeout_s=120,
             )
 
-            # ── Step A: video re-encode (bokeh + color grade via NVENC) ──────
+            # -- Step A: video re-encode (bokeh + color grade via NVENC) ------
             grade_vf = build_color_filter(color_grade) if color_grade else ""
             fc_str, fc_out = build_bokeh_filter_complex(
                 bokeh_intensity, face_x, face_y, face_size, grade_vf
@@ -154,7 +154,7 @@ def cut_silence(
 
             if needs_vf:
                 pm.check_cancel()
-                prog("Aplicando color grade e bokeh…", 0.82)
+                prog("Aplicando color grade e bokeh...", 0.82)
                 pre_vf      = joined_path
                 joined_path = os.path.join(tmp, "grade.mp4")
                 timeout_vf  = max(120.0, total_dur * 40.0)
@@ -179,14 +179,14 @@ def cut_silence(
                 pm.run_checked(cmd_vf, context="color grade", timeout_s=timeout_vf)
                 prog("Color grade aplicado.", 0.86)
 
-            # ── Step B: audio normalization (fast — video stream copied) ─────
+            # -- Step B: audio normalization (fast - video stream copied) -----
             af_parts: list[str] = []
             if noise_reduction:
                 af_parts.append("afftdn=nf=-25")
             af_parts.append("loudnorm=I=-16:TP=-1.5:LRA=11")
 
             pm.check_cancel()
-            prog("Normalizando áudio…", 0.88)
+            prog("Normalizando áudio...", 0.88)
             pre_audio   = joined_path
             joined_path = os.path.join(tmp, "audio.mp4")
             pm.run_checked(
@@ -198,10 +198,10 @@ def cut_silence(
                 context="áudio", timeout_s=max(60.0, total_dur * 5.0),
             )
 
-            # ── Music mix ────────────────────────────────────────────────────
+            # -- Music mix ----------------------------------------------------
             if music_path and os.path.exists(music_path):
                 pm.check_cancel()
-                prog("Mixando música de fundo…", 0.92)
+                prog("Mixando música de fundo...", 0.92)
                 pre_music   = joined_path
                 joined_path = os.path.join(tmp, "with_music.mp4")
                 _mix_music(pre_music, music_path, joined_path, total_dur, pm=pm)
@@ -226,7 +226,7 @@ def convert_to_vertical(
     on_progress: Optional[Callable[[str, float], None]] = None,
 ) -> None:
     if on_progress:
-        on_progress("Convertendo para formato vertical…", 0.0)
+        on_progress("Convertendo para formato vertical...", 0.0)
 
     encoder, enc_args = detect_video_encoder()
     vf = f"scale=-1:{target_height}:flags=lanczos,crop={target_width}:{target_height}"
@@ -275,7 +275,7 @@ def get_video_fps(video_path: str) -> float:
         return 30.0
 
 
-# ── Effect planning ──────────────────────────────────────────────────────────
+# -- Effect planning ----------------------------------------------------------
 
 def _plan_effects(segments: list[tuple[float, float]]) -> list[SegmentEffect]:
     n = len(segments)
@@ -305,7 +305,7 @@ def _plan_effects(segments: list[tuple[float, float]]) -> list[SegmentEffect]:
     return fx
 
 
-# ── Bokeh (background soft-focus) ────────────────────────────────────────────
+# -- Bokeh (background soft-focus) --------------------------------------------
 
 def build_bokeh_filter_complex(
     intensity: float,
@@ -326,7 +326,7 @@ def build_bokeh_filter_complex(
     if intensity < 0.05:
         return "", ""
 
-    sigma = int(3 + intensity * 10)   # blur sigma 3–13
+    sigma = int(3 + intensity * 10)   # blur sigma 3-13
 
     # Body centre (slightly below face to include shoulders)
     bx = face_x
@@ -354,7 +354,7 @@ def build_bokeh_filter_complex(
     return ";".join(parts), out_label
 
 
-# ── Segment renderer ─────────────────────────────────────────────────────────
+# -- Segment renderer ---------------------------------------------------------
 
 def _render_segment(
     video_path: str,
@@ -404,7 +404,7 @@ def _render_segment(
                    timeout_s=timeout_s)
 
 
-# ── Music mixer ──────────────────────────────────────────────────────────────
+# -- Music mixer --------------------------------------------------------------
 
 def _mix_music(
     video_path: str,

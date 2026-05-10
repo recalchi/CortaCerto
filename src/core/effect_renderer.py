@@ -7,8 +7,8 @@ from typing import Callable, Optional
 import cv2
 
 from ..ffmpeg_env import detect_video_encoder, ffmpeg
-from .color_grade import ColorGrade
-from .process_manager import CancelledError
+from .color_grade import ColorGrade, build_filter as build_color_filter
+from .process_manager import CancelledError, ProcessManager
 from .subject_tracking import SubjectTracker
 from .video_effects import apply_video_effects_bgr
 
@@ -27,15 +27,29 @@ def render_effects_pass(
         return input_video
 
     cancel = cancel or threading.Event()
+    if bokeh_intensity < 0.05 and color_grade and color_grade.enabled:
+        return _render_color_grade_ffmpeg(
+            input_video,
+            output_video,
+            color_grade,
+            cancel=cancel,
+            on_progress=on_progress,
+        )
+
     cap = cv2.VideoCapture(input_video)
     if not cap.isOpened():
-        raise RuntimeError("Nao foi possivel abrir o video para renderizar os efeitos.")
+        raise RuntimeError("Não foi possível abrir o vídeo para renderizar os efeitos.")
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = max(1.0, cap.get(cv2.CAP_PROP_FPS))
     total_frames = max(1, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
     encoder, enc_args = detect_video_encoder()
+    if on_progress:
+        on_progress(
+            f"Bokeh fast em CPU; encode de saída com {encoder}.",
+            0.0,
+        )
     cmd = [
         ffmpeg(),
         "-loglevel", "error",
@@ -84,13 +98,13 @@ def render_effects_pass(
                 tracker=tracker,
             )
             if proc.stdin is None:
-                raise RuntimeError("Encoder pipe indisponivel.")
+                raise RuntimeError("Pipe do encoder indisponível.")
             proc.stdin.write(rendered.tobytes())
             rendered_frames += 1
 
             if on_progress and rendered_frames % 3 == 0:
                 on_progress(
-                    f"Aplicando color grade + segmentacao [{encoder}]",
+                    f"Etapa 5/7 - Aplicando bokeh fast | Frame {rendered_frames}/{total_frames} | CPU + {encoder}",
                     rendered_frames / total_frames,
                 )
     except Exception:
@@ -113,5 +127,43 @@ def render_effects_pass(
         raise RuntimeError(f"Falha ao renderizar os efeitos.\n{tail}")
 
     if on_progress:
-        on_progress(f"Efeitos renderizados com {encoder}.", 1.0)
+        on_progress(f"Efeitos renderizados. Bokeh: CPU | Encode: {encoder}.", 1.0)
+    return output_video
+
+
+def _render_color_grade_ffmpeg(
+    input_video: str,
+    output_video: str,
+    color_grade: ColorGrade,
+    cancel: threading.Event,
+    on_progress: Optional[Callable[[str, float], None]] = None,
+) -> str:
+    vf = build_color_filter(color_grade)
+    if not vf:
+        return input_video
+
+    encoder, enc_args = detect_video_encoder()
+    if on_progress:
+        on_progress(
+            f"Bokeh desativado; color grade via ffmpeg. Encode: {encoder}.",
+            0.0,
+        )
+
+    with ProcessManager(cancel) as pm:
+        pm.run_checked(
+            [
+                ffmpeg(), "-y",
+                "-i", input_video,
+                "-vf", vf,
+                "-an",
+                "-c:v", encoder, *enc_args,
+                "-pix_fmt", "yuv420p",
+                output_video,
+            ],
+            context="color grade",
+            timeout_s=900,
+        )
+
+    if on_progress:
+        on_progress(f"Color grade renderizado via ffmpeg. Encode: {encoder}.", 1.0)
     return output_video
