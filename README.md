@@ -204,6 +204,7 @@ Principais pontos já estabilizados:
 - Color grade sem bokeh usa ffmpeg quando possível, sem cair no pipeline frame a frame.
 - Bokeh fast mantém progresso por frame e deixa claro que o efeito roda em CPU com encode selecionado.
 - Cancelamento de export aciona o evento de cancelamento e registra `[CANCEL]`.
+- `ProcessManager` mantém o registro central de subprocessos ffmpeg/ffprobe e documenta claramente o fluxo de cleanup/cancelamento.
 - Timeline foi protegida contra sobreposição de labels e playhead.
 - Diagnóstico de encode diferencia CPU, NVENC, AMF e QSV.
 - Instalador foi reforçado para não acusar falha quando o FFmpeg foi instalado mas o shell ainda não atualizou o PATH.
