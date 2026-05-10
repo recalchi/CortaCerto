@@ -98,11 +98,27 @@ def run_pipeline(
             on_progress=lambda msg: prog(f"[2/6] {msg}", 0.10),
         )
         result.analysis = analysis
+        if config.manual_segments is not None:
+            manual_segments = [
+                (max(0.0, float(start)), min(result.original_duration_s, float(end)))
+                for start, end in config.manual_segments
+                if end > start
+            ]
+            manual_time = sum(end - start for start, end in manual_segments)
+            analysis = AudioAnalysis(
+                duration_s=analysis.duration_s,
+                speech_segments=manual_segments,
+                silence_ratio=1.0 - (manual_time / analysis.duration_s) if analysis.duration_s > 0 else 0.0,
+            )
+            result.analysis = analysis
+            prog(f"[2/6] Timeline manual aplicada: {len(manual_segments)} clipes.", 0.15)
         pct = analysis.silence_ratio * 100
         prog(f"[2/6] Análise: {pct:.1f}% silêncio e {len(analysis.speech_segments)} segmentos.", 0.16)
 
         # ── 3. Cut silence + effects ────────────────────────────────────────
         source = video_path
+        export_keep: set[str] = set()
+        export_intermediate: set[str] = set()
         if config.remove_silence:
             main_out = os.path.join(output_dir, f"{base}_editado.mp4")
             render_stats = cut_silence(
@@ -124,6 +140,9 @@ def run_pipeline(
             result.main_video   = main_out
             result.render_stats = render_stats
             source = main_out
+            export_keep.add(main_out)
+            if config.color_grade.enabled or config.bokeh_intensity >= 0.05 or config.noise_reduction or config.music_path:
+                export_intermediate.add(main_out)
             prog(f"[3/6] Timeline consolidada [{render_stats.encoder_used}].", 0.50)
         else:
             result.main_video = video_path
@@ -138,6 +157,7 @@ def run_pipeline(
 
         if config.color_grade.enabled or config.bokeh_intensity >= 0.05:
             effect_out = os.path.join(output_dir, f"{base}_effects.mp4")
+            export_intermediate.add(effect_out)
             rendered = render_effects_pass(
                 source,
                 effect_out,
@@ -147,6 +167,7 @@ def run_pipeline(
                 on_progress=lambda msg, p: prog(f"[4/6] {msg}", 0.50 + p * 0.20),
             )
             muxed_out = os.path.join(output_dir, f"{base}_effects_muxed.mp4")
+            export_intermediate.add(muxed_out)
             with ProcessManager(cancel) as pm:
                 pm.run_checked(
                     [
@@ -164,6 +185,7 @@ def run_pipeline(
                     timeout_s=max(120.0, result.final_duration_s * 6.0),
                 )
             source = muxed_out
+            export_keep.add(muxed_out)
             prog("[4/6] Passe de efeitos sincronizado com a timeline.", 0.70)
         else:
             prog("[4/6] Sem color grade/bokeh; usando caminho rápido sem passe frame a frame.", 0.70)
@@ -176,6 +198,7 @@ def run_pipeline(
                 af_parts.append("loudnorm=I=-16:TP=-1.5:LRA=11")
 
                 audio_out = os.path.join(output_dir, f"{base}_audio.mp4")
+                export_intermediate.add(audio_out)
                 prog("[5/6] Normalizando áudio...", 0.74)
                 pm.run_checked(
                     [
@@ -191,17 +214,27 @@ def run_pipeline(
                     timeout_s=max(60.0, result.final_duration_s * 5.0),
                 )
                 source = audio_out
+                export_keep.add(audio_out)
                 prog("[5/6] Áudio normalizado com loudnorm.", 0.82)
 
                 if config.music_path and os.path.exists(config.music_path):
                     music_out = os.path.join(output_dir, f"{base}_master.mp4")
                     _mix_music(source, config.music_path, music_out, result.final_duration_s, pm=pm)
                     source = music_out
+                    export_keep.add(music_out)
                 prog("[5/6] Trilha final pronta.", 0.86)
         else:
             prog("[5/6] Áudio mantido sem pós-processamento.", 0.86)
 
+        final_project_out = os.path.join(output_dir, f"{base}_editado.mp4")
+        if source != video_path and source != final_project_out:
+            os.replace(source, final_project_out)
+            export_intermediate.add(source)
+            source = final_project_out
         result.main_video = source
+        export_keep = {source}
+        export_keep.add(source)
+        _cleanup_intermediate_exports(export_intermediate - export_keep)
         result.final_duration_s = get_video_duration(source)
 
         # ── 4. Vertical version ─────────────────────────────────────────────
@@ -270,3 +303,12 @@ def run_pipeline(
             on_progress(f"Erro: {exc}", -1.0)
 
     return result
+
+
+def _cleanup_intermediate_exports(paths: set[str]) -> None:
+    for path in paths:
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass

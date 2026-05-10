@@ -17,7 +17,7 @@ from ..config import ProcessingConfig, Platform, SilenceStyle, PRESETS
 from ..core.audio_waveform import extract_waveform
 from ..core.color_grade import ColorGrade, PRESET_CAPCUT
 from ..core.preview_engine import PreviewEngine, PreviewFrame, PreviewSettings
-from ..core.timeline_model import TimelineModel, build_timeline_model
+from ..core.timeline_model import TimelineClip, TimelineModel, build_timeline_model
 from ..pipeline import run_pipeline, PipelineResult
 from ..ffmpeg_env import encoder_label
 
@@ -78,6 +78,8 @@ class CortaCertoApp:
         self._segments:     list[tuple[float,float]] = []
         self._analysis_done = False
         self._timeline_model: Optional[TimelineModel] = None
+        self._selected_clip_index: Optional[int] = None
+        self._timeline_dirty = False
         self._waveform_zoom = 1.0
         self._export_modal = None
         self._export_stage_var = None
@@ -276,6 +278,12 @@ class CortaCertoApp:
         )
         self._tl_zoom.set(1.0)
         self._tl_zoom.pack(side="right", padx=(8, 0))
+        tk.Button(hdr, text="Dividir", command=self._split_selected_clip,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=8,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).pack(side="right", padx=(8, 0))
+        tk.Button(hdr, text="Excluir", command=self._delete_selected_clip,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=8,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).pack(side="right", padx=(8, 0))
 
         self._tl_canvas = tk.Canvas(tl_outer, bg=TL_BG, height=120,
                                      highlightthickness=0, cursor="hand2")
@@ -292,12 +300,66 @@ class CortaCertoApp:
         w   = self._tl_canvas.winfo_width()
         pct = max(0.0, min(1.0, event.x / w))
         frame = int(pct * self._total_frames)
+        self._select_clip_at_time((frame / max(1, self._total_frames)) * self._duration_s)
         self._seek_to(frame)
 
     # -- Properties panel ------------------------------------------------------
 
     def _on_timeline_zoom(self, value: float) -> None:
         self._waveform_zoom = float(value)
+        self._redraw_timeline()
+
+    def _select_clip_at_time(self, time_s: float) -> None:
+        self._selected_clip_index = None
+        if self._timeline_model:
+            for idx, clip in enumerate(self._timeline_model.video_track.clips):
+                if clip.start_s <= time_s <= clip.end_s:
+                    self._selected_clip_index = idx
+                    break
+        self._redraw_timeline()
+
+    def _split_selected_clip(self) -> None:
+        if not self._timeline_model or self._selected_clip_index is None:
+            self._tb_status.configure(text="Selecione um clipe na timeline para dividir.")
+            return
+        clip = self._timeline_model.video_track.clips[self._selected_clip_index]
+        split_s = self._current_frame / max(1.0, self._fps)
+        if split_s <= clip.start_s + 0.15 or split_s >= clip.end_s - 0.15:
+            self._tb_status.configure(text="Posicione o playhead dentro do clipe para dividir.")
+            return
+        clips = self._timeline_model.video_track.clips
+        clips[self._selected_clip_index:self._selected_clip_index + 1] = [
+            TimelineClip(clip.start_s, split_s, clip.clip_type, clip.label),
+            TimelineClip(split_s, clip.end_s, clip.clip_type, f"Clip {self._selected_clip_index + 2}"),
+        ]
+        self._sync_manual_timeline()
+        self._timeline_dirty = True
+        self._selected_clip_index += 1
+        self._tb_status.configure(text="Clipe dividido.")
+
+    def _delete_selected_clip(self) -> None:
+        if not self._timeline_model or self._selected_clip_index is None:
+            self._tb_status.configure(text="Selecione um clipe na timeline para excluir.")
+            return
+        del self._timeline_model.video_track.clips[self._selected_clip_index]
+        self._selected_clip_index = None
+        self._sync_manual_timeline()
+        self._timeline_dirty = True
+        self._tb_status.configure(text="Clipe removido da timeline.")
+
+    def _sync_manual_timeline(self) -> None:
+        if not self._timeline_model:
+            return
+        clips = self._timeline_model.video_track.clips
+        for idx, clip in enumerate(clips, start=1):
+            clip.label = f"Clip {idx}"
+        self._timeline_model.audio_track.clips = [
+            TimelineClip(c.start_s, c.end_s, c.clip_type, c.label) for c in clips
+        ]
+        self._segments = [(c.start_s, c.end_s) for c in clips]
+        self._timeline_model.removed_ranges = _removed_ranges_from_segments(self._duration_s, self._segments)
+        self._timeline_model.saved_time_s = sum(end - start for start, end in self._timeline_model.removed_ranges)
+        self._analysis_done = True
         self._redraw_timeline()
 
     def _redraw_timeline(self) -> None:
@@ -329,10 +391,12 @@ class CortaCertoApp:
         c.create_rectangle(label_w, video_y1, w - 8, video_y2, fill="#1b2130", outline="")
         c.create_rectangle(label_w, audio_y1, w - 8, audio_y2, fill="#171b24", outline="")
 
-        for clip in self._timeline_model.video_track.clips:
+        for idx, clip in enumerate(self._timeline_model.video_track.clips):
             x1 = self._time_to_x(clip.start_s, label_w, w - 8)
             x2 = self._time_to_x(clip.end_s, label_w, w - 8)
-            c.create_rectangle(x1, video_y1 + 2, x2, video_y2 - 2, fill=TL_SPEECH, outline="")
+            outline = C_YELLOW if idx == self._selected_clip_index else ""
+            width = 2 if idx == self._selected_clip_index else 1
+            c.create_rectangle(x1, video_y1 + 2, x2, video_y2 - 2, fill=TL_SPEECH, outline=outline, width=width)
             if x2 - x1 > 56:
                 c.create_text((x1 + x2) // 2, (video_y1 + video_y2) // 2, text=clip.label, fill="#d6e6ff", font=("Segoe UI", 8))
 
@@ -454,12 +518,14 @@ class CortaCertoApp:
                           -70, -10, -40, 1, 10)
         self._prop_slider(s, "Padding de áudio (ms)", "padding",
                           0, 500, 150, 10, 11)
+        self._prop_slider(s, "Fala mínima (ms)", "min_segment_ms",
+                          200, 2000, 300, 100, 12)
 
         # -- Color Grade ---------------------------------------------------
-        self._section(s, "COLOR GRADE", 12)
+        self._section(s, "COLOR GRADE", 13)
         self._color_enabled = tk.BooleanVar(value=True)
         cf = tk.Frame(s, bg=C_PANEL)
-        cf.grid(row=13, column=0, sticky="ew", padx=10, pady=(0,4))
+        cf.grid(row=14, column=0, sticky="ew", padx=10, pady=(0,4))
         cf.grid_columnconfigure(1, weight=1)
         self._check_frame(cf, "Aplicar grade", self._color_enabled, 0,
                           command=self._schedule_preview)
@@ -485,21 +551,21 @@ class CortaCertoApp:
         ]
         for row_off, (label, key, lo, hi, default, fc, pc) in enumerate(color_defs):
             self._color_slider(s, label, key, lo, hi, default, fc, pc,
-                               row=14 + row_off)
+                               row=15 + row_off)
 
         # -- Bokeh ---------------------------------------------------------
-        self._section(s, "BOKEH  (desfoque de fundo)", 21)
+        self._section(s, "BOKEH  (desfoque de fundo)", 22)
         self._bokeh_slider = self._prop_slider(
-            s, "Intensidade", "bokeh", 0, 100, 0, 1, 22,
+            s, "Intensidade", "bokeh", 0, 100, 0, 1, 23,
             suffix="%", color="#223366", prog="#6699dd")
 
         # -- Audio ---------------------------------------------------------
-        self._section(s, "ÁUDIO", 23)
+        self._section(s, "ÁUDIO", 24)
         self._noise_var = tk.BooleanVar(value=True)
-        self._check(s, "Redução de ruído + loudnorm EBU R128", self._noise_var, 24)
+        self._check(s, "Redução de ruído + loudnorm EBU R128", self._noise_var, 25)
 
         mf = tk.Frame(s, bg=C_PANEL)
-        mf.grid(row=25, column=0, sticky="ew", padx=10, pady=(0,6))
+        mf.grid(row=26, column=0, sticky="ew", padx=10, pady=(0,6))
         mf.grid_columnconfigure(1, weight=1)
         tk.Label(mf, text="Música:", bg=C_PANEL, fg=C_MUTED,
                  font=("Segoe UI", 10)).grid(row=0, column=0, sticky="w")
@@ -514,11 +580,11 @@ class CortaCertoApp:
                   cursor="hand2", bd=0).grid(row=0, column=3)
 
         # -- Thumbnails ----------------------------------------------------
-        self._section(s, "THUMBNAILS", 26)
+        self._section(s, "THUMBNAILS", 27)
         self._gen_thumb_var  = tk.BooleanVar(value=True)
         self._gen_vert_var   = tk.BooleanVar(value=False)
-        self._check(s, "Gerar 5 thumbnails profissionais", self._gen_thumb_var, 27)
-        self._check(s, "Versão vertical 9:16", self._gen_vert_var, 28)
+        self._check(s, "Gerar 5 thumbnails profissionais", self._gen_thumb_var, 28)
+        self._check(s, "Versão vertical 9:16", self._gen_vert_var, 29)
 
         # -- Preview update btn --------------------------------------------
         ctk.CTkButton(s, text="Atualizar preview",
@@ -646,6 +712,7 @@ class CortaCertoApp:
         self._segments     = []
         self._analysis_done= False
         self._timeline_model = None
+        self._timeline_dirty = False
         self._total_frames = self._preview_engine.total_frames
         self._fps          = self._preview_engine.fps
         self._duration_s   = self._preview_engine.duration_s
@@ -690,6 +757,7 @@ class CortaCertoApp:
                 float(self._sliders["silence_db"].get()),
                 _MS[style],
                 int(self._sliders["padding"].get()),
+                float(self._sliders["min_segment_ms"].get()) / 1000.0,
             ),
             daemon=True,
         ).start()
@@ -701,6 +769,7 @@ class CortaCertoApp:
         silence_threshold_db: float,
         min_silence_ms: int,
         audio_padding_ms: int,
+        min_segment_s: float,
     ) -> None:
         """Analyze audio silences in background and update timeline."""
         if not video_path:
@@ -712,7 +781,7 @@ class CortaCertoApp:
                 silence_threshold_db=silence_threshold_db,
                 min_silence_ms=min_silence_ms,
                 audio_padding_ms=audio_padding_ms,
-                min_segment_s=0.3,
+                min_segment_s=min_segment_s,
             )
             waveform = extract_waveform(video_path, duration_s, bins=420)
             timeline_model = build_timeline_model(
@@ -831,7 +900,8 @@ class CortaCertoApp:
                 bokeh_intensity=0.0,
             )
             self._preview_bootstrap_key = settings.cache_key()
-            self._tb_status.configure(text="Carregando primeiro frame...")
+            if not self._playing:
+                self._tb_status.configure(text="Carregando primeiro frame...")
             self._preview_engine.request_frame(self._current_frame, settings)
             return
 
@@ -946,16 +1016,24 @@ class CortaCertoApp:
     def _build_config(self) -> ProcessingConfig:
         plat_map  = {p.value: p for p in Platform}
         style_map = {s.value: s for s in SilenceStyle}
+        should_cut_timeline = self._rm_silence_var.get() or self._timeline_dirty
+        manual_segments = (
+            list(self._segments)
+            if should_cut_timeline and self._analysis_done and self._timeline_model is not None
+            else None
+        )
         return ProcessingConfig(
             silence_threshold_db = float(self._sliders["silence_db"].get()),
             silence_style        = style_map.get(self._silence_var.get(),
                                                   SilenceStyle.NATURAL),
             audio_padding_ms     = int(self._sliders["padding"].get()),
+            min_segment_s        = float(self._sliders["min_segment_ms"].get()) / 1000.0,
             platform             = plat_map.get(self._platform_var.get(),
                                                   Platform.YOUTUBE),
-            remove_silence       = self._rm_silence_var.get(),
+            remove_silence       = should_cut_timeline,
             generate_thumbnail   = self._gen_thumb_var.get(),
             generate_vertical    = self._gen_vert_var.get(),
+            manual_segments      = manual_segments,
             apply_zoom_effects   = True,
             apply_transitions    = True,
             color_grade          = self._build_color_grade(),
@@ -1090,7 +1168,7 @@ class CortaCertoApp:
                         self._tb_status.configure(text="Preview pronto. Timeline indisponível.")
                         print(f"[TIMELINE] Falha ao analisar timeline: {detail}")
                 elif msg == "__PLAY_FRAME__":
-                    self._draw_frame_at(val)
+                    self._draw_frame_at(val, fast=True)
                     self._update_time_label()
                     self._update_tl_playhead()
                 elif msg == "__PLAY_STOP__":
@@ -1252,3 +1330,18 @@ def _fit_preview_image(image: Image.Image, canvas_w: int, canvas_h: int) -> Imag
     nw = max(1, int(iw * scale))
     nh = max(1, int(ih * scale))
     return image.resize((nw, nh), Image.LANCZOS)
+
+
+def _removed_ranges_from_segments(
+    duration_s: float,
+    segments: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    removed: list[tuple[float, float]] = []
+    cursor = 0.0
+    for start_s, end_s in sorted(segments):
+        if start_s > cursor:
+            removed.append((cursor, start_s))
+        cursor = max(cursor, end_s)
+    if cursor < duration_s:
+        removed.append((cursor, duration_s))
+    return removed
