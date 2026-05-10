@@ -1,12 +1,12 @@
-; ContentForge — Inno Setup Script
+; CortaCerto - Inno Setup Script
 ; Compile with: iscc setup.iss
 ; Download Inno Setup: https://jrsoftware.org/isinfo.php
 
-#define AppName "ContentForge"
+#define AppName "CortaCerto"
 #define AppVersion "1.0"
-#define AppPublisher "ContentForge"
+#define AppPublisher "CortaCerto"
 #define AppURL "https://github.com"
-#define AppExeName "ContentForge.exe"
+#define AppExeName "CortaCerto.exe"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -21,7 +21,7 @@ DefaultGroupName={#AppName}
 AllowNoIcons=yes
 LicenseFile=..\LICENSE.txt
 OutputDir=..\dist\installer
-OutputBaseFilename=ContentForge_Setup_v{#AppVersion}
+OutputBaseFilename=CortaCerto_Setup_v{#AppVersion}
 SetupIconFile=..\corta_certo_icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -33,7 +33,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExeName}
 VersionInfoVersion={#AppVersion}.0.0
 VersionInfoCompany={#AppPublisher}
-VersionInfoDescription=ContentForge Video Editor
+VersionInfoDescription=CortaCerto Video Editor
 
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -45,7 +45,7 @@ Name: "quicklaunchicon"; Description: "Criar ícone na Barra de Tarefas Rápida"
 
 [Files]
 ; Main executable (built by PyInstaller)
-Source: "..\dist\ContentForge\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\CortaCerto\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}";           Filename: "{app}\{#AppExeName}"
@@ -65,9 +65,9 @@ procedure InitializeWizard;
 var
   ExistingVer: String;
 begin
-  IsUpdate := RegQueryStringValue(HKCU, 'Software\ContentForge', 'Version', ExistingVer);
+  IsUpdate := RegQueryStringValue(HKCU, 'Software\CortaCerto', 'Version', ExistingVer);
   if IsUpdate then begin
-    MsgBox('Uma versão anterior do ContentForge foi detectada.' + #13#10 +
+    MsgBox('Uma versão anterior do CortaCerto foi detectada.' + #13#10 +
            'O instalador irá atualizar para a versão {#AppVersion}.', mbInformation, MB_OK);
   end;
 end;
@@ -75,12 +75,12 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then begin
-    RegWriteStringValue(HKCU, 'Software\ContentForge', 'Version', '{#AppVersion}');
-    RegWriteStringValue(HKCU, 'Software\ContentForge', 'InstallPath', ExpandConstant('{app}'));
+    RegWriteStringValue(HKCU, 'Software\CortaCerto', 'Version', '{#AppVersion}');
+    RegWriteStringValue(HKCU, 'Software\CortaCerto', 'InstallPath', ExpandConstant('{app}'));
   end;
 end;
 
 function InitializeUninstall(): Boolean;
 begin
-  Result := MsgBox('Tem certeza que deseja desinstalar o ContentForge?', mbConfirmation, MB_YESNO) = IDYES;
+  Result := MsgBox('Tem certeza que deseja desinstalar o CortaCerto?', mbConfirmation, MB_YESNO) = IDYES;
 end;

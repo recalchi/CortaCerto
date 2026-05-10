@@ -1,4 +1,4 @@
-"""ContentForge desktop video editor UI."""
+"""CortaCerto desktop video editor UI."""
 from __future__ import annotations
 
 import os
@@ -42,10 +42,10 @@ TL_HEAD     = "#ffcc44"   # playhead
 TL_BG       = "#18181e"
 
 
-class ContentForgeApp:
+class CortaCertoApp:
     def __init__(self) -> None:
         self.root = ctk.CTk()
-        self.root.title("ContentForge")
+        self.root.title("CortaCerto")
         self.root.geometry("1280x780")
         self.root.minsize(1000, 660)
         self.root.configure(fg_color=C_BG)
@@ -124,7 +124,7 @@ class ContentForgeApp:
         tb.grid_columnconfigure(4, weight=1)
 
         # Logo
-        tk.Label(tb, text="ContentForge", bg="#111116", fg=C_ACCENT2,
+        tk.Label(tb, text="CortaCerto", bg="#111116", fg=C_ACCENT2,
                  font=("Segoe UI", 13, "bold")).grid(row=0, column=0, padx=(14,18), pady=8)
 
         # Open
@@ -665,7 +665,7 @@ class ContentForgeApp:
         self._export_btn.configure(state="normal")
         self._seek_bar.configure(to=max(1, self._total_frames - 1))
         self._seek_bar.set(0)
-        self.root.title(f"ContentForge - {name}")
+        self.root.title(f"CortaCerto - {name}")
         self._tb_status.configure(text="Gerando preview e timeline...")
 
         # Show first frame
@@ -1038,7 +1038,7 @@ class ContentForgeApp:
         self._open_export_modal()
 
         config     = self._build_config()
-        output_dir = str(Path(self.video_path).parent / "ContentForge_output")
+        output_dir = str(Path(self.video_path).parent / "CortaCerto_output")
 
         def worker():
             res = run_pipeline(
@@ -1127,7 +1127,7 @@ class ContentForgeApp:
 
     def _show_output_popup(self, result: PipelineResult) -> None:
         popup = ctk.CTkToplevel(self.root)
-        popup.title("Resultado - ContentForge")
+        popup.title("Resultado - CortaCerto")
         popup.geometry("900x500")
         popup.grab_set()
 

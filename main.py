@@ -1,4 +1,4 @@
-"""ContentForge main entry point."""
+"""CortaCerto main entry point."""
 import sys
 import os
 
@@ -19,11 +19,11 @@ except RuntimeError as e:
         print(f"ffmpeg não encontrado:\n{e}", file=sys.stderr)
     sys.exit(1)
 
-from src.ui.app import ContentForgeApp
+from src.ui.app import CortaCertoApp
 
 
 def main() -> None:
-    app = ContentForgeApp()
+    app = CortaCertoApp()
     app.run()
 
 
