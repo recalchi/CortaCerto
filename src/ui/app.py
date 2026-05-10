@@ -674,36 +674,50 @@ class ContentForgeApp:
         self._update_time_label()
 
         # Background: analyze audio for timeline
-        threading.Thread(target=self._bg_analyze, daemon=True).start()
+        from ..config import SilenceStyle
+        _MS = {SilenceStyle.AGGRESSIVE: 600,
+               SilenceStyle.NATURAL:    900,
+               SilenceStyle.LIGHT:      1400}
+        style = SilenceStyle(self._silence_var.get())
+        threading.Thread(
+            target=self._bg_analyze,
+            args=(
+                path,
+                self._duration_s,
+                float(self._sliders["silence_db"].get()),
+                _MS[style],
+                int(self._sliders["padding"].get()),
+            ),
+            daemon=True,
+        ).start()
 
-    def _bg_analyze(self) -> None:
+    def _bg_analyze(
+        self,
+        video_path: str,
+        duration_s: float,
+        silence_threshold_db: float,
+        min_silence_ms: int,
+        audio_padding_ms: int,
+    ) -> None:
         """Analyze audio silences in background and update timeline."""
-        if not self.video_path:
+        if not video_path:
             return
         try:
             from ..core.analyzer import analyze_video
-            from ..config import SilenceStyle
-            _MS = {SilenceStyle.AGGRESSIVE: 600,
-                   SilenceStyle.NATURAL:    900,
-                   SilenceStyle.LIGHT:      1400}
-            style = SilenceStyle(self._silence_var.get())
             analysis = analyze_video(
-                self.video_path,
-                silence_threshold_db=float(self._sliders["silence_db"].get()),
-                min_silence_ms=_MS[style],
-                audio_padding_ms=int(self._sliders["padding"].get()),
+                video_path,
+                silence_threshold_db=silence_threshold_db,
+                min_silence_ms=min_silence_ms,
+                audio_padding_ms=audio_padding_ms,
                 min_segment_s=0.3,
             )
-            self._segments = analysis.speech_segments
-            self._analysis_done = True
-            waveform = extract_waveform(self.video_path, self._duration_s, bins=420)
-            self._timeline_model = build_timeline_model(
-                self._duration_s,
+            waveform = extract_waveform(video_path, duration_s, bins=420)
+            timeline_model = build_timeline_model(
+                duration_s,
                 analysis.speech_segments,
                 waveform=waveform,
             )
-            self.root.after(0, self._redraw_timeline)
-            self.root.after(0, lambda: self._tb_status.configure(text="Preview pronto. Timeline atualizada."))
+            self._queue.put(("__TIMELINE_READY__", (video_path, analysis, timeline_model)))
         except Exception:
             pass
 
@@ -875,13 +889,11 @@ class ContentForgeApp:
             frame_idx = self._current_frame + 1
             if frame_idx >= self._total_frames:
                 self._playing = False
-                self.root.after(0, lambda: self._play_btn.configure(text="▶"))
+                self._queue.put(("__PLAY_STOP__", None))
                 break
 
             self._current_frame = frame_idx
-            self.root.after(0, self._draw_frame_at, frame_idx)
-            self.root.after(0, self._update_time_label)
-            self.root.after(0, self._update_tl_playhead)
+            self._queue.put(("__PLAY_FRAME__", frame_idx))
             elapsed = time.monotonic() - t0
             time.sleep(max(0.001, interval - elapsed))
 
@@ -903,7 +915,7 @@ class ContentForgeApp:
     def _detect_gpu_label(self) -> None:
         def _task():
             lbl = encoder_label()
-            self.root.after(0, lambda: self._gpu_lbl.configure(text=f"Encode: {lbl}"))
+            self._queue.put(("__GPU_LABEL__", lbl))
         threading.Thread(target=_task, daemon=True).start()
 
     def _detect_seg_label(self) -> None:
@@ -914,8 +926,7 @@ class ContentForgeApp:
                 colors = {"rembg": C_GREEN, "mediapipe": C_ACCENT2,
                           "grabcut": C_MUTED}
                 color = colors.get(backend, C_MUTED)
-                self.root.after(0, lambda: self._seg_lbl.configure(
-                    text=f"Seg: {backend}", fg=color))
+                self._queue.put(("__SEG_LABEL__", (backend, color)))
             except Exception:
                 pass
         threading.Thread(target=_task, daemon=True).start()
@@ -1055,6 +1066,25 @@ class ContentForgeApp:
                     self._on_done(val)
                 elif msg == "__PREVIEW__":
                     self._render_preview_frame(val)
+                elif msg == "__TIMELINE_READY__":
+                    video_path, analysis, timeline_model = val
+                    if video_path == self.video_path:
+                        self._segments = analysis.speech_segments
+                        self._analysis_done = True
+                        self._timeline_model = timeline_model
+                        self._redraw_timeline()
+                        self._tb_status.configure(text="Preview pronto. Timeline atualizada.")
+                elif msg == "__PLAY_FRAME__":
+                    self._draw_frame_at(val)
+                    self._update_time_label()
+                    self._update_tl_playhead()
+                elif msg == "__PLAY_STOP__":
+                    self._play_btn.configure(text="▶")
+                elif msg == "__GPU_LABEL__":
+                    self._gpu_lbl.configure(text=f"Encode: {val}")
+                elif msg == "__SEG_LABEL__":
+                    backend, color = val
+                    self._seg_lbl.configure(text=f"Seg: {backend}", fg=color)
                 else:
                     self._tb_status.configure(text=msg[:80])
                     if isinstance(val, float) and 0.0 <= val <= 1.0:
