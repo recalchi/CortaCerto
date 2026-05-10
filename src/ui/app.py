@@ -11,6 +11,7 @@ from typing import Optional
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk
 
 from ..config import ProcessingConfig, Platform, SilenceStyle, PRESETS
 from ..core.audio_waveform import extract_waveform
@@ -63,6 +64,7 @@ class CortaCertoApp:
         # Video player state
         self._preview_engine = PreviewEngine(self._on_preview_frame_ready)
         self._preview_settings_key: tuple = ()
+        self._preview_bootstrap_key: Optional[tuple] = None
         self._preview_backend = "preview"
         self._preview_render_ms = 0.0
         self._total_frames  = 0
@@ -666,10 +668,11 @@ class CortaCertoApp:
         self._seek_bar.configure(to=max(1, self._total_frames - 1))
         self._seek_bar.set(0)
         self.root.title(f"CortaCerto - {name}")
-        self._tb_status.configure(text="Gerando preview e timeline...")
+        self._tb_status.configure(text="Carregando primeiro frame...")
 
         # Show first frame
-        self._draw_frame_at(0)
+        self._draw_frame_at(0, fast=True)
+        self.root.after(250, lambda: self.video_path == path and self._draw_frame_at(0))
         self._redraw_timeline()
         self._update_time_label()
 
@@ -718,8 +721,8 @@ class CortaCertoApp:
                 waveform=waveform,
             )
             self._queue.put(("__TIMELINE_READY__", (video_path, analysis, timeline_model)))
-        except Exception:
-            pass
+        except Exception as exc:
+            self._queue.put(("__TIMELINE_ERROR__", (video_path, str(exc))))
 
     def _on_seek(self, val: float) -> None:
         frame = int(float(val))
@@ -818,10 +821,20 @@ class CortaCertoApp:
         if self.video_path:
             self._draw_frame_at(self._current_frame)
 
-    def _draw_frame_at(self, frame_idx: int) -> None:
+    def _draw_frame_at(self, frame_idx: int, fast: bool = False) -> None:
         if not self.video_path:
             return
         self._current_frame = max(0, min(frame_idx, self._total_frames - 1))
+        if fast:
+            settings = PreviewSettings(
+                color_grade=ColorGrade(enabled=False),
+                bokeh_intensity=0.0,
+            )
+            self._preview_bootstrap_key = settings.cache_key()
+            self._tb_status.configure(text="Carregando primeiro frame...")
+            self._preview_engine.request_frame(self._current_frame, settings)
+            return
+
         settings = PreviewSettings(
             color_grade=self._build_color_grade(),
             bokeh_intensity=float(self._sliders["bokeh"].get()) / 100.0,
@@ -836,26 +849,23 @@ class CortaCertoApp:
     def _render_preview_frame(self, preview: PreviewFrame) -> None:
         if preview.frame_index != self._current_frame:
             return
-        if preview.settings_key != self._preview_settings_key:
+        is_bootstrap = preview.settings_key == self._preview_bootstrap_key
+        if preview.settings_key != self._preview_settings_key and not is_bootstrap:
             return
 
-        from PIL import ImageTk
-
-        pil = preview.image
         cw = self._preview_canvas.winfo_width()
         ch = self._preview_canvas.winfo_height()
         if cw < 10 or ch < 10:
             cw, ch = 800, 450
 
-        iw, ih = pil.size
-        scale = min(cw / iw, ch / ih)
-        nw, nh = int(iw * scale), int(ih * scale)
-        pil = pil.resize((nw, nh), Image.LANCZOS)
+        pil = _fit_preview_image(preview.image, cw, ch)
+        nw, nh = pil.size
 
         photo = ImageTk.PhotoImage(pil)
         self._preview_photo = photo
         self._preview_backend = preview.backend
         self._preview_render_ms = preview.render_ms
+        self._preview_bootstrap_key = None
 
         c = self._preview_canvas
         c.delete("frame")
@@ -1074,6 +1084,11 @@ class CortaCertoApp:
                         self._timeline_model = timeline_model
                         self._redraw_timeline()
                         self._tb_status.configure(text="Preview pronto. Timeline atualizada.")
+                elif msg == "__TIMELINE_ERROR__":
+                    video_path, detail = val
+                    if video_path == self.video_path:
+                        self._tb_status.configure(text="Preview pronto. Timeline indisponível.")
+                        print(f"[TIMELINE] Falha ao analisar timeline: {detail}")
                 elif msg == "__PLAY_FRAME__":
                     self._draw_frame_at(val)
                     self._update_time_label()
@@ -1224,3 +1239,16 @@ class CortaCertoApp:
 def _fmt(s: float) -> str:
     m, sec = divmod(int(s), 60)
     return f"{m:02d}:{sec:02d}"
+
+
+def _fit_preview_image(image: Image.Image, canvas_w: int, canvas_h: int) -> Image.Image:
+    """Resize a preview frame to fit inside the preview canvas."""
+    iw, ih = image.size
+    if iw <= 0 or ih <= 0:
+        return image
+    canvas_w = max(1, int(canvas_w))
+    canvas_h = max(1, int(canvas_h))
+    scale = min(canvas_w / iw, canvas_h / ih)
+    nw = max(1, int(iw * scale))
+    nh = max(1, int(ih * scale))
+    return image.resize((nw, nh), Image.LANCZOS)
