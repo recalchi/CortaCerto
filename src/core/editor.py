@@ -1,18 +1,9 @@
-"""
-Video editing via ffmpeg.
+"""Video editing helpers powered by ffmpeg.
 
-Key design decisions vs previous version:
-- zoompan REMOVED: it's an image filter, not a video filter; was causing
-  multi-minute hangs on every "animated zoom" segment.
-- Zoom now = simple scale+crop (fast, GPU-compatible, sub-second).
-- Cancel = threading.Event propagated to ProcessManager which kills every
-  live Popen immediately (replaces old per-call _run_cancelable).
-- Timeout = each segment has a hard deadline (segment_dur * 60s, min 45s).
-- Hardware decode = -hwaccel auto for all inputs (DXVA2/D3D11/CUDA).
-- GPU encode = detected once at startup via detect_video_encoder().
-- Audio = two-step post-process on final joined file:
-    Step A (video):  color grade + face-aware bokeh via filter_complex (NVENC)
-    Step B (audio):  afftdn noise-gate + EBU R128 loudnorm (audio-only, fast)
+This module owns timeline cutting, vertical conversion, duration/FPS probing,
+and optional audio/music post-processing. The heavier visual pass (color grade
+and bokeh fast) is handled by effect_renderer.py so preview and export share the
+same effect implementation.
 """
 from __future__ import annotations
 
