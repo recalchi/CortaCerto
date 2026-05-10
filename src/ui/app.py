@@ -817,7 +817,7 @@ class ContentForgeApp:
         self._preview_engine.request_frame(self._current_frame, settings)
 
     def _on_preview_frame_ready(self, preview: PreviewFrame) -> None:
-        self.root.after(0, self._render_preview_frame, preview)
+        self._queue.put(("__PREVIEW__", preview))
 
     def _render_preview_frame(self, preview: PreviewFrame) -> None:
         if preview.frame_index != self._current_frame:
@@ -1053,6 +1053,8 @@ class ContentForgeApp:
                 msg, val = self._queue.get_nowait()
                 if msg == "__DONE__":
                     self._on_done(val)
+                elif msg == "__PREVIEW__":
+                    self._render_preview_frame(val)
                 else:
                     self._tb_status.configure(text=msg[:80])
                     if isinstance(val, float) and 0.0 <= val <= 1.0:

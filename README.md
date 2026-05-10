@@ -33,6 +33,13 @@ install.bat
 
 O script detecta e instala o ffmpeg automaticamente (winget), depois instala os pacotes Python.
 
+Notas atuais do instalador:
+
+- Detecta `python` ou `py -3`, evitando falha em máquinas onde só o Python Launcher está no PATH.
+- Depois do `winget install --id Gyan.FFmpeg`, revalida o `ffmpeg` de verdade antes de declarar erro.
+- Inclui caminhos comuns do WinGet/WindowsApps na sessão atual para reduzir a necessidade de reiniciar o terminal.
+- Se ainda falhar, mostra instruções manuais claras sem travar a inicialização do app.
+
 Ou manualmente:
 
 ```bat
@@ -171,6 +178,39 @@ Detectado automaticamente na inicialização:
 | `libx264` | CPU (fallback) | ★★★☆☆ |
 
 O encoder ativo aparece na sidebar (canto inferior esquerdo).
+
+Observação importante sobre GPU:
+
+- NVENC/AMF/QSV aceleram o encode de vídeo.
+- Efeitos OpenCV, preview e bokeh fast continuam rodando em CPU.
+- Os logs diferenciam encode por hardware de efeitos em CPU para evitar promessa falsa de GPU.
+
+---
+
+## Estado de estabilidade da Sprint
+
+Base consolidada a partir do commit funcional `6613d66`, com continuação registrada em `82d0b40` e atualizações posteriores.
+
+Principais pontos já estabilizados:
+
+- Preview usa `PreviewEngine` com fila de requests drenada corretamente, evitando frame preto por descarte indevido.
+- Primeiro frame volta a aparecer após carregar vídeo.
+- Sliders de color grade e bokeh solicitam novo frame sem bloquear a UI.
+- Callback do preview agora entrega frames pela fila da UI, mantendo renderização no thread principal.
+- Play, pause e seek usam o mesmo caminho de preview.
+- Export sem bokeh usa caminho rápido e registra que a segmentação foi pulada.
+- Color grade sem bokeh usa ffmpeg quando possível, sem cair no pipeline frame a frame.
+- Bokeh fast mantém progresso por frame e deixa claro que o efeito roda em CPU com encode selecionado.
+- Cancelamento de export aciona o evento de cancelamento e registra `[CANCEL]`.
+- Timeline foi protegida contra sobreposição de labels e playhead.
+- Diagnóstico de encode diferencia CPU, NVENC, AMF e QSV.
+- Instalador foi reforçado para não acusar falha quando o FFmpeg foi instalado mas o shell ainda não atualizou o PATH.
+
+Limitações conhecidas:
+
+- Smoke test completo depende de `ffmpeg`, OpenCV e CustomTkinter disponíveis no ambiente local.
+- Bokeh fast ainda é CPU-bound; GPU, quando detectada, acelera principalmente o encode.
+- Segmentação avançada por frame com anti-flicker continua como próxima fase.
 
 ---
 
