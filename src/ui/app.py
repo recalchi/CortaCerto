@@ -1224,9 +1224,10 @@ class CortaCertoApp:
     def _coerce_playback_frame_to_timeline(self, frame: int) -> int:
         if not self._timeline_dirty or not self._timeline_model:
             return frame
-        time_s = frame / max(1.0, self._fps)
-        kept_time = _coerce_time_to_segments(
-            time_s,
+        return _coerce_frame_to_segments(
+            frame,
+            self._fps,
+            self._total_frames,
             [(clip.start_s, clip.end_s) for clip in self._timeline_model.video_track.clips],
             self._duration_s,
         )
@@ -1752,6 +1753,18 @@ def _coerce_time_to_segments(
         if time_s < start:
             return start
     return valid[-1][1]
+
+
+def _coerce_frame_to_segments(
+    frame: int,
+    fps: float,
+    total_frames: int,
+    segments: list[tuple[float, float]],
+    duration_s: float,
+) -> int:
+    time_s = frame / max(1.0, fps)
+    kept_time = _coerce_time_to_segments(time_s, segments, duration_s)
+    return _time_to_frame(kept_time, fps, total_frames)
 
 
 def _playback_delay_ms(fps: float, render_ms: float) -> int:
