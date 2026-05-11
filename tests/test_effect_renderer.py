@@ -3,7 +3,12 @@ import unittest
 from unittest import mock
 
 from src.core.color_grade import ColorGrade
-from src.core.effect_renderer import render_effects_pass
+from src.core.effect_renderer import (
+    _clip_option_for_output_time,
+    _clip_option_has_source_replacement,
+    render_clip_source_pass,
+    render_effects_pass,
+)
 
 
 class EffectRendererTests(unittest.TestCase):
@@ -20,6 +25,27 @@ class EffectRendererTests(unittest.TestCase):
         self.assertEqual(result, "input.mp4")
         ffmpeg_grade.assert_not_called()
         video_capture.assert_not_called()
+
+    def test_clip_source_pass_returns_input_without_replacements(self) -> None:
+        with mock.patch("src.core.effect_renderer.cv2.VideoCapture") as video_capture:
+            result = render_clip_source_pass("input.mp4", "output.mp4", [])
+
+        self.assertEqual(result, "input.mp4")
+        video_capture.assert_not_called()
+
+    def test_clip_option_for_output_time_uses_output_range(self) -> None:
+        options = [
+            {"source_path": "a.mp4", "output_start_s": 0.0, "output_end_s": 2.0},
+            {"source_path": "b.mp4", "output_start_s": 2.0, "output_end_s": 4.0},
+        ]
+
+        self.assertEqual(_clip_option_for_output_time(options, 2.5)["source_path"], "b.mp4")
+        self.assertIsNone(_clip_option_for_output_time(options, 4.5))
+
+    def test_clip_option_has_source_replacement_requires_source_and_range(self) -> None:
+        self.assertTrue(_clip_option_has_source_replacement({"source_path": "a.mp4", "output_start_s": 0, "output_end_s": 1}))
+        self.assertFalse(_clip_option_has_source_replacement({"source_path": "", "output_start_s": 0, "output_end_s": 1}))
+        self.assertFalse(_clip_option_has_source_replacement({"source_path": "a.mp4", "output_start_s": 1, "output_end_s": 1}))
 
     def test_color_grade_without_bokeh_uses_ffmpeg_fast_path(self) -> None:
         cancel = threading.Event()

@@ -24,6 +24,7 @@ from ..config import ProcessingConfig, Platform, SilenceStyle, PRESETS
 from ..core.audio_waveform import extract_waveform
 from ..core.color_grade import ColorGrade, PRESET_CAPCUT
 from ..core.preview_engine import PreviewEngine, PreviewFrame, PreviewSettings
+from ..core.timeline_manifest import build_timeline_manifest
 from ..core.timeline_model import TimelineClip, TimelineModel, build_timeline_model
 from ..pipeline import run_pipeline, PipelineResult
 from ..ffmpeg_env import encoder_label, ffplay
@@ -1745,6 +1746,11 @@ class CortaCertoApp:
                 timeline_dirty=self._timeline_dirty,
                 clip_options=_clip_options_from_timeline_model(self._timeline_model),
             ))
+            metadata["timeline_manifest"] = build_timeline_manifest(
+                self._timeline_model,
+                self.project_name,
+                self.video_path,
+            )
             Path(self.project_path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as exc:
             print(f"[PROJECT] Não foi possível atualizar retomada do projeto: {exc}")
@@ -2796,6 +2802,8 @@ def _clip_options_from_timeline_model(timeline_model: Optional[TimelineModel]) -
         return []
     return [
         {
+            "start_s": float(clip.start_s),
+            "end_s": float(clip.end_s),
             "label": clip.label,
             "source_path": getattr(clip, "source_path", ""),
             "scale_pct": float(getattr(clip, "scale_pct", 100.0)),

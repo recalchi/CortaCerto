@@ -5,6 +5,8 @@ from unittest import mock
 
 from src.config import ProcessingConfig
 from src.pipeline import (
+    _clip_options_with_output_ranges,
+    _has_clip_source_replacements,
     _clip_option_plan,
     _cleanup_intermediate_exports,
     _export_output_plan,
@@ -37,6 +39,27 @@ class PipelineCleanupTests(unittest.TestCase):
         self.assertIn("volume em 1 clipe(s)", plan)
         self.assertIn("texto em 1 clipe(s)", plan)
         self.assertIn("chroma em 1 clipe(s)", plan)
+
+    def test_clip_options_with_output_ranges_compacts_manual_timeline(self) -> None:
+        options = _clip_options_with_output_ranges(
+            [
+                {"start_s": 1.0, "end_s": 3.0, "source_path": "broll-a.mp4"},
+                {"start_s": 6.0, "end_s": 9.0, "source_path": ""},
+            ],
+            [(1.0, 3.0), (6.0, 9.0)],
+        )
+
+        self.assertEqual(options[0]["output_start_s"], 0.0)
+        self.assertEqual(options[0]["output_end_s"], 2.0)
+        self.assertEqual(options[1]["output_start_s"], 2.0)
+        self.assertEqual(options[1]["output_end_s"], 5.0)
+        self.assertTrue(_has_clip_source_replacements(options))
+
+    def test_has_clip_source_replacements_ignores_empty_or_invalid_ranges(self) -> None:
+        self.assertFalse(_has_clip_source_replacements([
+            {"source_path": "", "output_start_s": 0.0, "output_end_s": 1.0},
+            {"source_path": "x.mp4", "output_start_s": 2.0, "output_end_s": 2.0},
+        ]))
 
     def test_cleanup_intermediate_exports_removes_existing_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
