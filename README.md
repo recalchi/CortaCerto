@@ -104,10 +104,18 @@ Antes de testar manualmente, rode:
 python scripts\run_sprint_checks.py
 ```
 
+Esse é o comando oficial da sprint. Ele usa `unittest discover -s tests` para ignorar scripts legados da raiz que não fazem parte da suíte atual.
+
 Para incluir a validação real de FFmpeg/startup:
 
 ```bat
 python scripts\run_sprint_checks.py --include-startup
+```
+
+Para falhar quando arquivos legados conhecidos ainda estiverem na raiz:
+
+```bat
+python scripts\run_sprint_checks.py --strict-legacy
 ```
 
 Essa bateria cobre compilação, testes unitários e invariantes de editor para detectar descompasso entre playback, timeline compacta, cortes removidos e mapeamento de playhead.
