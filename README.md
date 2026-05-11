@@ -213,6 +213,7 @@ Principais pontos já estabilizados:
 - Timeline, play loop e diagnósticos de encode/segmentação também retornam para a UI pela fila principal.
 - Play, pause e seek usam o mesmo caminho de preview.
 - Export sem bokeh usa caminho rápido e registra que a segmentação foi pulada.
+- Export sem corte de silêncio ou com timeline manual já pronta evita análise de áudio redundante e registra o caminho usado.
 - Export limpa arquivos intermediários (`_effects`, `_effects_muxed`, `_audio`) e mantém o vídeo final como `{nome}_editado.mp4`.
 - Color grade sem bokeh usa ffmpeg quando possível, sem cair no pipeline frame a frame.
 - Bokeh fast mantém progresso por frame e deixa claro que o efeito roda em CPU com encode selecionado.

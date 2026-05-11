@@ -88,32 +88,42 @@ def run_pipeline(
             prog(f"[1/6] Sujeito detectado em x={fx:.2f} y={fy:.2f} (tamanho {fs:.2f})", 0.05)
 
         # ── 2. Audio analysis ───────────────────────────────────────────────
-        prog("[2/6] Analisando áudio...", 0.06)
-        analysis = analyze_video(
-            video_path,
-            silence_threshold_db=config.silence_threshold_db,
-            min_silence_ms=config.min_silence_ms,
-            audio_padding_ms=config.audio_padding_ms,
-            min_segment_s=config.min_segment_s,
-            on_progress=lambda msg: prog(f"[2/6] {msg}", 0.10),
-        )
-        result.analysis = analysis
         if config.manual_segments is not None:
-            manual_segments = [
-                (max(0.0, float(start)), min(result.original_duration_s, float(end)))
-                for start, end in config.manual_segments
-                if end > start
-            ]
+            manual_segments = _normalize_manual_segments(
+                config.manual_segments,
+                result.original_duration_s,
+            )
             manual_time = sum(end - start for start, end in manual_segments)
             analysis = AudioAnalysis(
-                duration_s=analysis.duration_s,
+                duration_s=result.original_duration_s,
                 speech_segments=manual_segments,
-                silence_ratio=1.0 - (manual_time / analysis.duration_s) if analysis.duration_s > 0 else 0.0,
+                silence_ratio=1.0 - (manual_time / result.original_duration_s) if result.original_duration_s > 0 else 0.0,
             )
             result.analysis = analysis
             prog(f"[2/6] Timeline manual aplicada: {len(manual_segments)} clipes.", 0.15)
-        pct = analysis.silence_ratio * 100
-        prog(f"[2/6] Análise: {pct:.1f}% silêncio e {len(analysis.speech_segments)} segmentos.", 0.16)
+        elif config.remove_silence:
+            prog("[2/6] Analisando áudio...", 0.06)
+            analysis = analyze_video(
+                video_path,
+                silence_threshold_db=config.silence_threshold_db,
+                min_silence_ms=config.min_silence_ms,
+                audio_padding_ms=config.audio_padding_ms,
+                min_segment_s=config.min_segment_s,
+                on_progress=lambda msg: prog(f"[2/6] {msg}", 0.10),
+            )
+            result.analysis = analysis
+        else:
+            analysis = AudioAnalysis(
+                duration_s=result.original_duration_s,
+                speech_segments=[(0.0, result.original_duration_s)] if result.original_duration_s > 0 else [],
+                silence_ratio=0.0,
+            )
+            result.analysis = analysis
+            prog("[2/6] Corte de silêncio desativado; pulando análise de áudio.", 0.16)
+
+        if config.remove_silence or config.manual_segments is not None:
+            pct = analysis.silence_ratio * 100
+            prog(f"[2/6] Análise: {pct:.1f}% silêncio e {len(analysis.speech_segments)} segmentos.", 0.16)
 
         # ── 3. Cut silence + effects ────────────────────────────────────────
         source = video_path
@@ -312,3 +322,17 @@ def _cleanup_intermediate_exports(paths: set[str]) -> None:
                 os.remove(path)
         except OSError:
             pass
+
+
+def _normalize_manual_segments(
+    segments: list[tuple[float, float]],
+    duration_s: float,
+) -> list[tuple[float, float]]:
+    normalized: list[tuple[float, float]] = []
+    duration_s = max(0.0, float(duration_s))
+    for start, end in segments:
+        start_s = max(0.0, min(duration_s, float(start)))
+        end_s = max(0.0, min(duration_s, float(end)))
+        if end_s > start_s:
+            normalized.append((start_s, end_s))
+    return normalized
