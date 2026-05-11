@@ -15,7 +15,7 @@ from typing import Callable, Optional
 
 from .config import ProcessingConfig, PRESETS
 from .core.analyzer import analyze_video, AudioAnalysis
-from .core.effect_renderer import render_effects_pass
+from .core.effect_renderer import render_clip_source_pass, render_effects_pass
 from .core.editor import (
     cut_silence, convert_to_vertical,
     get_video_duration, RenderStats, CancelledError, _mix_music,
@@ -134,6 +134,7 @@ def run_pipeline(
         source = video_path
         export_keep: set[str] = set()
         export_intermediate: set[str] = set()
+        clip_options = _clip_options_with_output_ranges(config.clip_options, config.manual_segments)
         if config.remove_silence:
             main_out = os.path.join(output_dir, f"{base}_editado.mp4")
             render_stats = cut_silence(
@@ -164,6 +165,21 @@ def run_pipeline(
             prog("[3/6] Corte de silêncio desativado; mantendo timeline original.", 0.50)
 
         result.final_duration_s = get_video_duration(source)
+
+        if _has_clip_source_replacements(clip_options):
+            clip_source_out = os.path.join(output_dir, f"{base}_clip_sources.mp4")
+            export_intermediate.add(clip_source_out)
+            source = render_clip_source_pass(
+                source,
+                clip_source_out,
+                clip_options,
+                cancel=cancel,
+                on_progress=lambda msg, p: prog(f"[4/6] {msg}", 0.50 + p * 0.10),
+            )
+            export_keep.add(source)
+            result.main_video = source
+            result.final_duration_s = get_video_duration(source)
+            prog("[4/6] Mídias associadas aplicadas aos clipes.", 0.60)
 
         if config.bokeh_intensity < 0.05:
             prog("[EXPORT] Bokeh desativado; pulando segmentação.", 0.51)
@@ -404,3 +420,37 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
     if chroma:
         parts.append(f"chroma em {chroma} clipe(s)")
     return ", ".join(parts)
+
+
+def _clip_options_with_output_ranges(
+    clip_options: list[dict[str, object]],
+    manual_segments: list[tuple[float, float]] | None,
+) -> list[dict[str, object]]:
+    if not clip_options:
+        return []
+    options: list[dict[str, object]] = []
+    cursor = 0.0
+    for idx, option in enumerate(clip_options):
+        prepared = dict(option)
+        start_s = float(prepared.get("start_s", 0.0) or 0.0)
+        end_s = float(prepared.get("end_s", start_s) or start_s)
+        if manual_segments and idx < len(manual_segments):
+            seg_start, seg_end = manual_segments[idx]
+            duration = max(0.0, float(seg_end) - float(seg_start))
+            prepared["output_start_s"] = cursor
+            prepared["output_end_s"] = cursor + duration
+            cursor += duration
+        else:
+            prepared["output_start_s"] = start_s
+            prepared["output_end_s"] = end_s
+        options.append(prepared)
+    return options
+
+
+def _has_clip_source_replacements(clip_options: list[dict[str, object]]) -> bool:
+    for option in clip_options:
+        start_s = float(option.get("output_start_s", option.get("start_s", 0.0)) or 0.0)
+        end_s = float(option.get("output_end_s", option.get("end_s", 0.0)) or 0.0)
+        if option.get("source_path") and end_s > start_s:
+            return True
+    return False
