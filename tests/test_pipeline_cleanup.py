@@ -6,6 +6,7 @@ from unittest import mock
 from src.config import ProcessingConfig
 from src.pipeline import (
     _cleanup_intermediate_exports,
+    _export_output_plan,
     _finalize_project_output,
     _normalize_manual_segments,
     run_pipeline,
@@ -13,6 +14,18 @@ from src.pipeline import (
 
 
 class PipelineCleanupTests(unittest.TestCase):
+    def test_default_export_outputs_only_final_video(self) -> None:
+        config = ProcessingConfig()
+
+        self.assertFalse(config.generate_thumbnail)
+        self.assertFalse(config.generate_vertical)
+        self.assertEqual(_export_output_plan(config), "vídeo final")
+
+    def test_export_output_plan_lists_explicit_extras(self) -> None:
+        config = ProcessingConfig(generate_thumbnail=True, generate_vertical=True, thumbnail_count=5)
+
+        self.assertEqual(_export_output_plan(config), "vídeo final, versão vertical, 5 thumbnails")
+
     def test_cleanup_intermediate_exports_removes_existing_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "intermediate.mp4"

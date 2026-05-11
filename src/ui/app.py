@@ -861,12 +861,12 @@ class CortaCertoApp:
                   fg=C_MUTED, relief="flat", padx=4, font=("Segoe UI", 9),
                   cursor="hand2", bd=0).grid(row=0, column=3)
 
-        # -- Thumbnails ----------------------------------------------------
-        self._section(s, "THUMBNAILS", 27)
-        self._gen_thumb_var  = tk.BooleanVar(value=True)
+        # -- Extra outputs -------------------------------------------------
+        self._section(s, "SAÍDAS EXTRAS", 27)
+        self._gen_thumb_var  = tk.BooleanVar(value=False)
         self._gen_vert_var   = tk.BooleanVar(value=False)
         self._check(s, "Gerar 5 thumbnails profissionais", self._gen_thumb_var, 28)
-        self._check(s, "Versão vertical 9:16", self._gen_vert_var, 29)
+        self._check(s, "Gerar versão vertical 9:16", self._gen_vert_var, 29)
 
         # -- Preview update btn --------------------------------------------
         ctk.CTkButton(s, text="Atualizar preview",
@@ -874,7 +874,7 @@ class CortaCertoApp:
                       fg_color=C_SURFACE, hover_color=C_BORDER,
                       font=ctk.CTkFont(size=12),
                       command=self._update_color_preview).grid(
-            row=29, column=0, padx=10, pady=(8,4), sticky="ew")
+            row=30, column=0, padx=10, pady=(8,4), sticky="ew")
 
     # -- Widget helpers --------------------------------------------------------
 
