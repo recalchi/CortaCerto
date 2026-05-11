@@ -19,10 +19,12 @@ from .video_effects import apply_video_effects_bgr
 class PreviewSettings:
     color_grade: ColorGrade
     bokeh_intensity: float
+    request_token: tuple = ()
 
     def cache_key(self) -> tuple:
         grade = self.color_grade
         return (
+            self.request_token,
             bool(grade.enabled),
             round(float(grade.temperature), 2),
             round(float(getattr(grade, "tint", 0.0)), 2),

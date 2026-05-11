@@ -68,6 +68,7 @@ class CortaCertoApp:
         self._preview_engine = PreviewEngine(self._on_preview_frame_ready)
         self._preview_settings_key: tuple = ()
         self._preview_bootstrap_key: Optional[tuple] = None
+        self._preview_request_id = 0
         self._preview_backend = "preview"
         self._preview_render_ms = 0.0
         self._total_frames  = 0
@@ -77,6 +78,7 @@ class CortaCertoApp:
         self._playing       = False
         self._play_after_id: Optional[str] = None
         self._play_target_frame: Optional[int] = None
+        self._play_generation = 0
         self._play_started_at = 0.0
         self._play_start_frame = 0
         self._audio_proc: Optional[subprocess.Popen] = None
@@ -1179,10 +1181,12 @@ class CortaCertoApp:
         if not self.video_path:
             return
         self._current_frame = max(0, min(frame_idx, self._total_frames - 1))
+        self._preview_request_id += 1
         if fast:
             settings = PreviewSettings(
                 color_grade=ColorGrade(enabled=False),
                 bokeh_intensity=0.0,
+                request_token=("bootstrap", self._preview_request_id),
             )
             self._preview_bootstrap_key = settings.cache_key()
             if not self._playing:
@@ -1193,6 +1197,7 @@ class CortaCertoApp:
         settings = PreviewSettings(
             color_grade=self._build_color_grade(),
             bokeh_intensity=float(self._sliders["bokeh"].get()) / 100.0,
+            request_token=("preview", self._preview_request_id),
         )
         self._preview_settings_key = settings.cache_key()
         self._tb_status.configure(text="Atualizando preview...")
@@ -1287,6 +1292,8 @@ class CortaCertoApp:
     def _start_playback(self) -> None:
         if not self.video_path:
             return
+        self._play_generation += 1
+        self._preview_settings_key = ()
         self._playing = True
         self._play_started_at = time.monotonic()
         self._play_start_frame = self._current_frame
@@ -1296,7 +1303,9 @@ class CortaCertoApp:
 
     def _stop_playback(self, reset_button: bool = True) -> None:
         self._playing = False
+        self._play_generation += 1
         self._play_target_frame = None
+        self._preview_bootstrap_key = None
         self._play_audio_started = False
         self._stop_preview_audio()
         if self._play_after_id:
@@ -1328,6 +1337,7 @@ class CortaCertoApp:
         settings = PreviewSettings(
             color_grade=ColorGrade(enabled=False),
             bokeh_intensity=0.0,
+            request_token=("playback", self._play_generation, target),
         )
         self._play_target_frame = target
         self._preview_bootstrap_key = settings.cache_key()
