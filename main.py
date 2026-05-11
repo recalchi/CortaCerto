@@ -7,17 +7,23 @@ sys.path.insert(0, os.path.dirname(__file__))
 from src.bootstrap import ensure_startup_dependencies
 from src.ffmpeg_env import ensure_ffmpeg
 
-# Resolve ffmpeg before importing UI modules that may trigger video tooling.
-if not ensure_startup_dependencies(ensure_ffmpeg):
-    sys.exit(1)
 
-from src.ui.app import CortaCertoApp
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
 
+    # Resolve ffmpeg before importing UI modules that may trigger video tooling.
+    if not ensure_startup_dependencies(ensure_ffmpeg):
+        return 1
 
-def main() -> None:
+    if "--check-startup" in argv:
+        print("[STARTUP] CortaCerto pronto para iniciar.")
+        return 0
+
+    from src.ui.app import CortaCertoApp
     app = CortaCertoApp()
     app.run()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
