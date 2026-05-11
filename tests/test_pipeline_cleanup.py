@@ -4,7 +4,12 @@ from pathlib import Path
 from unittest import mock
 
 from src.config import ProcessingConfig
-from src.pipeline import _cleanup_intermediate_exports, _normalize_manual_segments, run_pipeline
+from src.pipeline import (
+    _cleanup_intermediate_exports,
+    _finalize_project_output,
+    _normalize_manual_segments,
+    run_pipeline,
+)
 
 
 class PipelineCleanupTests(unittest.TestCase):
@@ -24,6 +29,34 @@ class PipelineCleanupTests(unittest.TestCase):
 
         self.assertEqual(normalized, [(0.0, 2.0), (8.0, 10.0)])
 
+    def test_finalize_project_output_copies_original_instead_of_moving_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path(tmp) / "original.mp4"
+            final = Path(tmp) / "out" / "original_editado.mp4"
+            original.write_bytes(b"video")
+
+            output, moved = _finalize_project_output(str(original), str(final), str(original))
+
+            self.assertEqual(output, str(final))
+            self.assertFalse(moved)
+            self.assertTrue(original.exists())
+            self.assertEqual(final.read_bytes(), b"video")
+
+    def test_finalize_project_output_moves_intermediate_to_final_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path(tmp) / "original.mp4"
+            intermediate = Path(tmp) / "effects.mp4"
+            final = Path(tmp) / "out" / "original_editado.mp4"
+            original.write_bytes(b"original")
+            intermediate.write_bytes(b"rendered")
+
+            output, moved = _finalize_project_output(str(intermediate), str(final), str(original))
+
+            self.assertEqual(output, str(final))
+            self.assertTrue(moved)
+            self.assertFalse(intermediate.exists())
+            self.assertEqual(final.read_bytes(), b"rendered")
+
     def test_pipeline_skips_audio_analysis_when_silence_cut_is_disabled(self) -> None:
         config = ProcessingConfig(
             remove_silence=False,
@@ -37,11 +70,15 @@ class PipelineCleanupTests(unittest.TestCase):
                 mock.patch("src.pipeline.get_video_duration", return_value=12.0), \
                 mock.patch("src.pipeline.detect_video_encoder", return_value=("libx264", [])), \
                 mock.patch("src.pipeline.analyze_video") as analyze:
-            result = run_pipeline("input.mp4", tmp, config)
+            input_path = Path(tmp) / "input.mp4"
+            input_path.write_bytes(b"video")
+
+            result = run_pipeline(str(input_path), tmp, config)
 
         analyze.assert_not_called()
         self.assertTrue(result.success)
         self.assertEqual(result.analysis.speech_segments, [(0.0, 12.0)])
+        self.assertTrue(result.main_video.endswith("_editado.mp4"))
 
     def test_pipeline_skips_audio_analysis_when_manual_timeline_is_available(self) -> None:
         config = ProcessingConfig(

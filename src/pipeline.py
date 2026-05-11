@@ -6,6 +6,7 @@ cancel button actually kills running processes immediately.
 from __future__ import annotations
 
 import os
+import shutil
 import time
 import threading
 from dataclasses import dataclass, field
@@ -237,10 +238,10 @@ def run_pipeline(
             prog("[5/6] Áudio mantido sem pós-processamento.", 0.86)
 
         final_project_out = os.path.join(output_dir, f"{base}_editado.mp4")
-        if source != video_path and source != final_project_out:
-            os.replace(source, final_project_out)
+        finalized, moved_source = _finalize_project_output(source, final_project_out, video_path)
+        if moved_source:
             export_intermediate.add(source)
-            source = final_project_out
+        source = finalized
         result.main_video = source
         export_keep = {source}
         export_keep.add(source)
@@ -322,6 +323,21 @@ def _cleanup_intermediate_exports(paths: set[str]) -> None:
                 os.remove(path)
         except OSError:
             pass
+
+
+def _finalize_project_output(
+    source: str,
+    final_project_out: str,
+    original_video: str,
+) -> tuple[str, bool]:
+    if source == final_project_out:
+        return final_project_out, False
+    os.makedirs(os.path.dirname(final_project_out), exist_ok=True)
+    if source == original_video:
+        shutil.copy2(source, final_project_out)
+        return final_project_out, False
+    os.replace(source, final_project_out)
+    return final_project_out, True
 
 
 def _normalize_manual_segments(
