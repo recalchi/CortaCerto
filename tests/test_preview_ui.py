@@ -3,16 +3,22 @@ import unittest
 from PIL import Image
 
 from src.ui.app import (
+    _clip_edges,
+    _compact_clip_ranges,
+    _compact_display_to_source_time,
+    _compact_source_to_display_time,
     _fit_preview_image,
     _playback_delay_ms,
     _playback_effective_fps,
     _playback_target_frame,
     _removed_ranges_from_segments,
+    _snap_time_to_edges,
     _time_to_frame,
     _timeline_time_to_x,
     _timeline_track_bounds,
     _timeline_x_to_time,
 )
+from src.core.timeline_model import TimelineClip
 
 
 class PreviewUiTests(unittest.TestCase):
@@ -58,6 +64,29 @@ class PreviewUiTests(unittest.TestCase):
     def test_time_to_frame_clamps_to_video_range(self) -> None:
         self.assertEqual(_time_to_frame(1.0, 30.0, 100), 30)
         self.assertEqual(_time_to_frame(99.0, 30.0, 100), 99)
+
+    def test_compact_timeline_maps_kept_clips_without_gaps(self) -> None:
+        clips = [
+            TimelineClip(1.0, 3.0, "speech", "Clip 1"),
+            TimelineClip(6.0, 9.0, "speech", "Clip 2"),
+        ]
+
+        ranges = _compact_clip_ranges(clips)
+
+        self.assertEqual(ranges, [(1.0, 3.0, 0.0, 2.0), (6.0, 9.0, 2.0, 5.0)])
+        self.assertEqual(_compact_display_to_source_time(2.5, ranges), 6.5)
+        self.assertEqual(_compact_source_to_display_time(7.0, ranges), 3.0)
+
+    def test_snap_time_to_edges_uses_threshold(self) -> None:
+        clips = [
+            TimelineClip(1.0, 3.0, "speech", "Clip 1"),
+            TimelineClip(6.0, 9.0, "speech", "Clip 2"),
+        ]
+
+        edges = _clip_edges(clips)
+
+        self.assertEqual(_snap_time_to_edges(2.96, edges, 0.08), 3.0)
+        self.assertEqual(_snap_time_to_edges(3.20, edges, 0.08), 3.20)
 
 
 if __name__ == "__main__":
