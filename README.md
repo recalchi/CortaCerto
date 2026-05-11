@@ -120,6 +120,9 @@ python scripts\run_sprint_checks.py --strict-legacy
 
 Essa bateria cobre compilação, testes unitários e invariantes de editor para detectar descompasso entre playback, timeline compacta, cortes removidos e mapeamento de playhead.
 
+Protótipos antigos baseados em MoviePy/pydub foram preservados em `legacy/old_moviepy_prototype/`. Eles não são entrada do app atual.
+
+
 ### Fluxo básico
 
 1. Abrir — `run.bat` ou `python main.py`
