@@ -12,6 +12,7 @@ from src.ui.app import (
     _fit_preview_image,
     _playback_delay_ms,
     _playback_effective_fps,
+    _playback_crosses_removed_range,
     _playback_target_frame,
     _removed_ranges_from_segments,
     _snap_time_to_edges,
@@ -54,6 +55,13 @@ class PreviewUiTests(unittest.TestCase):
     def test_playback_effective_fps_is_stable_for_zero_elapsed(self) -> None:
         self.assertEqual(_playback_effective_fps(10, 30, 0), 0.0)
         self.assertAlmostEqual(_playback_effective_fps(10, 40, 1.5), 20.0)
+
+    def test_playback_detects_cut_jump_for_audio_resync(self) -> None:
+        segments = [(1.0, 3.0), (6.0, 9.0)]
+
+        self.assertTrue(_playback_crosses_removed_range(89, 180, 30.0, segments, 10.0))
+        self.assertFalse(_playback_crosses_removed_range(45, 60, 30.0, segments, 10.0))
+        self.assertFalse(_playback_crosses_removed_range(180, 181, 30.0, segments, 10.0))
 
     def test_timeline_click_math_uses_track_area_not_label_area(self) -> None:
         x1, x2 = _timeline_track_bounds(1000)

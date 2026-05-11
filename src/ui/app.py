@@ -1227,11 +1227,21 @@ class CortaCertoApp:
         self._preview_render_ms = preview.render_ms
         self._preview_bootstrap_key = None
         if is_playback:
+            previous_frame = self._current_frame
+            crossed_cut = self._play_audio_started and self._playback_crossed_removed_range(
+                previous_frame,
+                preview.frame_index,
+            )
             self._current_frame = preview.frame_index
             self._seek_bar.set(self._current_frame)
             self._update_time_label()
             self._update_tl_playhead()
-            if not self._play_audio_started:
+            if crossed_cut:
+                self._start_preview_audio(self._current_frame)
+                self._play_started_at = time.monotonic()
+                self._play_start_frame = self._current_frame
+                print(f"[PREVIEW] Audio resynced after timeline cut at {_fmt(self._current_frame / max(1.0, self._fps))}.")
+            elif not self._play_audio_started:
                 self._start_preview_audio(self._current_frame)
                 self._play_audio_started = True
                 self._play_started_at = time.monotonic()
@@ -1333,7 +1343,17 @@ class CortaCertoApp:
             [(clip.start_s, clip.end_s) for clip in self._timeline_model.video_track.clips],
             self._duration_s,
         )
-        return self._time_to_frame(kept_time)
+
+    def _playback_crossed_removed_range(self, previous_frame: int, current_frame: int) -> bool:
+        if not self._timeline_dirty or not self._timeline_model:
+            return False
+        return _playback_crosses_removed_range(
+            previous_frame,
+            current_frame,
+            self._fps,
+            [(clip.start_s, clip.end_s) for clip in self._timeline_model.video_track.clips],
+            self._duration_s,
+        )
 
     def _nearest_kept_time(self, time_s: float) -> float:
         if not self._timeline_model:
@@ -1918,6 +1938,28 @@ def _playback_effective_fps(start_frame: int, current_frame: int, elapsed_s: flo
     if elapsed_s <= 0:
         return 0.0
     return max(0, current_frame - start_frame) / elapsed_s
+
+
+def _playback_crosses_removed_range(
+    previous_frame: int,
+    current_frame: int,
+    fps: float,
+    segments: list[tuple[float, float]],
+    duration_s: float,
+    epsilon_s: float = 1e-4,
+) -> bool:
+    if current_frame <= previous_frame:
+        return False
+    previous_time = previous_frame / max(1.0, fps)
+    current_time = current_frame / max(1.0, fps)
+    for start_s, end_s in _removed_ranges_from_segments(duration_s, segments):
+        if end_s <= start_s:
+            continue
+        if previous_time <= start_s + epsilon_s and current_time >= end_s - epsilon_s:
+            return True
+        if start_s < previous_time < end_s and current_time >= end_s - epsilon_s:
+            return True
+    return False
 
 
 def _playback_target_frame(
