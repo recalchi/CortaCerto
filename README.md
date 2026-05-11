@@ -96,6 +96,22 @@ CortaCerto/
 
 ## Como usar
 
+### Validar a sprint
+
+Antes de testar manualmente, rode:
+
+```bat
+python scripts\run_sprint_checks.py
+```
+
+Para incluir a validação real de FFmpeg/startup:
+
+```bat
+python scripts\run_sprint_checks.py --include-startup
+```
+
+Essa bateria cobre compilação, testes unitários e invariantes de editor para detectar descompasso entre playback, timeline compacta, cortes removidos e mapeamento de playhead.
+
 ### Fluxo básico
 
 1. Abrir — `run.bat` ou `python main.py`
@@ -209,6 +225,7 @@ Principais pontos já estabilizados:
 - Timeline ganhou modo **Juntar blocos**, que mostra os clipes mantidos encostados como ripple/compact view sem perder o tempo original de export.
 - Cliques perto das bordas dos clipes usam snap para acertar com mais precisão o ponto exato de transição/corte.
 - Split/delete/undo param o playback e reancoram o playhead em um trecho mantido para evitar timeline parada com preview avançando.
+- Testes de invariantes do editor validam que playback, timeline compacta e cursor não apontam para lacunas removidas.
 - Timeline mostra ação de desfazer na barra e informa o tempo exato quando um clipe é dividido.
 - Atalhos: `Espaço` play/pause, `B` divide no playhead, `Delete`/`Backspace` exclui, `Ctrl+Z` desfaz ação da timeline; campos de texto não capturam esses comandos.
 - Controle de silêncio ganhou ajuste de fala mínima para evitar microclipes e cortes nervosos.
