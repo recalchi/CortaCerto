@@ -201,12 +201,14 @@ Principais pontos já estabilizados:
 - Reprodução no preview usa caminho rápido sem efeitos por frame para ficar assistível durante a edição.
 - Playback agora é dirigido pelo frame renderizado: a imagem avança junto com a timeline, sem descartar frames atrasados.
 - Playback pula frames quando necessário para acompanhar o relógio e mostra FPS efetivo/render na barra de status.
+- Playback respeita a timeline editada: ao excluir clipes, a reprodução pula lacunas removidas em vez de seguir pelo tempo bruto do arquivo.
 - Áudio de preview usa `ffplay` em modo áudio puro (`-vn`) e é interrompido junto com pause/seek/início/fim.
 - Áudio do preview passa a iniciar depois do primeiro frame renderizado no playback, reduzindo dessincronia ao pausar e voltar pela timeline.
 - Timeline permite selecionar clipe, dividir no playhead e excluir clipe; export respeita os segmentos editados.
 - Conversão clique/playhead da timeline usa a área real dos tracks, evitando cortes deslocados pela coluna de rótulos.
 - Timeline ganhou modo **Juntar blocos**, que mostra os clipes mantidos encostados como ripple/compact view sem perder o tempo original de export.
 - Cliques perto das bordas dos clipes usam snap para acertar com mais precisão o ponto exato de transição/corte.
+- Split/delete/undo param o playback e reancoram o playhead em um trecho mantido para evitar timeline parada com preview avançando.
 - Timeline mostra ação de desfazer na barra e informa o tempo exato quando um clipe é dividido.
 - Atalhos: `Espaço` play/pause, `B` divide no playhead, `Delete`/`Backspace` exclui, `Ctrl+Z` desfaz ação da timeline; campos de texto não capturam esses comandos.
 - Controle de silêncio ganhou ajuste de fala mínima para evitar microclipes e cortes nervosos.
