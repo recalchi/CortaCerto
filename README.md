@@ -238,6 +238,7 @@ Principais pontos já estabilizados:
 - Timeline permite ajustar cortes arrastando as bordas dos clipes, com duração mínima e sem sobrepor clipes vizinhos.
 - Ajuste por borda só grava histórico quando o corte muda de fato, evitando `Ctrl+Z` poluído por cliques sem arraste.
 - Timeline mostra handles nas bordas do clipe selecionado e cursor de resize quando o mouse passa sobre um ajuste possível.
+- Track de áudio desenha os mesmos blocos mantidos do vídeo e mostra a zona visual de acionamento das bordas.
 - Conversão clique/playhead da timeline usa a área real dos tracks, evitando cortes deslocados pela coluna de rótulos.
 - Timeline ganhou modo **Juntar blocos**, que mostra os clipes mantidos encostados como ripple/compact view sem perder o tempo original de export.
 - Cliques perto das bordas dos clipes usam snap para acertar com mais precisão o ponto exato de transição/corte.
