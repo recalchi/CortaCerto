@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts.run_sprint_checks import check_legacy_root_files, check_text_encoding, safe_console
+from scripts.run_sprint_checks import check_legacy_root_files, check_test_inventory, check_text_encoding, safe_console
 
 
 class SprintChecksTests(unittest.TestCase):
@@ -39,6 +39,18 @@ class SprintChecksTests(unittest.TestCase):
 
     def test_safe_console_escapes_unprintable_unicode(self) -> None:
         self.assertEqual(safe_console(f"bad {chr(0xfffd)}"), "bad \\ufffd")
+
+    def test_test_inventory_reports_declared_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tests_dir = Path(tmp) / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_demo.py").write_text("def test_one():\n    pass\n", encoding="utf-8")
+            messages: list[str] = []
+
+            with mock.patch("scripts.run_sprint_checks.Path", side_effect=lambda p: Path(tmp) / p):
+                self.assertEqual(check_test_inventory(print_fn=messages.append), 0)
+
+        self.assertIn("1 arquivos, 1 casos", "\n".join(messages))
 
 
 if __name__ == "__main__":

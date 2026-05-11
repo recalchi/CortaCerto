@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import json
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -45,6 +47,10 @@ TL_HEAD     = "#ffcc44"   # playhead
 TL_BG       = "#18181e"
 TL_LABEL_W  = 74
 TL_PAD_R    = 8
+PROJECT_EXT = ".ccp"
+PROJECT_LEGACY_EXT = ".cortacerto.json"
+PROJECT_TRASH_DAYS = 30
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
 
 class CortaCertoApp:
@@ -61,6 +67,11 @@ class CortaCertoApp:
         self.video_path:    Optional[str]            = None
         self._music_path:   Optional[str]            = None
         self.result:        Optional[PipelineResult] = None
+        self.project_path:  Optional[str]            = None
+        self.project_name:  str                      = "Projeto sem nome"
+        self._pending_project_state: dict[str, object] = {}
+        self._launcher_media_path: Optional[str] = None
+        self._launcher_media_var: Optional[tk.StringVar] = None
         self._queue:        queue.Queue              = queue.Queue()
         self._cancel_ev:    threading.Event          = threading.Event()
         self._thumb_imgs:   list                     = []
@@ -104,12 +115,231 @@ class CortaCertoApp:
         self._export_stage_progress = None
         self._export_overall_progress = None
 
-        self._build_ui()
+        self._show_project_launcher()
         self._poll_queue()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def run(self) -> None:
         self.root.mainloop()
+
+    # -- Project launcher -----------------------------------------------------
+
+    def _clear_root(self) -> None:
+        for child in self.root.winfo_children():
+            child.destroy()
+
+    def _show_project_launcher(self) -> None:
+        self._clear_root()
+        self.root.title("CortaCerto - Projetos")
+        self.root.geometry("980x620")
+        self.root.minsize(860, 560)
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_rowconfigure(1, weight=0)
+        self.root.grid_columnconfigure(0, weight=1)
+
+        shell = tk.Frame(self.root, bg=C_BG)
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.grid_rowconfigure(1, weight=1)
+        shell.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            shell,
+            text="CortaCerto",
+            bg=C_BG,
+            fg=C_ACCENT2,
+            font=("Segoe UI", 28, "bold"),
+        ).grid(row=0, column=0, pady=(54, 6))
+        tk.Label(
+            shell,
+            text="Projetos de edição",
+            bg=C_BG,
+            fg=C_MUTED,
+            font=("Segoe UI", 13),
+        ).grid(row=1, column=0, sticky="n", pady=(0, 26))
+
+        panel = tk.Frame(shell, bg=C_PANEL, highlightthickness=1, highlightbackground=C_BORDER)
+        panel.grid(row=1, column=0, sticky="n", pady=(70, 0), ipadx=28, ipady=24)
+        panel.grid_columnconfigure(0, weight=1)
+
+        self._launcher_media_var = tk.StringVar(value="Nenhuma mídia importada")
+        media_row = tk.Frame(panel, bg=C_PANEL)
+        media_row.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        media_row.grid_columnconfigure(0, weight=1)
+        tk.Entry(
+            media_row,
+            textvariable=self._launcher_media_var,
+            bg=C_SURFACE,
+            fg=C_TEXT,
+            insertbackground=C_TEXT,
+            relief="flat",
+            font=("Segoe UI", 10),
+            width=34,
+        ).grid(row=0, column=0, sticky="ew", ipady=6, padx=(0, 6))
+        tk.Button(
+            media_row,
+            text="Importar mídia",
+            command=self._import_launcher_media,
+            bg=C_SURFACE,
+            fg=C_TEXT,
+            activebackground=C_BORDER,
+            activeforeground=C_TEXT,
+            relief="flat",
+            padx=10,
+            pady=6,
+            font=("Segoe UI", 10),
+            cursor="hand2",
+            bd=0,
+        ).grid(row=0, column=1)
+
+        actions = [
+            ("Novo projeto", self._create_project),
+            ("Abrir projeto", self._open_project),
+            ("Abrir vídeo rápido", self._quick_open_video),
+            ("Restaurar projeto", self._restore_project_from_trash_dialog),
+            ("Lixeira", self._open_project_trash),
+        ]
+        for row, (label, command) in enumerate(actions):
+            tk.Button(
+                panel,
+                text=label,
+                command=command,
+                bg=C_ACCENT if row == 0 else C_SURFACE,
+                fg="#ffffff" if row == 0 else C_TEXT,
+                activebackground=C_ACCENT2 if row == 0 else C_BORDER,
+                activeforeground="#ffffff",
+                relief="flat",
+                padx=24,
+                pady=10,
+                width=28,
+                font=("Segoe UI", 11),
+                cursor="hand2",
+                bd=0,
+            ).grid(row=row + 1, column=0, sticky="ew", pady=6)
+
+        tk.Label(
+            panel,
+            text="Crie um projeto para manter nome, arquivo .ccp e fluxo de edição separados.",
+            bg=C_PANEL,
+            fg=C_MUTED,
+            wraplength=360,
+            justify="center",
+            font=("Segoe UI", 9),
+        ).grid(row=5, column=0, pady=(14, 0))
+
+        removed = _cleanup_project_trash(_project_trash_dir())
+        if removed:
+            print(f"[PROJECT] Lixeira limpa: {removed} item(ns) com mais de {PROJECT_TRASH_DAYS} dias.")
+
+    def _import_launcher_media(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Importar mídia",
+            filetypes=[("Vídeos", "*.mp4 *.mov *.MOV *.avi *.mkv *.webm *.m4v"),
+                       ("Todos", "*.*")]
+        )
+        if not path:
+            return
+        self._launcher_media_path = path
+        if self._launcher_media_var is not None:
+            self._launcher_media_var.set(path)
+
+    def _open_project_trash(self) -> None:
+        trash_dir = _project_trash_dir()
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        _cleanup_project_trash(trash_dir)
+        if os.name == "nt":
+            os.startfile(str(trash_dir))
+        else:
+            messagebox.showinfo("Lixeira", str(trash_dir))
+
+    def _restore_project_from_trash_dialog(self) -> None:
+        trash_dir = _project_trash_dir()
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        _cleanup_project_trash(trash_dir)
+        source = filedialog.askopenfilename(
+            title="Restaurar projeto da lixeira",
+            initialdir=str(trash_dir),
+            filetypes=[("Projeto CortaCerto", f"*{PROJECT_EXT}"), ("Projeto legado", f"*{PROJECT_LEGACY_EXT}"), ("JSON", "*.json")],
+        )
+        if not source:
+            return
+        destination_dir = filedialog.askdirectory(title="Escolha onde restaurar o projeto")
+        if not destination_dir:
+            return
+        try:
+            restored_to = _restore_project_from_trash(source, Path(destination_dir))
+        except Exception as exc:
+            messagebox.showerror("Erro ao restaurar projeto", str(exc))
+            return
+        print(f"[PROJECT] Projeto restaurado: {restored_to}")
+        self._open_project_editor(str(restored_to))
+
+    def _trash_current_project(self) -> None:
+        if not self.project_path:
+            return
+        if not messagebox.askyesno(
+            "Excluir projeto",
+            "Mover este projeto para a lixeira do CortaCerto?\n\nO vídeo original não será apagado.",
+        ):
+            return
+        try:
+            moved_to = _move_project_to_trash(self.project_path, _project_trash_dir())
+        except Exception as exc:
+            messagebox.showerror("Erro ao excluir projeto", str(exc))
+            return
+        print(f"[PROJECT] Projeto movido para a lixeira: {moved_to}")
+        self.project_path = None
+        self.project_name = "Projeto sem nome"
+        self.video_path = None
+        self._pending_project_state = {}
+        self._show_project_launcher()
+
+    def _create_project(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Criar projeto CortaCerto",
+            defaultextension=PROJECT_EXT,
+            filetypes=[("Projeto CortaCerto", f"*{PROJECT_EXT}"), ("Projeto legado", f"*{PROJECT_LEGACY_EXT}"), ("JSON", "*.json")],
+            initialfile=f"novo-projeto{PROJECT_EXT}",
+        )
+        if not path:
+            return
+        metadata = _build_project_metadata(path)
+        if self._launcher_media_path:
+            metadata["video_path"] = self._launcher_media_path
+        Path(path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._open_project_editor(path)
+
+    def _open_project(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Abrir projeto CortaCerto",
+            filetypes=[("Projeto CortaCerto", f"*{PROJECT_EXT}"), ("Projeto legado", f"*{PROJECT_LEGACY_EXT}"), ("JSON", "*.json"), ("Todos", "*.*")],
+        )
+        if path:
+            self._open_project_editor(path)
+
+    def _quick_open_video(self) -> None:
+        self._open_project_editor(None)
+        if self._launcher_media_path:
+            self._load_video(self._launcher_media_path)
+        else:
+            self._pick_video()
+
+    def _open_project_editor(self, project_path: Optional[str]) -> None:
+        self.project_path = project_path
+        metadata = _read_project_metadata(project_path) if project_path else {}
+        self.project_name = str(metadata.get("name") or _project_name_from_path(project_path))
+        self._pending_project_state = metadata
+        self._clear_root()
+        self.root.geometry("1280x780")
+        self.root.minsize(1000, 660)
+        self._build_ui()
+        self.root.title(f"CortaCerto - {self.project_name}")
+        self._tb_status.configure(text=f"Projeto aberto: {self.project_name}")
+        video_path = str(metadata.get("video_path") or "")
+        if video_path and Path(video_path).exists():
+            self.root.after(100, lambda path=video_path: self._load_video(path))
+        elif video_path:
+            self._tb_status.configure(text="Projeto aberto, mas o vídeo salvo não foi encontrado.")
+            self._pending_project_state = {}
 
     # -- Icon ------------------------------------------------------------------
 
@@ -136,6 +366,7 @@ class CortaCertoApp:
         self._build_toolbar()
         self._build_body()
         self._bind_shortcuts()
+        self._setup_drop_targets()
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<space>", self._shortcut_toggle_play)
@@ -175,54 +406,80 @@ class CortaCertoApp:
         self._undo_timeline_action()
         return "break"
 
+    def _setup_drop_targets(self) -> None:
+        try:
+            self.root.tk.call("package", "require", "tkdnd")
+            for widget in (self.root, self._preview_canvas):
+                widget.tk.call("tkdnd::drop_target", "register", widget, "DND_Files")
+                widget.bind("<<Drop>>", self._on_drop_files)
+            self._tb_status.configure(text="Arraste um vídeo para o preview ou use Abrir vídeo.")
+        except Exception:
+            self._tb_status.configure(text="Use Abrir vídeo para importar mídia.")
+
+    def _on_drop_files(self, event: tk.Event) -> str:
+        path = _first_video_path_from_drop(getattr(event, "data", ""))
+        if path:
+            self._load_video(path)
+        else:
+            self._tb_status.configure(text="Solte um arquivo de vídeo compatível.")
+        return "break"
+
     # -- Toolbar ---------------------------------------------------------------
 
     def _build_toolbar(self) -> None:
         tb = tk.Frame(self.root, bg="#111116", height=48)
         tb.grid(row=0, column=0, sticky="ew")
         tb.grid_propagate(False)
-        tb.grid_columnconfigure(4, weight=1)
+        tb.grid_columnconfigure(6, weight=1)
 
         # Logo
         tk.Label(tb, text="CortaCerto", bg="#111116", fg=C_ACCENT2,
                  font=("Segoe UI", 13, "bold")).grid(row=0, column=0, padx=(14,18), pady=8)
+        tk.Label(tb, text=self.project_name, bg="#111116", fg=C_MUTED,
+                 font=("Segoe UI", 9)).grid(row=0, column=1, padx=(0, 10), pady=8)
 
         # Open
         self._open_btn = self._tb_btn(tb, "Abrir vídeo", self._pick_video,
                                        fg=C_TEXT)
-        self._open_btn.grid(row=0, column=1, padx=4, pady=8)
+        self._open_btn.grid(row=0, column=2, padx=4, pady=8)
 
         # Export
         self._export_btn = self._tb_btn(tb, "Exportar", self._start,
                                          fg="#ffffff", bg=C_ACCENT)
-        self._export_btn.grid(row=0, column=2, padx=4, pady=8)
+        self._export_btn.grid(row=0, column=3, padx=4, pady=8)
         self._export_btn.configure(state="disabled")
 
         # Cancel
         self._cancel_btn = self._tb_btn(tb, "Cancelar", self._cancel,
                                          fg="#ffffff", bg=C_RED)
-        self._cancel_btn.grid(row=0, column=3, padx=(4, 16), pady=8)
+        self._cancel_btn.grid(row=0, column=4, padx=(4, 16), pady=8)
         self._cancel_btn.configure(state="disabled")
+
+        self._trash_project_btn = self._tb_btn(tb, "Excluir projeto", self._trash_current_project,
+                                               fg="#ffffff", bg="#7a2e2e")
+        self._trash_project_btn.grid(row=0, column=5, padx=(0, 10), pady=8)
+        if not self.project_path:
+            self._trash_project_btn.configure(state="disabled")
 
         # Progress bar (hidden initially)
         self._tb_progress = ctk.CTkProgressBar(tb, height=4, width=180,
                                                 progress_color=C_ACCENT)
         self._tb_progress.set(0)
-        self._tb_progress.grid(row=0, column=4, padx=8, pady=20, sticky="ew")
+        self._tb_progress.grid(row=0, column=6, padx=8, pady=20, sticky="ew")
 
         # Status
         self._tb_status = tk.Label(tb, text="Abra um vídeo para começar",
                                     bg="#111116", fg=C_MUTED,
                                     font=("Segoe UI", 10))
-        self._tb_status.grid(row=0, column=5, padx=8)
+        self._tb_status.grid(row=0, column=7, padx=8)
 
         # GPU / Seg labels (right side)
         self._gpu_lbl = tk.Label(tb, text="Encode: verificando", bg="#111116", fg=C_MUTED,
                                   font=("Segoe UI", 9))
-        self._gpu_lbl.grid(row=0, column=6, padx=(0,8))
+        self._gpu_lbl.grid(row=0, column=8, padx=(0,8))
         self._seg_lbl = tk.Label(tb, text="Seg: grabcut", bg="#111116", fg=C_MUTED,
                                   font=("Segoe UI", 9))
-        self._seg_lbl.grid(row=0, column=7, padx=(0,14))
+        self._seg_lbl.grid(row=0, column=9, padx=(0,14))
 
         self.root.after(800,  self._detect_seg_label)
         self.root.after(1500, self._detect_gpu_label)
@@ -390,10 +647,12 @@ class CortaCertoApp:
         w   = self._tl_canvas.winfo_width()
         track_x1, track_x2 = self._timeline_track_bounds(w)
         time_s = self._timeline_click_time(event.x, track_x1, track_x2)
-        time_s = self._snap_time_to_clip_edge(time_s)
+        time_s, snapped = self._snap_time_to_clip_edge(time_s)
         frame = self._time_to_frame(time_s)
         self._select_clip_at_time(time_s)
         self._seek_to(frame)
+        if snapped:
+            self._tb_status.configure(text=f"Playhead encaixado em {_fmt(time_s)}.")
 
     def _tl_drag_motion(self, event: tk.Event) -> str | None:
         if not self._trim_drag or not self._timeline_model:
@@ -404,7 +663,7 @@ class CortaCertoApp:
         w = self._tl_canvas.winfo_width()
         track_x1, track_x2 = self._timeline_track_bounds(w)
         time_s = self._timeline_click_time(event.x, track_x1, track_x2)
-        time_s = self._snap_time_to_clip_edge(time_s)
+        time_s, snapped = self._snap_time_to_clip_edge(time_s)
         clips = self._timeline_model.video_track.clips
         new_start, new_end = _trim_clip_bounds(
             clips,
@@ -426,7 +685,8 @@ class CortaCertoApp:
         self._sync_manual_timeline(mark_dirty=True)
         self._timeline_dirty = True
         self._seek_to(self._time_to_frame(new_start if edge == "start" else new_end))
-        self._tb_status.configure(text=f"Corte ajustado: {_fmt(new_start)} - {_fmt(new_end)}.")
+        snap_note = " | snap" if snapped else ""
+        self._tb_status.configure(text=f"Corte ajustado: {_fmt(new_start)} - {_fmt(new_end)}.{snap_note}")
         return "break"
 
     def _tl_release(self, event: tk.Event) -> str | None:
@@ -557,6 +817,7 @@ class CortaCertoApp:
         if mark_dirty is not None:
             self._timeline_dirty = mark_dirty
         self._redraw_timeline()
+        self._save_project_state()
 
     def _redraw_timeline(self) -> None:
         c = self._tl_canvas
@@ -788,11 +1049,11 @@ class CortaCertoApp:
                 return idx, edge
         return None
 
-    def _snap_time_to_clip_edge(self, time_s: float) -> float:
+    def _snap_time_to_clip_edge(self, time_s: float) -> tuple[float, bool]:
         if not self._timeline_model:
-            return time_s
+            return time_s, False
         threshold_s = max(1.0 / max(1.0, self._fps), 0.08)
-        return _snap_time_to_edges(
+        return _snap_time_to_edges_with_flag(
             time_s,
             _clip_edges(self._timeline_model.video_track.clips),
             threshold_s,
@@ -1053,6 +1314,10 @@ class CortaCertoApp:
         self._load_video(path)
 
     def _load_video(self, path: str) -> None:
+        if not _is_video_path(path):
+            self._tb_status.configure(text="Arquivo ignorado: formato de vídeo não suportado.")
+            messagebox.showwarning("Mídia incompatível", "Use um arquivo de vídeo compatível.")
+            return
         self._stop_playback(reset_button=True)
         self._play_btn.configure(text="▶")
         try:
@@ -1065,6 +1330,7 @@ class CortaCertoApp:
             return
 
         self.video_path    = path
+        self._save_project_video_path(path)
         self._segments     = []
         self._analysis_done= False
         self._timeline_model = None
@@ -1091,7 +1357,7 @@ class CortaCertoApp:
         self._export_btn.configure(state="normal")
         self._seek_bar.configure(to=max(1, self._total_frames - 1))
         self._seek_bar.set(0)
-        self.root.title(f"CortaCerto - {name}")
+        self.root.title(f"CortaCerto - {self.project_name} - {name}")
         self._tb_status.configure(text="Carregando primeiro frame...")
 
         # Show first frame
@@ -1118,6 +1384,59 @@ class CortaCertoApp:
             ),
             daemon=True,
         ).start()
+
+    def _save_project_video_path(self, video_path: str) -> None:
+        if not self.project_path:
+            return
+        try:
+            metadata = _read_project_metadata(self.project_path)
+            metadata.update(
+                {
+                    "app": "CortaCerto",
+                    "version": int(metadata.get("version") or 1),
+                    "name": self.project_name,
+                    "slug": _safe_project_slug(self.project_name),
+                    "video_path": video_path,
+                    "updated_at": int(time.time()),
+                }
+            )
+            Path(self.project_path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            print(f"[PROJECT] Não foi possível salvar o projeto: {exc}")
+
+    def _save_project_state(self) -> None:
+        if not self.project_path or not self.video_path:
+            return
+        try:
+            metadata = _read_project_metadata(self.project_path)
+            metadata.update(_project_state_payload(
+                project_name=self.project_name,
+                video_path=self.video_path,
+                current_time_s=self._current_frame / max(1.0, self._fps),
+                timeline_segments=self._segments,
+                timeline_dirty=self._timeline_dirty,
+            ))
+            Path(self.project_path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            print(f"[PROJECT] Não foi possível atualizar retomada do projeto: {exc}")
+
+    def _restore_project_timeline_if_available(self, timeline_model: TimelineModel) -> Optional[list[tuple[float, float]]]:
+        metadata = self._pending_project_state
+        if not metadata or metadata.get("video_path") != self.video_path:
+            return None
+        segments = _project_segments_from_metadata(metadata, self._duration_s)
+        if not segments:
+            return None
+        _apply_segments_to_timeline_model(timeline_model, self._duration_s, segments)
+        self._timeline_dirty = bool(metadata.get("timeline_dirty", True))
+        return segments
+
+    def _restore_project_playhead_if_available(self) -> None:
+        metadata = self._pending_project_state
+        if not metadata:
+            return
+        current_time_s = _project_float(metadata.get("current_time_s"), default=0.0)
+        self._seek_to(self._time_to_frame(current_time_s))
 
     def _bg_analyze(
         self,
@@ -1163,6 +1482,7 @@ class CortaCertoApp:
         self._draw_frame_at(self._current_frame)
         self._update_time_label()
         self._update_tl_playhead()
+        self._save_project_state()
         if was_playing:
             self._start_playback()
 
@@ -1676,12 +1996,19 @@ class CortaCertoApp:
                 elif msg == "__TIMELINE_READY__":
                     video_path, analysis, timeline_model = val
                     if video_path == self.video_path:
-                        self._segments = analysis.speech_segments
+                        restored = self._restore_project_timeline_if_available(timeline_model)
+                        self._segments = restored if restored is not None else analysis.speech_segments
                         self._analysis_done = True
                         self._timeline_model = timeline_model
                         self._timeline_undo_stack.clear()
                         self._redraw_timeline()
-                        self._tb_status.configure(text="Preview pronto. Timeline atualizada.")
+                        self._restore_project_playhead_if_available()
+                        self._tb_status.configure(
+                            text="Projeto retomado. Timeline restaurada."
+                            if restored is not None
+                            else "Preview pronto. Timeline atualizada."
+                        )
+                        self._pending_project_state = {}
                 elif msg == "__TIMELINE_ERROR__":
                     video_path, detail = val
                     if video_path == self.video_path:
@@ -1831,6 +2158,209 @@ class CortaCertoApp:
 def _fmt(s: float) -> str:
     m, sec = divmod(int(s), 60)
     return f"{m:02d}:{sec:02d}"
+
+
+def _project_name_from_path(project_path: Optional[str]) -> str:
+    if not project_path:
+        return "Projeto rápido"
+    name = Path(project_path).name
+    if name.endswith(PROJECT_LEGACY_EXT):
+        return name[:-len(PROJECT_LEGACY_EXT)]
+    if name.endswith(PROJECT_EXT):
+        return name[:-len(PROJECT_EXT)]
+    return Path(project_path).stem
+
+
+def _safe_project_slug(name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", name.strip()).strip("-._")
+    return slug or "projeto"
+
+
+def _build_project_metadata(project_path: str) -> dict[str, object]:
+    name = _project_name_from_path(project_path)
+    return {
+        "app": "CortaCerto",
+        "version": 1,
+        "name": name,
+        "slug": _safe_project_slug(name),
+        "video_path": None,
+        "created_at": int(time.time()),
+    }
+
+
+def _project_state_payload(
+    project_name: str,
+    video_path: str,
+    current_time_s: float,
+    timeline_segments: list[tuple[float, float]],
+    timeline_dirty: bool,
+) -> dict[str, object]:
+    return {
+        "app": "CortaCerto",
+        "version": 1,
+        "name": project_name,
+        "slug": _safe_project_slug(project_name),
+        "video_path": video_path,
+        "current_time_s": max(0.0, float(current_time_s)),
+        "timeline_segments": [
+            {"start_s": float(start), "end_s": float(end)}
+            for start, end in timeline_segments
+            if float(end) > float(start)
+        ],
+        "timeline_dirty": bool(timeline_dirty),
+        "updated_at": int(time.time()),
+    }
+
+
+def _read_project_metadata(project_path: Optional[str]) -> dict[str, object]:
+    if not project_path:
+        return {}
+    path = Path(project_path)
+    if not path.exists():
+        return _build_project_metadata(project_path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return _build_project_metadata(project_path)
+    if not isinstance(data, dict):
+        return _build_project_metadata(project_path)
+    metadata = _build_project_metadata(project_path)
+    metadata.update(data)
+    metadata["name"] = str(metadata.get("name") or _project_name_from_path(project_path))
+    metadata["slug"] = str(metadata.get("slug") or _safe_project_slug(str(metadata["name"])))
+    return metadata
+
+
+def _project_trash_dir(base_dir: Optional[Path] = None) -> Path:
+    root = base_dir or Path.home() / "CortaCerto"
+    return root / "Lixeira"
+
+
+def _cleanup_project_trash(trash_dir: Path, now_s: Optional[float] = None, days: int = PROJECT_TRASH_DAYS) -> int:
+    if not trash_dir.exists():
+        return 0
+    now_s = time.time() if now_s is None else float(now_s)
+    max_age_s = max(0, int(days)) * 24 * 60 * 60
+    removed = 0
+    for item in trash_dir.iterdir():
+        try:
+            if now_s - item.stat().st_mtime < max_age_s:
+                continue
+            if item.is_dir():
+                import shutil
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def _trash_destination_for(project_path: Path, trash_dir: Path) -> Path:
+    return _unique_destination_for(project_path, trash_dir)
+
+
+def _unique_destination_for(project_path: Path, target_dir: Path) -> Path:
+    stem = project_path.stem
+    suffix = project_path.suffix
+    destination = target_dir / project_path.name
+    index = 1
+    while destination.exists():
+        destination = target_dir / f"{stem}-{index}{suffix}"
+        index += 1
+    return destination
+
+
+def _move_project_to_trash(project_path: str, trash_dir: Path) -> Path:
+    source = Path(project_path)
+    if not source.exists():
+        raise FileNotFoundError(f"Projeto não encontrado: {source}")
+    trash_dir.mkdir(parents=True, exist_ok=True)
+    destination = _trash_destination_for(source, trash_dir)
+    source.replace(destination)
+    return destination
+
+
+def _restore_project_from_trash(project_path: str, destination_dir: Path) -> Path:
+    source = Path(project_path)
+    if not source.exists():
+        raise FileNotFoundError(f"Projeto não encontrado na lixeira: {source}")
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = _unique_destination_for(source, destination_dir)
+    source.replace(destination)
+    return destination
+
+
+def _is_video_path(path: str) -> bool:
+    return Path(str(path).strip().strip("{}")).suffix.lower() in VIDEO_EXTENSIONS
+
+
+def _first_video_path_from_drop(drop_data: str) -> Optional[str]:
+    for item in _split_drop_paths(drop_data):
+        clean = item.strip().strip("{}")
+        if _is_video_path(clean):
+            return clean
+    return None
+
+
+def _split_drop_paths(drop_data: str) -> list[str]:
+    def clean(values: list[str]) -> list[str]:
+        return [value.strip().strip("{}") for value in values if value.strip()]
+
+    if not drop_data:
+        return []
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        values = list(root.tk.splitlist(drop_data))
+        root.destroy()
+        return clean(values)
+    except Exception:
+        return clean(re.findall(r"\{[^}]+\}|[^\s]+", drop_data))
+
+
+def _project_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _project_segments_from_metadata(
+    metadata: dict[str, object],
+    duration_s: float,
+) -> list[tuple[float, float]]:
+    raw = metadata.get("timeline_segments")
+    if not isinstance(raw, list):
+        return []
+    segments: list[tuple[float, float]] = []
+    duration_s = max(0.0, float(duration_s))
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        start_s = max(0.0, min(duration_s, _project_float(item.get("start_s"))))
+        end_s = max(0.0, min(duration_s, _project_float(item.get("end_s"))))
+        if end_s > start_s:
+            segments.append((start_s, end_s))
+    return segments
+
+
+def _apply_segments_to_timeline_model(
+    timeline_model: TimelineModel,
+    duration_s: float,
+    segments: list[tuple[float, float]],
+) -> None:
+    clips = [
+        TimelineClip(start_s, end_s, "speech", f"Clip {idx}")
+        for idx, (start_s, end_s) in enumerate(segments, start=1)
+    ]
+    timeline_model.video_track.clips = clips
+    timeline_model.audio_track.clips = [
+        TimelineClip(c.start_s, c.end_s, c.clip_type, c.label) for c in clips
+    ]
+    timeline_model.removed_ranges = _removed_ranges_from_segments(duration_s, segments)
+    timeline_model.saved_time_s = sum(end - start for start, end in timeline_model.removed_ranges)
 
 
 def _fit_preview_image(image: Image.Image, canvas_w: int, canvas_h: int) -> Image.Image:
@@ -2029,12 +2559,17 @@ def _trim_bounds_changed(
 
 
 def _snap_time_to_edges(time_s: float, edges: list[float], threshold_s: float) -> float:
+    snapped_time, _snapped = _snap_time_to_edges_with_flag(time_s, edges, threshold_s)
+    return snapped_time
+
+
+def _snap_time_to_edges_with_flag(time_s: float, edges: list[float], threshold_s: float) -> tuple[float, bool]:
     if not edges:
-        return time_s
+        return time_s, False
     nearest = min(edges, key=lambda edge: abs(edge - time_s))
     if abs(nearest - time_s) <= threshold_s:
-        return nearest
-    return time_s
+        return nearest, nearest != time_s
+    return time_s, False
 
 
 def _coerce_time_to_segments(
