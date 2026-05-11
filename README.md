@@ -130,8 +130,8 @@ Protótipos antigos baseados em MoviePy/pydub foram preservados em `legacy/old_m
 2. Escolher vídeo — clique em "Escolher vídeo…"
 3. Configurar — ajuste silêncio, plataforma, música de fundo
 4. Cor & Efeitos — color grade e bokeh com preview em tempo real
-5. Processar — clique em "▶ Processar Vídeo"
-6. Resultado — veja as 5 thumbnails, escolha a principal, abra a pasta
+5. Processar — clique em "Exportar"
+6. Resultado — abra o vídeo final; thumbnails e versão vertical só são geradas se as saídas extras estiverem ativadas
 
 ### Arquivos gerados
 
@@ -140,8 +140,8 @@ Salvos em `CortaCerto_output/` na mesma pasta do vídeo original:
 | Arquivo | Descrição |
 |---|---|
 | `{nome}_editado.mp4` | Vídeo com silêncios removidos + cor + bokeh |
-| `{nome}_vertical.mp4` | Versão 9:16 para Reels / TikTok / Shorts |
-| `{nome}_thumb_1.jpg` … `_5.jpg` | 5 thumbnails profissionais |
+| `{nome}_vertical.mp4` | Opcional: versão 9:16 para Reels / TikTok / Shorts |
+| `{nome}_thumb_1.jpg` … `_5.jpg` | Opcional: 5 thumbnails profissionais |
 
 ---
 
@@ -253,6 +253,7 @@ Principais pontos já estabilizados:
 - Play, pause e seek usam o mesmo caminho de preview.
 - Export sem bokeh usa caminho rápido e registra que a segmentação foi pulada.
 - Export sem corte de silêncio ou com timeline manual já pronta evita análise de áudio redundante e registra o caminho usado.
+- Export começa em modo vídeo final apenas; thumbnails e versão vertical ficam como saídas extras explícitas.
 - Export limpa arquivos intermediários (`_effects`, `_effects_muxed`, `_audio`) e mantém o vídeo final como `{nome}_editado.mp4`.
 - Export sem edições pesadas também cria `{nome}_editado.mp4` em `CortaCerto_output/`, copiando o original sem mover ou apagar o arquivo de entrada.
 - Export registra explicitamente o nome do arquivo final entregue.

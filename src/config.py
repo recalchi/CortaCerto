@@ -55,7 +55,7 @@ class ProcessingConfig:
     # Output targets
     platform:           Platform = Platform.YOUTUBE
     remove_silence:     bool = True
-    generate_thumbnail: bool = True
+    generate_thumbnail: bool = False
     generate_vertical:  bool = False
     manual_segments:    list[tuple[float, float]] | None = None
 

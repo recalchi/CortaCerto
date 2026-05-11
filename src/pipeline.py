@@ -78,6 +78,7 @@ def run_pipeline(
         result.original_duration_s = get_video_duration(video_path)
         encoder, _ = detect_video_encoder()
         prog(f"[GPU] Selected mode: encode={encoder}; efeitos OpenCV/bokeh rodam em CPU.", 0.01)
+        prog(f"[EXPORT] Saídas selecionadas: {_export_output_plan(config)}.", 0.01)
 
         # ── 1b. Face/person detection (used for bokeh + thumbnail layout) ───
         if config.bokeh_intensity >= 0.05 or config.generate_thumbnail:
@@ -352,3 +353,12 @@ def _normalize_manual_segments(
         if end_s > start_s:
             normalized.append((start_s, end_s))
     return normalized
+
+
+def _export_output_plan(config: ProcessingConfig) -> str:
+    outputs = ["vídeo final"]
+    if config.generate_vertical:
+        outputs.append("versão vertical")
+    if config.generate_thumbnail:
+        outputs.append(f"{max(1, int(config.thumbnail_count))} thumbnails")
+    return ", ".join(outputs)
