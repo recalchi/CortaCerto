@@ -16,6 +16,24 @@ LEGACY_ROOT_FILES = [
     "video_editor_gui.py",
 ]
 
+TEXT_ENCODING_CHECK_GLOBS = [
+    "README.md",
+    "main.py",
+    "install.bat",
+    "run.bat",
+    "installer/*.bat",
+    "installer/*.iss",
+    "scripts/*.py",
+    "src/**/*.py",
+    "tests/*.py",
+]
+
+MOJIBAKE_MARKERS = ["\u00c3", "\u00c2", "\ufffd"]
+
+
+def safe_console(text: str) -> str:
+    return text.encode("ascii", errors="backslashreplace").decode("ascii")
+
 CHECKS: list[tuple[str, list[str]]] = [
     (
         "Compilacao dos modulos principais",
@@ -68,6 +86,32 @@ def check_legacy_root_files(strict: bool, print_fn=print) -> int:
     return 0
 
 
+def iter_text_files() -> list[Path]:
+    files: list[Path] = []
+    for pattern in TEXT_ENCODING_CHECK_GLOBS:
+        files.extend(Path(".").glob(pattern))
+    return sorted({path for path in files if path.is_file()})
+
+
+def check_text_encoding(print_fn=print) -> int:
+    failures: list[str] = []
+    for path in iter_text_files():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        markers = [marker for marker in MOJIBAKE_MARKERS if marker in text]
+        if markers:
+            escaped_markers = " ".join(safe_console(marker) for marker in markers)
+            failures.append(f"{path}: {escaped_markers}")
+
+    if not failures:
+        print_fn("\n[OK] Textos ativos sem mojibake comum.")
+        return 0
+
+    print_fn("\n[ERRO] Possivel texto com encoding quebrado:")
+    for failure in failures:
+        print_fn(f"  - {safe_console(failure)}")
+    return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Executa a bateria curta da sprint CortaCerto.")
     parser.add_argument(
@@ -97,6 +141,10 @@ def main() -> int:
             return code
 
     code = check_legacy_root_files(args.strict_legacy)
+    if code != 0:
+        return code
+
+    code = check_text_encoding()
     if code != 0:
         return code
 
