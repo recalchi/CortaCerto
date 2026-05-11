@@ -8,9 +8,12 @@ from PIL import Image
 from src.core.color_grade import ColorGrade
 from src.core.preview_engine import PreviewSettings
 from src.ui.app import (
+    _apply_clip_options_to_timeline_model,
     _apply_segments_to_timeline_model,
     _build_project_metadata,
+    _clip_options_from_timeline_model,
     _clip_edges,
+    _clone_timeline_clip,
     _cleanup_project_trash,
     _coerce_frame_to_segments,
     _coerce_time_to_segments,
@@ -174,10 +177,11 @@ class PreviewUiTests(unittest.TestCase):
         payload = _project_state_payload(
             project_name="Canal",
             video_path="C:/video.mp4",
-            media_paths=["C:/extra.mov"],
             current_time_s=12.5,
             timeline_segments=[(1.0, 3.0), (5.0, 5.0), (6.0, 8.0)],
             timeline_dirty=True,
+            media_paths=["C:/extra.mov"],
+            clip_options=[{"label": "Intro", "scale_pct": 125.0}],
         )
 
         self.assertEqual(payload["video_path"], "C:/video.mp4")
@@ -187,6 +191,7 @@ class PreviewUiTests(unittest.TestCase):
             {"start_s": 1.0, "end_s": 3.0},
             {"start_s": 6.0, "end_s": 8.0},
         ])
+        self.assertEqual(payload["clip_options"], [{"label": "Intro", "scale_pct": 125.0}])
         self.assertTrue(payload["timeline_dirty"])
 
     def test_project_segments_from_metadata_clamps_invalid_ranges(self) -> None:
@@ -211,6 +216,36 @@ class PreviewUiTests(unittest.TestCase):
         ])
         self.assertEqual([(c.start_s, c.end_s) for c in model.audio_track.clips], [(1.0, 3.0), (6.0, 8.0)])
         self.assertEqual(model.removed_ranges, [(0.0, 1.0), (3.0, 6.0), (8.0, 10.0)])
+
+    def test_clip_options_round_trip_editor_metadata(self) -> None:
+        model = build_timeline_model(10.0, [(0.0, 4.0)])
+        clip = model.video_track.clips[0]
+        clip.label = "Intro"
+        clip.scale_pct = 135.0
+        clip.volume_pct = 80.0
+        clip.transition = "Fade"
+        clip.text_overlay = "Abertura"
+
+        options = _clip_options_from_timeline_model(model)
+        restored = build_timeline_model(10.0, [(0.0, 4.0)])
+        _apply_clip_options_to_timeline_model(restored, options)
+
+        restored_clip = restored.video_track.clips[0]
+        self.assertEqual(restored_clip.label, "Intro")
+        self.assertEqual(restored_clip.scale_pct, 135.0)
+        self.assertEqual(restored_clip.volume_pct, 80.0)
+        self.assertEqual(restored_clip.transition, "Fade")
+        self.assertEqual(restored_clip.text_overlay, "Abertura")
+        self.assertEqual(restored.audio_track.clips[0].scale_pct, 135.0)
+
+    def test_clone_timeline_clip_preserves_editor_options(self) -> None:
+        clip = TimelineClip(1.0, 2.0, "speech", "Corte 1", scale_pct=150.0, volume_pct=70.0, transition="Dissolver")
+
+        cloned = _clone_timeline_clip(clip)
+
+        self.assertEqual(cloned.scale_pct, 150.0)
+        self.assertEqual(cloned.volume_pct, 70.0)
+        self.assertEqual(cloned.transition, "Dissolver")
 
     def test_preview_settings_request_token_separates_stale_callbacks(self) -> None:
         first = PreviewSettings(ColorGrade(enabled=False), 0.0, request_token=("playback", 1, 10))

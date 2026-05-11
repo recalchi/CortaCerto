@@ -11,6 +11,11 @@ class TimelineClip:
     end_s: float
     clip_type: str
     label: str = ""
+    source_path: str = ""
+    scale_pct: float = 100.0
+    volume_pct: float = 100.0
+    transition: str = "Corte"
+    text_overlay: str = ""
 
 
 @dataclass

@@ -110,6 +110,12 @@ class CortaCertoApp:
         self._trim_min_duration_s = 0.15
         self._waveform_zoom = 1.0
         self._tl_compact_var = tk.BooleanVar(value=True)
+        self._clip_label_var = tk.StringVar(value="")
+        self._clip_scale_var = tk.DoubleVar(value=100.0)
+        self._clip_volume_var = tk.DoubleVar(value=100.0)
+        self._clip_transition_var = tk.StringVar(value="Corte")
+        self._media_listbox: Optional[tk.Listbox] = None
+        self._clip_inspector_enabled = False
         self._export_modal = None
         self._export_stage_var = None
         self._export_msg_var = None
@@ -738,6 +744,7 @@ class CortaCertoApp:
     def _select_clip_at_time(self, time_s: float) -> None:
         self._selected_clip_index = self._clip_index_at_time(time_s)
         self._redraw_timeline()
+        self._refresh_clip_inspector()
 
     def _split_selected_clip(self) -> None:
         if not self._timeline_model:
@@ -781,12 +788,13 @@ class CortaCertoApp:
         self._timeline_dirty = True
         self._seek_to(self._time_to_frame(self._nearest_kept_time(current_time)))
         self._tb_status.configure(text="Clipe removido da timeline.")
+        self._refresh_clip_inspector()
 
     def _push_timeline_undo(self) -> None:
         if not self._timeline_model:
             return
         clips = [
-            TimelineClip(c.start_s, c.end_s, c.clip_type, c.label)
+            _clone_timeline_clip(c)
             for c in self._timeline_model.video_track.clips
         ]
         self._timeline_undo_stack.append((clips, self._selected_clip_index, self._timeline_dirty))
@@ -801,22 +809,23 @@ class CortaCertoApp:
         current_time = self._current_frame / max(1.0, self._fps)
         clips, selected_index, was_dirty = self._timeline_undo_stack.pop()
         self._timeline_model.video_track.clips = [
-            TimelineClip(c.start_s, c.end_s, c.clip_type, c.label) for c in clips
+            _clone_timeline_clip(c) for c in clips
         ]
         self._selected_clip_index = selected_index
         self._timeline_dirty = was_dirty
         self._sync_manual_timeline(mark_dirty=was_dirty)
         self._seek_to(self._time_to_frame(self._nearest_kept_time(current_time)))
         self._tb_status.configure(text="Ação desfeita.")
+        self._refresh_clip_inspector()
 
     def _sync_manual_timeline(self, mark_dirty: Optional[bool] = None) -> None:
         if not self._timeline_model:
             return
         clips = self._timeline_model.video_track.clips
         for idx, clip in enumerate(clips, start=1):
-            clip.label = f"Clip {idx}"
+            clip.label = clip.label or f"Clip {idx}"
         self._timeline_model.audio_track.clips = [
-            TimelineClip(c.start_s, c.end_s, c.clip_type, c.label) for c in clips
+            _clone_timeline_clip(c) for c in clips
         ]
         self._segments = [(c.start_s, c.end_s) for c in clips]
         self._timeline_model.removed_ranges = _removed_ranges_from_segments(self._duration_s, self._segments)
@@ -825,6 +834,7 @@ class CortaCertoApp:
         if mark_dirty is not None:
             self._timeline_dirty = mark_dirty
         self._redraw_timeline()
+        self._refresh_clip_inspector()
         self._save_project_state()
 
     def _redraw_timeline(self) -> None:
@@ -1219,6 +1229,196 @@ class CortaCertoApp:
                       command=self._update_color_preview).grid(
             row=30, column=0, padx=10, pady=(8,4), sticky="ew")
 
+        self._build_editor_assets_panel(s, 31)
+
+    def _build_editor_assets_panel(self, parent, row: int) -> None:
+        self._section(parent, "MÍDIAS DO PROJETO", row)
+        self._media_listbox = tk.Listbox(
+            parent,
+            bg=C_SURFACE,
+            fg=C_TEXT,
+            selectbackground=C_ACCENT,
+            selectforeground="#ffffff",
+            relief="flat",
+            height=4,
+            font=("Segoe UI", 9),
+            activestyle="none",
+        )
+        self._media_listbox.grid(row=row + 1, column=0, sticky="ew", padx=10, pady=(4, 4))
+        self._media_listbox.bind("<Double-Button-1>", lambda _e: self._load_selected_project_media())
+        media_actions = tk.Frame(parent, bg=C_PANEL)
+        media_actions.grid(row=row + 2, column=0, sticky="ew", padx=10, pady=(0, 4))
+        media_actions.grid_columnconfigure(0, weight=1)
+        media_actions.grid_columnconfigure(1, weight=1)
+        tk.Button(media_actions, text="Adicionar mídia", command=self._add_project_media,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        tk.Button(media_actions, text="Carregar na timeline", command=self._load_selected_project_media,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+        self._section(parent, "CLIPE SELECIONADO", row + 3)
+        self._clip_label_entry = ctk.CTkEntry(
+            parent,
+            textvariable=self._clip_label_var,
+            placeholder_text="Nome/texto do clipe",
+            fg_color=C_SURFACE,
+            border_color=C_BORDER,
+            text_color=C_TEXT,
+            placeholder_text_color=C_MUTED,
+            font=ctk.CTkFont(size=11),
+            height=30,
+        )
+        self._clip_label_entry.grid(row=row + 4, column=0, sticky="ew", padx=10, pady=2)
+        self._clip_label_entry.bind("<Return>", lambda _e: self._apply_clip_inspector())
+        self._clip_label_entry.bind("<FocusOut>", lambda _e: self._apply_clip_inspector())
+
+        self._clip_scale_label = self._inspector_slider(
+            parent, "Escala do vídeo", self._clip_scale_var, 25, 300, row + 5, suffix="%"
+        )
+        self._clip_volume_label = self._inspector_slider(
+            parent, "Volume do clipe", self._clip_volume_var, 0, 200, row + 6, suffix="%"
+        )
+        tr = tk.Frame(parent, bg=C_PANEL)
+        tr.grid(row=row + 7, column=0, sticky="ew", padx=10, pady=(2, 4))
+        tr.grid_columnconfigure(1, weight=1)
+        tk.Label(tr, text="Transição", bg=C_PANEL, fg=C_MUTED,
+                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
+        ctk.CTkOptionMenu(
+            tr,
+            values=["Corte", "Fade", "Dissolver"],
+            variable=self._clip_transition_var,
+            command=lambda _v: self._apply_clip_inspector(),
+            fg_color=C_SURFACE,
+            button_color=C_ACCENT,
+            text_color=C_TEXT,
+            width=120,
+            font=ctk.CTkFont(size=11),
+        ).grid(row=0, column=1, sticky="e")
+        clip_actions = tk.Frame(parent, bg=C_PANEL)
+        clip_actions.grid(row=row + 8, column=0, sticky="ew", padx=10, pady=(0, 8))
+        clip_actions.grid_columnconfigure(0, weight=1)
+        clip_actions.grid_columnconfigure(1, weight=1)
+        tk.Button(clip_actions, text="Texto no clipe", command=self._add_text_to_selected_clip,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        tk.Button(clip_actions, text="Aplicar transição", command=self._apply_clip_inspector,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        self._refresh_media_list()
+        self._refresh_clip_inspector()
+
+    def _inspector_slider(self, parent, label: str, var: tk.DoubleVar, lo: int, hi: int, row: int, suffix: str = "") -> tk.Label:
+        frame = tk.Frame(parent, bg=C_PANEL)
+        frame.grid(row=row, column=0, sticky="ew", padx=10, pady=2)
+        frame.grid_columnconfigure(1, weight=1)
+        value_lbl = tk.Label(frame, text=f"{int(var.get())}{suffix}", bg=C_PANEL, fg=C_MUTED, font=("Segoe UI", 9))
+        tk.Label(frame, text=label, bg=C_PANEL, fg=C_MUTED, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
+        value_lbl.grid(row=0, column=2, sticky="e", padx=(6, 0))
+        slider = ctk.CTkSlider(
+            frame,
+            from_=lo,
+            to=hi,
+            number_of_steps=hi - lo,
+            variable=var,
+            height=14,
+            button_color=C_ACCENT,
+            progress_color=C_ACCENT,
+            fg_color=C_SURFACE,
+            command=lambda _v: (value_lbl.configure(text=f"{int(var.get())}{suffix}"), self._apply_clip_inspector()),
+        )
+        slider.grid(row=0, column=1, sticky="ew", padx=6)
+        return value_lbl
+
+    def _refresh_media_list(self) -> None:
+        if self._media_listbox is None:
+            return
+        self._media_listbox.delete(0, "end")
+        for path in self._project_media_paths:
+            self._media_listbox.insert("end", Path(path).name)
+
+    def _selected_project_media_path(self) -> Optional[str]:
+        if self._media_listbox is None:
+            return None
+        selection = self._media_listbox.curselection()
+        if not selection:
+            return None
+        index = int(selection[0])
+        if 0 <= index < len(self._project_media_paths):
+            return self._project_media_paths[index]
+        return None
+
+    def _add_project_media(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Adicionar mídia ao projeto",
+            filetypes=[("Vídeos", "*.mp4 *.mov *.MOV *.avi *.mkv *.webm *.m4v"), ("Todos", "*.*")]
+        )
+        if not path:
+            return
+        if not _is_video_path(path):
+            messagebox.showwarning("Mídia incompatível", "Use um arquivo de vídeo compatível.")
+            return
+        self._register_project_media([path])
+        self._save_project_video_path(self.video_path or path)
+        self._refresh_media_list()
+        self._tb_status.configure(text="Mídia adicionada ao projeto.")
+
+    def _load_selected_project_media(self) -> None:
+        path = self._selected_project_media_path()
+        if not path:
+            self._tb_status.configure(text="Selecione uma mídia do projeto.")
+            return
+        self._load_video(path)
+
+    def _selected_timeline_clip(self) -> Optional[TimelineClip]:
+        if not self._timeline_model or self._selected_clip_index is None:
+            return None
+        clips = self._timeline_model.video_track.clips
+        if 0 <= self._selected_clip_index < len(clips):
+            return clips[self._selected_clip_index]
+        return None
+
+    def _refresh_clip_inspector(self) -> None:
+        clip = self._selected_timeline_clip()
+        self._clip_inspector_enabled = False
+        if clip is None:
+            self._clip_label_var.set("")
+            self._clip_scale_var.set(100.0)
+            self._clip_volume_var.set(100.0)
+            self._clip_transition_var.set("Corte")
+        else:
+            self._clip_label_var.set(clip.text_overlay or clip.label)
+            self._clip_scale_var.set(float(getattr(clip, "scale_pct", 100.0)))
+            self._clip_volume_var.set(float(getattr(clip, "volume_pct", 100.0)))
+            self._clip_transition_var.set(str(getattr(clip, "transition", "Corte") or "Corte"))
+        self._clip_inspector_enabled = True
+
+    def _apply_clip_inspector(self) -> None:
+        if not self._clip_inspector_enabled:
+            return
+        clip = self._selected_timeline_clip()
+        if clip is None:
+            return
+        clip.label = self._clip_label_var.get().strip() or clip.label
+        clip.scale_pct = float(self._clip_scale_var.get())
+        clip.volume_pct = float(self._clip_volume_var.get())
+        clip.transition = self._clip_transition_var.get()
+        self._timeline_dirty = True
+        self._sync_manual_timeline(mark_dirty=True)
+        self._tb_status.configure(text="Ajustes do clipe atualizados.")
+
+    def _add_text_to_selected_clip(self) -> None:
+        clip = self._selected_timeline_clip()
+        if clip is None:
+            self._tb_status.configure(text="Selecione um clipe para adicionar texto.")
+            return
+        text = self._clip_label_var.get().strip() or clip.label or "Texto"
+        clip.text_overlay = text
+        clip.label = text
+        self._timeline_dirty = True
+        self._sync_manual_timeline(mark_dirty=True)
+        self._tb_status.configure(text="Texto associado ao clipe selecionado.")
+
     # -- Widget helpers --------------------------------------------------------
 
     def _section(self, parent, text: str, row: int) -> None:
@@ -1428,6 +1628,7 @@ class CortaCertoApp:
                 current_time_s=self._current_frame / max(1.0, self._fps),
                 timeline_segments=self._segments,
                 timeline_dirty=self._timeline_dirty,
+                clip_options=_clip_options_from_timeline_model(self._timeline_model),
             ))
             Path(self.project_path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as exc:
@@ -1435,6 +1636,7 @@ class CortaCertoApp:
 
     def _register_project_media(self, paths: list[str]) -> None:
         self._project_media_paths = _merge_media_paths(self._project_media_paths, paths)
+        self._refresh_media_list()
 
     def _restore_project_timeline_if_available(self, timeline_model: TimelineModel) -> Optional[list[tuple[float, float]]]:
         metadata = self._pending_project_state
@@ -1444,6 +1646,7 @@ class CortaCertoApp:
         if not segments:
             return None
         _apply_segments_to_timeline_model(timeline_model, self._duration_s, segments)
+        _apply_clip_options_to_timeline_model(timeline_model, metadata.get("clip_options"))
         self._timeline_dirty = bool(metadata.get("timeline_dirty", True))
         return segments
 
@@ -2212,6 +2415,7 @@ def _project_state_payload(
     timeline_segments: list[tuple[float, float]],
     timeline_dirty: bool,
     media_paths: Optional[list[str]] = None,
+    clip_options: Optional[list[dict[str, object]]] = None,
 ) -> dict[str, object]:
     return {
         "app": "CortaCerto",
@@ -2226,6 +2430,7 @@ def _project_state_payload(
             for start, end in timeline_segments
             if float(end) > float(start)
         ],
+        "clip_options": clip_options or [],
         "timeline_dirty": bool(timeline_dirty),
         "updated_at": int(time.time()),
     }
@@ -2405,6 +2610,51 @@ def _apply_segments_to_timeline_model(
     ]
     timeline_model.removed_ranges = _removed_ranges_from_segments(duration_s, segments)
     timeline_model.saved_time_s = sum(end - start for start, end in timeline_model.removed_ranges)
+
+
+def _clone_timeline_clip(clip: TimelineClip) -> TimelineClip:
+    return TimelineClip(
+        clip.start_s,
+        clip.end_s,
+        clip.clip_type,
+        clip.label,
+        getattr(clip, "source_path", ""),
+        float(getattr(clip, "scale_pct", 100.0)),
+        float(getattr(clip, "volume_pct", 100.0)),
+        str(getattr(clip, "transition", "Corte") or "Corte"),
+        str(getattr(clip, "text_overlay", "") or ""),
+    )
+
+
+def _clip_options_from_timeline_model(timeline_model: Optional[TimelineModel]) -> list[dict[str, object]]:
+    if timeline_model is None:
+        return []
+    return [
+        {
+            "label": clip.label,
+            "source_path": getattr(clip, "source_path", ""),
+            "scale_pct": float(getattr(clip, "scale_pct", 100.0)),
+            "volume_pct": float(getattr(clip, "volume_pct", 100.0)),
+            "transition": str(getattr(clip, "transition", "Corte") or "Corte"),
+            "text_overlay": str(getattr(clip, "text_overlay", "") or ""),
+        }
+        for clip in timeline_model.video_track.clips
+    ]
+
+
+def _apply_clip_options_to_timeline_model(timeline_model: TimelineModel, raw_options: object) -> None:
+    if not isinstance(raw_options, list):
+        return
+    for clip, raw in zip(timeline_model.video_track.clips, raw_options):
+        if not isinstance(raw, dict):
+            continue
+        clip.label = str(raw.get("label") or clip.label)
+        clip.source_path = str(raw.get("source_path") or "")
+        clip.scale_pct = _project_float(raw.get("scale_pct"), 100.0)
+        clip.volume_pct = _project_float(raw.get("volume_pct"), 100.0)
+        clip.transition = str(raw.get("transition") or "Corte")
+        clip.text_overlay = str(raw.get("text_overlay") or "")
+    timeline_model.audio_track.clips = [_clone_timeline_clip(clip) for clip in timeline_model.video_track.clips]
 
 
 def _fit_preview_image(image: Image.Image, canvas_w: int, canvas_h: int) -> Image.Image:

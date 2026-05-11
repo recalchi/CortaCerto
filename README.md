@@ -228,6 +228,8 @@ Principais pontos já estabilizados:
 - Projetos salvam o vídeo associado e tentam reabrir esse vídeo automaticamente quando o projeto é carregado.
 - Projetos registram a lista de mídias importadas/dropadas em `media_paths`, preservando o arquivo principal em `video_path`.
 - Projetos também salvam playhead e segmentos editados para retomar a edição do ponto onde parou.
+- Editor ganhou uma biblioteca simples de mídias do projeto e um inspetor inicial do clipe selecionado.
+- O inspetor já salva metadados por clipe para escala do vídeo, volume, transição e texto associado, preparando a ponte para preview/export avançados.
 - Tela inicial tem importação simples de mídia e lixeira com limpeza automática de itens acima de 30 dias.
 - Projetos podem ser movidos para a lixeira pela toolbar da edição sem apagar o vídeo original.
 - Projetos na lixeira podem ser restaurados pela tela inicial para uma pasta escolhida, sem sobrescrever projetos existentes.
