@@ -240,6 +240,7 @@ Principais pontos já estabilizados:
 - Timeline mostra handles nas bordas do clipe selecionado e cursor de resize quando o mouse passa sobre um ajuste possível.
 - Track de áudio desenha os mesmos blocos mantidos do vídeo e mostra a zona visual de acionamento das bordas.
 - Waveform da track de áudio é fatiada pelos clipes mantidos, mantendo alinhamento com cortes e vista compacta.
+- Hover na borda do clipe destaca apenas a região ativa e informa se o ajuste será na borda inicial ou final.
 - Conversão clique/playhead da timeline usa a área real dos tracks, evitando cortes deslocados pela coluna de rótulos.
 - Timeline ganhou modo **Juntar blocos**, que mostra os clipes mantidos encostados como ripple/compact view sem perder o tempo original de export.
 - Cliques perto das bordas dos clipes usam snap para acertar com mais precisão o ponto exato de transição/corte.

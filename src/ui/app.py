@@ -93,6 +93,7 @@ class CortaCertoApp:
         self._timeline_dirty = False
         self._timeline_undo_stack: list[tuple[list[TimelineClip], Optional[int], bool]] = []
         self._trim_drag: Optional[tuple[int, str]] = None
+        self._hover_trim_handle: Optional[tuple[int, str]] = None
         self._trim_undo_captured = False
         self._trim_min_duration_s = 0.15
         self._waveform_zoom = 1.0
@@ -364,7 +365,7 @@ class CortaCertoApp:
         self._tl_canvas.bind("<B1-Motion>", self._tl_drag_motion)
         self._tl_canvas.bind("<ButtonRelease-1>", self._tl_release)
         self._tl_canvas.bind("<Motion>", self._tl_motion)
-        self._tl_canvas.bind("<Leave>", lambda e: self._tl_canvas.configure(cursor="hand2"))
+        self._tl_canvas.bind("<Leave>", self._tl_leave)
 
         self._tl_playhead = None
         self._redraw_timeline()
@@ -377,9 +378,10 @@ class CortaCertoApp:
             self._stop_playback(reset_button=True)
             self._selected_clip_index, edge = handle
             self._trim_drag = (self._selected_clip_index, edge)
+            self._hover_trim_handle = handle
             self._trim_undo_captured = False
             self._redraw_timeline()
-            self._tb_status.configure(text="Ajustando corte...")
+            self._tb_status.configure(text=f"Ajustando {_trim_edge_label(edge)}...")
             return "break"
         self._tl_click(event)
         return None
@@ -432,8 +434,10 @@ class CortaCertoApp:
             return None
         changed = self._trim_undo_captured
         self._trim_drag = None
+        self._hover_trim_handle = None
         self._trim_undo_captured = False
         self._tl_canvas.configure(cursor="hand2")
+        self._redraw_timeline()
         self._tb_status.configure(text="Corte ajustado." if changed else "Corte mantido.")
         return "break"
 
@@ -441,8 +445,21 @@ class CortaCertoApp:
         if self._trim_drag:
             self._tl_canvas.configure(cursor="sb_h_double_arrow")
             return
-        cursor = "sb_h_double_arrow" if self._trim_handle_at(event.x, event.y) else "hand2"
+        handle = self._trim_handle_at(event.x, event.y)
+        if handle != self._hover_trim_handle:
+            self._hover_trim_handle = handle
+            self._redraw_timeline()
+        if handle:
+            idx, edge = handle
+            self._tb_status.configure(text=f"Arraste a {_trim_edge_label(edge)} do Clip {idx + 1}.")
+        cursor = "sb_h_double_arrow" if handle else "hand2"
         self._tl_canvas.configure(cursor=cursor)
+
+    def _tl_leave(self, event: tk.Event) -> None:
+        self._tl_canvas.configure(cursor="hand2")
+        if self._hover_trim_handle and not self._trim_drag:
+            self._hover_trim_handle = None
+            self._redraw_timeline()
 
     # -- Properties panel ------------------------------------------------------
 
@@ -595,9 +612,12 @@ class CortaCertoApp:
             audio_fill = "#203449" if idx == self._selected_clip_index else "#1b2a3a"
             audio_outline = C_YELLOW if idx == self._selected_clip_index else "#26384a"
             c.create_rectangle(x1, audio_y1 + 2, x2, audio_y2 - 2, fill=audio_fill, outline=audio_outline, width=width)
-            if idx == self._selected_clip_index or (self._trim_drag and self._trim_drag[0] == idx):
-                _draw_timeline_handle_zone(c, x1, video_y1, audio_y2, "start")
-                _draw_timeline_handle_zone(c, x2, video_y1, audio_y2, "end")
+            active_edge = _active_timeline_handle_edge(idx, self._selected_clip_index, self._trim_drag, self._hover_trim_handle)
+            if active_edge is not None:
+                if active_edge in ("both", "start"):
+                    _draw_timeline_handle_zone(c, x1, video_y1, audio_y2, "start")
+                if active_edge in ("both", "end"):
+                    _draw_timeline_handle_zone(c, x2, video_y1, audio_y2, "end")
             if x2 - x1 > 56:
                 c.create_text((x1 + x2) // 2, (video_y1 + video_y2) // 2, text=clip.label, fill="#d6e6ff", font=("Segoe UI", 8))
             if compact and idx > 0:
@@ -1970,6 +1990,25 @@ def _timeline_handle_y_in_range(
     margin_px: int = 6,
 ) -> bool:
     return video_y1 - margin_px <= y <= audio_y2 + margin_px and not video_y2 + margin_px < y < audio_y1 - margin_px
+
+
+def _active_timeline_handle_edge(
+    index: int,
+    selected_index: Optional[int],
+    trim_drag: Optional[tuple[int, str]],
+    hover_handle: Optional[tuple[int, str]],
+) -> Optional[str]:
+    if trim_drag and trim_drag[0] == index:
+        return trim_drag[1]
+    if hover_handle and hover_handle[0] == index:
+        return hover_handle[1]
+    if selected_index == index:
+        return "both"
+    return None
+
+
+def _trim_edge_label(edge: str) -> str:
+    return "borda inicial" if edge == "start" else "borda final"
 
 
 def _draw_timeline_handle_zone(canvas: tk.Canvas, x: int, y1: int, y2: int, edge: str) -> None:
