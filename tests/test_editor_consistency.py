@@ -12,6 +12,7 @@ from src.ui.app import (
     _timeline_track_bounds,
     _timeline_x_to_time,
     _timeline_handle_edge_at,
+    _trim_bounds_changed,
     _trim_clip_bounds,
 )
 
@@ -86,6 +87,12 @@ class EditorConsistencyTests(unittest.TestCase):
         self.assertEqual(_timeline_handle_edge_at(102, 100, 200, 8), "start")
         self.assertEqual(_timeline_handle_edge_at(196, 100, 200, 8), "end")
         self.assertIsNone(_timeline_handle_edge_at(150, 100, 200, 8))
+
+    def test_trim_undo_is_needed_only_when_bounds_change(self) -> None:
+        self.assertFalse(_trim_bounds_changed(5.0, 7.0, 5.0, 7.0))
+        self.assertFalse(_trim_bounds_changed(5.0, 7.0, 5.0 + 1e-8, 7.0))
+        self.assertTrue(_trim_bounds_changed(5.0, 7.0, 5.02, 7.0))
+        self.assertTrue(_trim_bounds_changed(5.0, 7.0, 5.0, 6.98))
 
 
 if __name__ == "__main__":
