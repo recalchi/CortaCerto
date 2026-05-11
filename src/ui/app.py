@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import queue
+import subprocess
 import threading
 import time
 import tkinter as tk
@@ -19,7 +20,7 @@ from ..core.color_grade import ColorGrade, PRESET_CAPCUT
 from ..core.preview_engine import PreviewEngine, PreviewFrame, PreviewSettings
 from ..core.timeline_model import TimelineClip, TimelineModel, build_timeline_model
 from ..pipeline import run_pipeline, PipelineResult
-from ..ffmpeg_env import encoder_label
+from ..ffmpeg_env import encoder_label, ffplay
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -41,6 +42,8 @@ TL_SPEECH   = "#3a7ebf"   # timeline: fala (vai ficar)
 TL_SILENCE  = "#2a2a35"   # timeline: silêncio (vai ser cortado)
 TL_HEAD     = "#ffcc44"   # playhead
 TL_BG       = "#18181e"
+TL_LABEL_W  = 74
+TL_PAD_R    = 8
 
 
 class CortaCertoApp:
@@ -72,7 +75,12 @@ class CortaCertoApp:
         self._duration_s    = 0.0
         self._current_frame = 0
         self._playing       = False
-        self._play_thread:  Optional[threading.Thread] = None
+        self._play_after_id: Optional[str] = None
+        self._play_target_frame: Optional[int] = None
+        self._play_started_at = 0.0
+        self._play_start_frame = 0
+        self._audio_proc: Optional[subprocess.Popen] = None
+        self._play_audio_started = False
 
         # Analysis state (filled after background analysis)
         self._segments:     list[tuple[float,float]] = []
@@ -80,6 +88,7 @@ class CortaCertoApp:
         self._timeline_model: Optional[TimelineModel] = None
         self._selected_clip_index: Optional[int] = None
         self._timeline_dirty = False
+        self._timeline_undo_stack: list[tuple[list[TimelineClip], Optional[int], bool]] = []
         self._waveform_zoom = 1.0
         self._export_modal = None
         self._export_stage_var = None
@@ -118,6 +127,45 @@ class CortaCertoApp:
         self.root.grid_columnconfigure(0, weight=1)
         self._build_toolbar()
         self._build_body()
+        self._bind_shortcuts()
+
+    def _bind_shortcuts(self) -> None:
+        self.root.bind_all("<space>", self._shortcut_toggle_play)
+        self.root.bind_all("<KeyPress-b>", self._shortcut_split)
+        self.root.bind_all("<KeyPress-B>", self._shortcut_split)
+        self.root.bind_all("<Delete>", self._shortcut_delete)
+        self.root.bind_all("<BackSpace>", self._shortcut_delete)
+        self.root.bind_all("<Control-z>", self._shortcut_undo)
+        self.root.bind_all("<Control-Z>", self._shortcut_undo)
+
+    def _shortcut_allowed(self, event: tk.Event) -> bool:
+        widget = getattr(event, "widget", None)
+        cls = widget.winfo_class() if widget is not None else ""
+        return "Entry" not in cls and "Text" not in cls
+
+    def _shortcut_toggle_play(self, event: tk.Event) -> str | None:
+        if not self._shortcut_allowed(event):
+            return None
+        self._toggle_play()
+        return "break"
+
+    def _shortcut_split(self, event: tk.Event) -> str | None:
+        if not self._shortcut_allowed(event):
+            return None
+        self._split_selected_clip()
+        return "break"
+
+    def _shortcut_delete(self, event: tk.Event) -> str | None:
+        if not self._shortcut_allowed(event):
+            return None
+        self._delete_selected_clip()
+        return "break"
+
+    def _shortcut_undo(self, event: tk.Event) -> str | None:
+        if not self._shortcut_allowed(event):
+            return None
+        self._undo_timeline_action()
+        return "break"
 
     # -- Toolbar ---------------------------------------------------------------
 
@@ -278,6 +326,9 @@ class CortaCertoApp:
         )
         self._tl_zoom.set(1.0)
         self._tl_zoom.pack(side="right", padx=(8, 0))
+        tk.Button(hdr, text="Desfazer", command=self._undo_timeline_action,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=8,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).pack(side="right", padx=(8, 0))
         tk.Button(hdr, text="Dividir", command=self._split_selected_clip,
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=8,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).pack(side="right", padx=(8, 0))
@@ -298,9 +349,10 @@ class CortaCertoApp:
         if self._duration_s <= 0:
             return
         w   = self._tl_canvas.winfo_width()
-        pct = max(0.0, min(1.0, event.x / w))
-        frame = int(pct * self._total_frames)
-        self._select_clip_at_time((frame / max(1, self._total_frames)) * self._duration_s)
+        track_x1, track_x2 = self._timeline_track_bounds(w)
+        time_s = self._x_to_time(event.x, track_x1, track_x2)
+        frame = self._time_to_frame(time_s)
+        self._select_clip_at_time(time_s)
         self._seek_to(frame)
 
     # -- Properties panel ------------------------------------------------------
@@ -310,23 +362,26 @@ class CortaCertoApp:
         self._redraw_timeline()
 
     def _select_clip_at_time(self, time_s: float) -> None:
-        self._selected_clip_index = None
-        if self._timeline_model:
-            for idx, clip in enumerate(self._timeline_model.video_track.clips):
-                if clip.start_s <= time_s <= clip.end_s:
-                    self._selected_clip_index = idx
-                    break
+        self._selected_clip_index = self._clip_index_at_time(time_s)
         self._redraw_timeline()
 
     def _split_selected_clip(self) -> None:
-        if not self._timeline_model or self._selected_clip_index is None:
-            self._tb_status.configure(text="Selecione um clipe na timeline para dividir.")
+        if not self._timeline_model:
+            self._tb_status.configure(text="Carregue um vídeo antes de dividir.")
             return
-        clip = self._timeline_model.video_track.clips[self._selected_clip_index]
         split_s = self._current_frame / max(1.0, self._fps)
+        index = self._clip_index_at_time(split_s)
+        if index is None:
+            self._tb_status.configure(text="Posicione o playhead dentro de um clipe para dividir.")
+            self._selected_clip_index = None
+            self._redraw_timeline()
+            return
+        self._selected_clip_index = index
+        clip = self._timeline_model.video_track.clips[self._selected_clip_index]
         if split_s <= clip.start_s + 0.15 or split_s >= clip.end_s - 0.15:
             self._tb_status.configure(text="Posicione o playhead dentro do clipe para dividir.")
             return
+        self._push_timeline_undo()
         clips = self._timeline_model.video_track.clips
         clips[self._selected_clip_index:self._selected_clip_index + 1] = [
             TimelineClip(clip.start_s, split_s, clip.clip_type, clip.label),
@@ -335,19 +390,44 @@ class CortaCertoApp:
         self._sync_manual_timeline()
         self._timeline_dirty = True
         self._selected_clip_index += 1
-        self._tb_status.configure(text="Clipe dividido.")
+        self._tb_status.configure(text=f"Clipe dividido em {_fmt(split_s)}.")
 
     def _delete_selected_clip(self) -> None:
         if not self._timeline_model or self._selected_clip_index is None:
             self._tb_status.configure(text="Selecione um clipe na timeline para excluir.")
             return
+        self._push_timeline_undo()
         del self._timeline_model.video_track.clips[self._selected_clip_index]
         self._selected_clip_index = None
         self._sync_manual_timeline()
         self._timeline_dirty = True
         self._tb_status.configure(text="Clipe removido da timeline.")
 
-    def _sync_manual_timeline(self) -> None:
+    def _push_timeline_undo(self) -> None:
+        if not self._timeline_model:
+            return
+        clips = [
+            TimelineClip(c.start_s, c.end_s, c.clip_type, c.label)
+            for c in self._timeline_model.video_track.clips
+        ]
+        self._timeline_undo_stack.append((clips, self._selected_clip_index, self._timeline_dirty))
+        if len(self._timeline_undo_stack) > 50:
+            self._timeline_undo_stack.pop(0)
+
+    def _undo_timeline_action(self) -> None:
+        if not self._timeline_model or not self._timeline_undo_stack:
+            self._tb_status.configure(text="Nada para desfazer.")
+            return
+        clips, selected_index, was_dirty = self._timeline_undo_stack.pop()
+        self._timeline_model.video_track.clips = [
+            TimelineClip(c.start_s, c.end_s, c.clip_type, c.label) for c in clips
+        ]
+        self._selected_clip_index = selected_index
+        self._timeline_dirty = was_dirty
+        self._sync_manual_timeline(mark_dirty=was_dirty)
+        self._tb_status.configure(text="Ação desfeita.")
+
+    def _sync_manual_timeline(self, mark_dirty: Optional[bool] = None) -> None:
         if not self._timeline_model:
             return
         clips = self._timeline_model.video_track.clips
@@ -360,6 +440,8 @@ class CortaCertoApp:
         self._timeline_model.removed_ranges = _removed_ranges_from_segments(self._duration_s, self._segments)
         self._timeline_model.saved_time_s = sum(end - start for start, end in self._timeline_model.removed_ranges)
         self._analysis_done = True
+        if mark_dirty is not None:
+            self._timeline_dirty = mark_dirty
         self._redraw_timeline()
 
     def _redraw_timeline(self) -> None:
@@ -379,7 +461,7 @@ class CortaCertoApp:
             c.create_text(w // 2, h // 2, text="Analisando áudio e gerando waveform...", fill=C_MUTED, font=("Segoe UI", 10))
             return
 
-        label_w = 74
+        label_w = TL_LABEL_W
         top = 8
         video_y1, video_y2 = top + 12, top + 40
         audio_y1, audio_y2 = top + 56, h - 18
@@ -388,12 +470,13 @@ class CortaCertoApp:
         c.create_text(label_w // 2, (video_y1 + video_y2) // 2, text="VÍDEO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
         c.create_text(label_w // 2, (audio_y1 + audio_y2) // 2, text="ÁUDIO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
 
-        c.create_rectangle(label_w, video_y1, w - 8, video_y2, fill="#1b2130", outline="")
-        c.create_rectangle(label_w, audio_y1, w - 8, audio_y2, fill="#171b24", outline="")
+        track_x1, track_x2 = self._timeline_track_bounds(w)
+        c.create_rectangle(track_x1, video_y1, track_x2, video_y2, fill="#1b2130", outline="")
+        c.create_rectangle(track_x1, audio_y1, track_x2, audio_y2, fill="#171b24", outline="")
 
         for idx, clip in enumerate(self._timeline_model.video_track.clips):
-            x1 = self._time_to_x(clip.start_s, label_w, w - 8)
-            x2 = self._time_to_x(clip.end_s, label_w, w - 8)
+            x1 = self._time_to_x(clip.start_s, track_x1, track_x2)
+            x2 = self._time_to_x(clip.end_s, track_x1, track_x2)
             outline = C_YELLOW if idx == self._selected_clip_index else ""
             width = 2 if idx == self._selected_clip_index else 1
             c.create_rectangle(x1, video_y1 + 2, x2, video_y2 - 2, fill=TL_SPEECH, outline=outline, width=width)
@@ -401,21 +484,21 @@ class CortaCertoApp:
                 c.create_text((x1 + x2) // 2, (video_y1 + video_y2) // 2, text=clip.label, fill="#d6e6ff", font=("Segoe UI", 8))
 
         for start_s, end_s in self._timeline_model.removed_ranges:
-            x1 = self._time_to_x(start_s, label_w, w - 8)
-            x2 = self._time_to_x(end_s, label_w, w - 8)
+            x1 = self._time_to_x(start_s, track_x1, track_x2)
+            x2 = self._time_to_x(end_s, track_x1, track_x2)
             c.create_rectangle(x1, video_y1 + 6, x2, video_y2 - 6, fill=TL_SILENCE, outline="", stipple="gray50")
 
-        self._draw_waveform_track(c, self._timeline_model.waveform, label_w, w - 8, audio_y1, audio_y2)
+        self._draw_waveform_track(c, self._timeline_model.waveform, track_x1, track_x2, audio_y1, audio_y2)
 
         tick_step = max(1, int(self._duration_s / 12))
         for t in range(0, int(self._duration_s) + 1, tick_step):
-            x = self._time_to_x(float(t), label_w, w - 8)
+            x = self._time_to_x(float(t), track_x1, track_x2)
             c.create_line(x, 4, x, h - 4, fill="#222734")
             mm, ss = divmod(t, 60)
             c.create_text(x, h - 7, text=f"{mm}:{ss:02d}", fill=C_MUTED, font=("Courier New", 8))
 
         pos = self._current_frame / max(1, self._total_frames)
-        px = int(label_w + pos * (w - label_w - 8))
+        px = int(track_x1 + pos * max(1, track_x2 - track_x1))
         self._tl_playhead = c.create_line(px, 2, px, h - 2, fill=TL_HEAD, width=2)
 
         kept = sum(clip.end_s - clip.start_s for clip in self._timeline_model.video_track.clips)
@@ -450,9 +533,28 @@ class CortaCertoApp:
             canvas.create_line(x, center_y - peak, x, center_y + peak, fill="#7dc0ff")
 
     def _time_to_x(self, time_s: float, x1: int, x2: int) -> int:
-        span = max(1, x2 - x1)
-        pct = 0.0 if self._duration_s <= 0 else max(0.0, min(1.0, time_s / self._duration_s))
-        return int(x1 + pct * span)
+        return _timeline_time_to_x(time_s, self._duration_s, x1, x2)
+
+    def _timeline_track_bounds(self, canvas_width: int) -> tuple[int, int]:
+        return _timeline_track_bounds(canvas_width)
+
+    def _x_to_time(self, x: int, x1: int, x2: int) -> float:
+        return _timeline_x_to_time(x, self._duration_s, x1, x2)
+
+    def _time_to_frame(self, time_s: float) -> int:
+        return _time_to_frame(time_s, self._fps, self._total_frames)
+
+    def _clip_index_at_time(self, time_s: float) -> Optional[int]:
+        if not self._timeline_model:
+            return None
+        for idx, clip in enumerate(self._timeline_model.video_track.clips):
+            if clip.start_s <= time_s < clip.end_s:
+                return idx
+        if self._timeline_model.video_track.clips:
+            last = self._timeline_model.video_track.clips[-1]
+            if abs(time_s - last.end_s) < 0.001:
+                return len(self._timeline_model.video_track.clips) - 1
+        return None
 
     def _build_properties(self, parent: tk.Frame) -> None:
         props = tk.Frame(parent, bg=C_PANEL, width=300)
@@ -697,7 +799,7 @@ class CortaCertoApp:
         self._load_video(path)
 
     def _load_video(self, path: str) -> None:
-        self._playing = False
+        self._stop_playback(reset_button=True)
         self._play_btn.configure(text="▶")
         try:
             self._preview_engine.open(path)
@@ -713,6 +815,7 @@ class CortaCertoApp:
         self._analysis_done= False
         self._timeline_model = None
         self._timeline_dirty = False
+        self._timeline_undo_stack.clear()
         self._total_frames = self._preview_engine.total_frames
         self._fps          = self._preview_engine.fps
         self._duration_s   = self._preview_engine.duration_s
@@ -800,27 +903,21 @@ class CortaCertoApp:
     def _seek_to(self, frame: int) -> None:
         was_playing = self._playing
         if was_playing:
-            self._playing = False
-            time.sleep(0.05)
+            self._stop_playback(reset_button=False)
         self._current_frame = max(0, min(frame, self._total_frames - 1))
         self._seek_bar.set(self._current_frame)
         self._draw_frame_at(self._current_frame)
         self._update_time_label()
         self._update_tl_playhead()
         if was_playing:
-            self._playing = True
-            self._play_thread = threading.Thread(
-                target=self._play_loop, daemon=True)
-            self._play_thread.start()
+            self._start_playback()
 
     def _seek_start(self) -> None:
-        self._playing = False
-        self._play_btn.configure(text="▶")
+        self._stop_playback(reset_button=True)
         self._seek_to(0)
 
     def _seek_end(self) -> None:
-        self._playing = False
-        self._play_btn.configure(text="▶")
+        self._stop_playback(reset_button=True)
         self._seek_to(self._total_frames - 1)
 
     def _update_time_label(self) -> None:
@@ -833,7 +930,8 @@ class CortaCertoApp:
         w   = c.winfo_width()
         h   = c.winfo_height()
         pos = self._current_frame / max(1, self._total_frames)
-        px  = int(pos * w)
+        track_x1, track_x2 = self._timeline_track_bounds(w)
+        px  = int(track_x1 + pos * max(1, track_x2 - track_x1))
         if self._tl_playhead:
             c.coords(self._tl_playhead, px, 2, px, h - 2)
         else:
@@ -917,10 +1015,15 @@ class CortaCertoApp:
         self._queue.put(("__PREVIEW__", preview))
 
     def _render_preview_frame(self, preview: PreviewFrame) -> None:
-        if preview.frame_index != self._current_frame:
+        is_playback = (
+            self._playing
+            and preview.frame_index == self._play_target_frame
+            and preview.settings_key == self._preview_bootstrap_key
+        )
+        if preview.frame_index != self._current_frame and not is_playback:
             return
         is_bootstrap = preview.settings_key == self._preview_bootstrap_key
-        if preview.settings_key != self._preview_settings_key and not is_bootstrap:
+        if preview.settings_key != self._preview_settings_key and not is_bootstrap and not is_playback:
             return
 
         cw = self._preview_canvas.winfo_width()
@@ -936,6 +1039,16 @@ class CortaCertoApp:
         self._preview_backend = preview.backend
         self._preview_render_ms = preview.render_ms
         self._preview_bootstrap_key = None
+        if is_playback:
+            self._current_frame = preview.frame_index
+            self._seek_bar.set(self._current_frame)
+            self._update_time_label()
+            self._update_tl_playhead()
+            if not self._play_audio_started:
+                self._start_preview_audio(self._current_frame)
+                self._play_audio_started = True
+                self._play_started_at = time.monotonic()
+                self._play_start_frame = self._current_frame
 
         c = self._preview_canvas
         c.delete("frame")
@@ -943,7 +1056,23 @@ class CortaCertoApp:
         y = (ch - nh) // 2
         c.create_image(x, y, image=photo, anchor="nw", tags="frame")
         c.itemconfigure(self._no_video_id, state="hidden")
-        self._tb_status.configure(text=f"Preview {preview.backend}  |  {preview.render_ms:.0f} ms")
+        if is_playback:
+            elapsed_s = max(0.001, time.monotonic() - self._play_started_at)
+            effective_fps = _playback_effective_fps(
+                self._play_start_frame,
+                preview.frame_index,
+                elapsed_s,
+            )
+            self._tb_status.configure(
+                text=(
+                    f"Reproduzindo | {_fmt(self._current_frame / max(1, self._fps))} / {_fmt(self._duration_s)} "
+                    f"| {effective_fps:.1f} fps | frame {preview.frame_index + 1}/{self._total_frames} "
+                    f"| {preview.render_ms:.0f} ms"
+                )
+            )
+            self._schedule_next_playback_frame(preview.render_ms)
+        else:
+            self._tb_status.configure(text=f"Preview {preview.backend}  |  {preview.render_ms:.0f} ms")
         print(
             f"[PREVIEW] Frame rendered successfully | "
             f"frame={preview.frame_index} backend={preview.backend} "
@@ -954,28 +1083,105 @@ class CortaCertoApp:
         if not self.video_path:
             return
         if self._playing:
-            self._playing = False
-            self._play_btn.configure(text="▶")
+            self._stop_playback(reset_button=True)
         else:
-            self._playing = True
-            self._play_btn.configure(text="⏸")
-            self._play_thread = threading.Thread(target=self._play_loop, daemon=True)
-            self._play_thread.start()
+            self._start_playback()
 
-    def _play_loop(self) -> None:
-        interval = 1.0 / max(1.0, self._fps)
-        while self._playing and self.video_path:
-            t0 = time.monotonic()
-            frame_idx = self._current_frame + 1
-            if frame_idx >= self._total_frames:
-                self._playing = False
-                self._queue.put(("__PLAY_STOP__", None))
-                break
+    def _start_playback(self) -> None:
+        if not self.video_path:
+            return
+        self._playing = True
+        self._play_started_at = time.monotonic()
+        self._play_start_frame = self._current_frame
+        self._play_btn.configure(text="⏸")
+        self._play_audio_started = False
+        self._request_playback_frame()
 
-            self._current_frame = frame_idx
-            self._queue.put(("__PLAY_FRAME__", frame_idx))
-            elapsed = time.monotonic() - t0
-            time.sleep(max(0.001, interval - elapsed))
+    def _stop_playback(self, reset_button: bool = True) -> None:
+        self._playing = False
+        self._play_target_frame = None
+        self._play_audio_started = False
+        self._stop_preview_audio()
+        if self._play_after_id:
+            try:
+                self.root.after_cancel(self._play_after_id)
+            except Exception:
+                pass
+            self._play_after_id = None
+        if reset_button:
+            self._play_btn.configure(text="▶")
+
+    def _request_playback_frame(self) -> None:
+        self._play_after_id = None
+        if not self._playing or not self.video_path:
+            return
+        elapsed_s = time.monotonic() - self._play_started_at
+        target = _playback_target_frame(
+            self._play_start_frame,
+            elapsed_s,
+            self._fps,
+            self._total_frames,
+        )
+        if target <= self._current_frame:
+            target = self._current_frame + 1
+        if target >= self._total_frames:
+            self._stop_playback(reset_button=True)
+            return
+        settings = PreviewSettings(
+            color_grade=ColorGrade(enabled=False),
+            bokeh_intensity=0.0,
+        )
+        self._play_target_frame = target
+        self._preview_bootstrap_key = settings.cache_key()
+        self._preview_engine.request_frame(target, settings)
+
+    def _schedule_next_playback_frame(self, render_ms: float) -> None:
+        if not self._playing:
+            return
+        delay_ms = _playback_delay_ms(self._fps, render_ms)
+        self._play_after_id = self.root.after(delay_ms, self._request_playback_frame)
+
+    def _start_preview_audio(self, frame: Optional[int] = None) -> None:
+        self._stop_preview_audio()
+        if not self.video_path:
+            return
+        try:
+            start_frame = self._current_frame if frame is None else frame
+            start_s = start_frame / max(1.0, self._fps)
+            startupinfo = None
+            if os.name == "nt":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            self._audio_proc = subprocess.Popen(
+                [
+                    ffplay(),
+                    "-nodisp",
+                    "-vn",
+                    "-autoexit",
+                    "-loglevel", "error",
+                    "-ss", f"{start_s:.3f}",
+                    self.video_path,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo,
+            )
+        except Exception as exc:
+            self._audio_proc = None
+            print(f"[PREVIEW] Áudio indisponível no preview: {exc}")
+
+    def _stop_preview_audio(self) -> None:
+        proc = self._audio_proc
+        self._audio_proc = None
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=1)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
 
     def _pick_music(self) -> None:
         path = filedialog.askopenfilename(
@@ -1115,7 +1321,7 @@ class CortaCertoApp:
             return
 
         # Stop playback
-        self._playing = False
+        self._stop_playback(reset_button=True)
         self._play_btn.configure(text="▶")
 
         self._cancel_ev.clear()
@@ -1160,6 +1366,7 @@ class CortaCertoApp:
                         self._segments = analysis.speech_segments
                         self._analysis_done = True
                         self._timeline_model = timeline_model
+                        self._timeline_undo_stack.clear()
                         self._redraw_timeline()
                         self._tb_status.configure(text="Preview pronto. Timeline atualizada.")
                 elif msg == "__TIMELINE_ERROR__":
@@ -1167,12 +1374,6 @@ class CortaCertoApp:
                     if video_path == self.video_path:
                         self._tb_status.configure(text="Preview pronto. Timeline indisponível.")
                         print(f"[TIMELINE] Falha ao analisar timeline: {detail}")
-                elif msg == "__PLAY_FRAME__":
-                    self._draw_frame_at(val, fast=True)
-                    self._update_time_label()
-                    self._update_tl_playhead()
-                elif msg == "__PLAY_STOP__":
-                    self._play_btn.configure(text="▶")
                 elif msg == "__GPU_LABEL__":
                     self._gpu_lbl.configure(text=f"Encode: {val}")
                 elif msg == "__SEG_LABEL__":
@@ -1307,7 +1508,7 @@ class CortaCertoApp:
                 btn.configure(bd=3)
 
     def _on_close(self) -> None:
-        self._playing = False
+        self._stop_playback(reset_button=False)
         self._preview_engine.stop()
         self.root.destroy()
 
@@ -1345,3 +1546,45 @@ def _removed_ranges_from_segments(
     if cursor < duration_s:
         removed.append((cursor, duration_s))
     return removed
+
+
+def _timeline_track_bounds(canvas_width: int) -> tuple[int, int]:
+    return TL_LABEL_W, max(TL_LABEL_W + 1, canvas_width - TL_PAD_R)
+
+
+def _timeline_x_to_time(x: int, duration_s: float, x1: int, x2: int) -> float:
+    span = max(1, x2 - x1)
+    pct = max(0.0, min(1.0, (x - x1) / span))
+    return pct * max(0.0, duration_s)
+
+
+def _timeline_time_to_x(time_s: float, duration_s: float, x1: int, x2: int) -> int:
+    span = max(1, x2 - x1)
+    pct = 0.0 if duration_s <= 0 else max(0.0, min(1.0, time_s / duration_s))
+    return int(x1 + pct * span)
+
+
+def _time_to_frame(time_s: float, fps: float, total_frames: int) -> int:
+    max_frame = max(0, total_frames - 1)
+    return max(0, min(max_frame, int(time_s * max(1.0, fps))))
+
+
+def _playback_delay_ms(fps: float, render_ms: float) -> int:
+    frame_budget_ms = 1000.0 / max(1.0, float(fps))
+    return max(1, int(frame_budget_ms - max(0.0, float(render_ms))))
+
+
+def _playback_effective_fps(start_frame: int, current_frame: int, elapsed_s: float) -> float:
+    if elapsed_s <= 0:
+        return 0.0
+    return max(0, current_frame - start_frame) / elapsed_s
+
+
+def _playback_target_frame(
+    start_frame: int,
+    elapsed_s: float,
+    fps: float,
+    total_frames: int,
+) -> int:
+    elapsed_frames = int(max(0.0, elapsed_s) * max(1.0, float(fps)))
+    return min(max(0, total_frames - 1), max(0, start_frame) + elapsed_frames + 1)
