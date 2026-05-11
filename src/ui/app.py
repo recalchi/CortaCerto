@@ -15,7 +15,7 @@ from typing import Optional
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 from ..config import ProcessingConfig, Platform, SilenceStyle, PRESETS
 from ..core.audio_waveform import extract_waveform
@@ -1836,7 +1836,11 @@ class CortaCertoApp:
         if cw < 10 or ch < 10:
             cw, ch = 800, 450
 
-        pil = _fit_preview_image(preview.image, cw, ch)
+        preview_image = _apply_clip_preview_options(
+            preview.image,
+            _clip_for_time(self._timeline_model, self._current_frame / max(1.0, self._fps)),
+        )
+        pil = _fit_preview_image(preview_image, cw, ch)
         nw, nh = pil.size
 
         photo = ImageTk.PhotoImage(pil)
@@ -2092,6 +2096,7 @@ class CortaCertoApp:
             generate_thumbnail   = self._gen_thumb_var.get(),
             generate_vertical    = self._gen_vert_var.get(),
             manual_segments      = manual_segments,
+            clip_options         = _clip_options_from_timeline_model(self._timeline_model),
             apply_zoom_effects   = True,
             apply_transitions    = True,
             color_grade          = self._build_color_grade(),
@@ -2655,6 +2660,67 @@ def _apply_clip_options_to_timeline_model(timeline_model: TimelineModel, raw_opt
         clip.transition = str(raw.get("transition") or "Corte")
         clip.text_overlay = str(raw.get("text_overlay") or "")
     timeline_model.audio_track.clips = [_clone_timeline_clip(clip) for clip in timeline_model.video_track.clips]
+
+
+def _clip_for_time(timeline_model: Optional[TimelineModel], time_s: float) -> Optional[TimelineClip]:
+    if timeline_model is None:
+        return None
+    for clip in timeline_model.video_track.clips:
+        if clip.start_s <= time_s < clip.end_s:
+            return clip
+    if timeline_model.video_track.clips:
+        last = timeline_model.video_track.clips[-1]
+        if abs(float(time_s) - last.end_s) < 0.001:
+            return last
+    return None
+
+
+def _apply_clip_preview_options(image: Image.Image, clip: Optional[TimelineClip]) -> Image.Image:
+    if clip is None:
+        return image
+    scale_pct = max(25.0, min(300.0, float(getattr(clip, "scale_pct", 100.0))))
+    text_overlay = str(getattr(clip, "text_overlay", "") or "").strip()
+    needs_scale = abs(scale_pct - 100.0) > 0.01
+    if not needs_scale and not text_overlay:
+        return image
+
+    out = image.copy()
+    if needs_scale:
+        out = _scale_preview_image_centered(out, scale_pct)
+    if text_overlay:
+        out = _draw_preview_text_overlay(out, text_overlay)
+    return out
+
+
+def _scale_preview_image_centered(image: Image.Image, scale_pct: float) -> Image.Image:
+    width, height = image.size
+    scale = max(0.25, min(3.0, scale_pct / 100.0))
+    if abs(scale - 1.0) < 0.0001:
+        return image
+    if scale > 1.0:
+        crop_w = max(1, int(width / scale))
+        crop_h = max(1, int(height / scale))
+        x1 = max(0, (width - crop_w) // 2)
+        y1 = max(0, (height - crop_h) // 2)
+        return image.crop((x1, y1, x1 + crop_w, y1 + crop_h)).resize((width, height), Image.LANCZOS)
+
+    resized_w = max(1, int(width * scale))
+    resized_h = max(1, int(height * scale))
+    resized = image.resize((resized_w, resized_h), Image.LANCZOS)
+    canvas = Image.new(image.mode, (width, height), "black")
+    canvas.paste(resized, ((width - resized_w) // 2, (height - resized_h) // 2))
+    return canvas
+
+
+def _draw_preview_text_overlay(image: Image.Image, text: str) -> Image.Image:
+    out = image.copy()
+    draw = ImageDraw.Draw(out)
+    width, height = out.size
+    box_h = max(36, height // 10)
+    y1 = max(0, height - box_h - 18)
+    draw.rectangle((0, y1, width, y1 + box_h), fill=(0, 0, 0))
+    draw.text((max(12, width // 30), y1 + max(8, box_h // 4)), text[:80], fill=(255, 255, 255))
+    return out
 
 
 def _fit_preview_image(image: Image.Image, canvas_w: int, canvas_h: int) -> Image.Image:

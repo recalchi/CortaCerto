@@ -58,6 +58,7 @@ class ProcessingConfig:
     generate_thumbnail: bool = False
     generate_vertical:  bool = False
     manual_segments:    list[tuple[float, float]] | None = None
+    clip_options:       list[dict[str, object]] = field(default_factory=list)
 
     # Render quality (used for CPU fallback; GPU auto-selects optimal settings)
     video_crf:    int = 18

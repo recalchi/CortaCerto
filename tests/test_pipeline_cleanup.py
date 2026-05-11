@@ -5,6 +5,7 @@ from unittest import mock
 
 from src.config import ProcessingConfig
 from src.pipeline import (
+    _clip_option_plan,
     _cleanup_intermediate_exports,
     _export_output_plan,
     _finalize_project_output,
@@ -25,6 +26,16 @@ class PipelineCleanupTests(unittest.TestCase):
         config = ProcessingConfig(generate_thumbnail=True, generate_vertical=True, thumbnail_count=5)
 
         self.assertEqual(_export_output_plan(config), "vídeo final, versão vertical, 5 thumbnails")
+
+    def test_clip_option_plan_summarizes_editor_adjustments(self) -> None:
+        plan = _clip_option_plan([
+            {"scale_pct": 125.0, "volume_pct": 80.0, "transition": "Fade", "text_overlay": "Intro"},
+            {"scale_pct": 100.0, "volume_pct": 100.0, "transition": "Corte", "text_overlay": ""},
+        ])
+
+        self.assertIn("escala em 1 clipe(s)", plan)
+        self.assertIn("volume em 1 clipe(s)", plan)
+        self.assertIn("texto em 1 clipe(s)", plan)
 
     def test_cleanup_intermediate_exports_removes_existing_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
