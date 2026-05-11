@@ -232,6 +232,7 @@ Principais pontos já estabilizados:
 - O inspetor já salva metadados por clipe para escala do vídeo, volume, transição e texto associado, preparando a ponte para preview/export avançados.
 - Preview já aplica escala e texto do clipe ativo, permitindo validar ajustes básicos do conteúdo selecionado sem esperar export.
 - Biblioteca de mídias do editor separa adicionar mídia, associar mídia ao clipe selecionado e abrir uma mídia como vídeo principal.
+- Preview usa a mídia associada em `source_path` no trecho do clipe selecionado, com fallback para o vídeo principal se a leitura falhar.
 - Inspetor do clipe ganhou base de chroma key por clipe, com cor/tolerância e preview substituindo o fundo cromado por marcação neutra.
 - Timeline ganhou botões de zoom `+`/`-` além do slider, e o painel lateral mostra um status rápido de mídias, clipes, seleção e zoom.
 - Export recebe e registra os metadados por clipe no log para preparar a aplicação física desses ajustes no arquivo final.

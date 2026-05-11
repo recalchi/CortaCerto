@@ -5,6 +5,7 @@ import os
 import json
 import queue
 import re
+import contextlib
 import subprocess
 import threading
 import time
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import customtkinter as ctk
+import cv2
 import numpy as np
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageDraw, ImageTk
@@ -121,6 +123,8 @@ class CortaCertoApp:
         self._project_status_var = tk.StringVar(value="")
         self._media_listbox: Optional[tk.Listbox] = None
         self._clip_inspector_enabled = False
+        self._clip_source_caps: dict[str, cv2.VideoCapture] = {}
+        self._clip_source_meta: dict[str, tuple[float, int]] = {}
         self._export_modal = None
         self._export_stage_var = None
         self._export_msg_var = None
@@ -1427,7 +1431,10 @@ class CortaCertoApp:
             messagebox.showwarning("Mídia incompatível", "Use um arquivo de vídeo compatível.")
             return
         self._register_project_media([path])
-        self._save_project_video_path(self.video_path or path)
+        if self.video_path:
+            self._save_project_video_path(self.video_path)
+        else:
+            self._save_project_media_paths()
         self._refresh_media_list()
         self._tb_status.configure(text="Mídia adicionada ao projeto.")
 
@@ -1511,6 +1518,7 @@ class CortaCertoApp:
         self._clip_label_var.set(clip.label)
         self._timeline_dirty = True
         self._sync_manual_timeline(mark_dirty=True)
+        self._save_project_media_paths()
         self._tb_status.configure(text="Mídia associada ao clipe selecionado.")
 
     def _refresh_project_status(self) -> None:
@@ -1745,6 +1753,17 @@ class CortaCertoApp:
         self._project_media_paths = _merge_media_paths(self._project_media_paths, paths)
         self._refresh_media_list()
 
+    def _save_project_media_paths(self) -> None:
+        if not self.project_path:
+            return
+        try:
+            metadata = _read_project_metadata(self.project_path)
+            metadata["media_paths"] = _merge_media_paths(metadata.get("media_paths"), self._project_media_paths)
+            metadata["updated_at"] = int(time.time())
+            Path(self.project_path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            print(f"[PROJECT] Não foi possível salvar mídias do projeto: {exc}")
+
     def _restore_project_timeline_if_available(self, timeline_model: TimelineModel) -> Optional[list[tuple[float, float]]]:
         metadata = self._pending_project_state
         if not metadata or metadata.get("video_path") != self.video_path:
@@ -1943,10 +1962,10 @@ class CortaCertoApp:
         if cw < 10 or ch < 10:
             cw, ch = 800, 450
 
-        preview_image = _apply_clip_preview_options(
-            preview.image,
-            _clip_for_time(self._timeline_model, self._current_frame / max(1.0, self._fps)),
-        )
+        clip_time_s = self._current_frame / max(1.0, self._fps)
+        active_clip = _clip_for_time(self._timeline_model, clip_time_s)
+        preview_source = self._clip_source_preview_image(active_clip, clip_time_s) or preview.image
+        preview_image = _apply_clip_preview_options(preview_source, active_clip)
         pil = _fit_preview_image(preview_image, cw, ch)
         nw, nh = pil.size
 
@@ -2004,6 +2023,29 @@ class CortaCertoApp:
             f"frame={preview.frame_index} backend={preview.backend} "
             f"render_ms={preview.render_ms:.0f}"
         )
+
+    def _clip_source_preview_image(self, clip: Optional[TimelineClip], time_s: float) -> Optional[Image.Image]:
+        path = str(getattr(clip, "source_path", "") or "") if clip else ""
+        if not path or not Path(path).exists() or path == self.video_path:
+            return None
+        cap = self._clip_source_caps.get(path)
+        if cap is None:
+            cap = cv2.VideoCapture(path)
+            if not cap.isOpened():
+                with contextlib.suppress(Exception):
+                    cap.release()
+                return None
+            self._clip_source_caps[path] = cap
+            fps = max(1.0, cap.get(cv2.CAP_PROP_FPS))
+            total = max(1, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
+            self._clip_source_meta[path] = (fps, total)
+        fps, total = self._clip_source_meta.get(path, (30.0, 1))
+        frame_index = _clip_source_frame_index(clip, time_s, fps, total)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        ok, frame_bgr = cap.read()
+        if not ok or frame_bgr is None:
+            return None
+        return Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
 
     def _toggle_play(self) -> None:
         if not self.video_path:
@@ -2480,8 +2522,16 @@ class CortaCertoApp:
 
     def _on_close(self) -> None:
         self._stop_playback(reset_button=False)
+        self._release_clip_source_caps()
         self._preview_engine.stop()
         self.root.destroy()
+
+    def _release_clip_source_caps(self) -> None:
+        for cap in self._clip_source_caps.values():
+            with contextlib.suppress(Exception):
+                cap.release()
+        self._clip_source_caps.clear()
+        self._clip_source_meta.clear()
 
 
 # -- Helpers -------------------------------------------------------------------
@@ -2789,6 +2839,12 @@ def _clip_for_time(timeline_model: Optional[TimelineModel], time_s: float) -> Op
         if abs(float(time_s) - last.end_s) < 0.001:
             return last
     return None
+
+
+def _clip_source_frame_index(clip: TimelineClip, timeline_time_s: float, fps: float, total_frames: int) -> int:
+    offset_s = max(0.0, float(timeline_time_s) - float(clip.start_s))
+    frame = int(round(offset_s * max(1.0, float(fps))))
+    return max(0, min(max(0, int(total_frames) - 1), frame))
 
 
 def _apply_clip_preview_options(image: Image.Image, clip: Optional[TimelineClip]) -> Image.Image:
