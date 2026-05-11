@@ -244,9 +244,9 @@ def run_pipeline(
         source = finalized
         result.main_video = source
         export_keep = {source}
-        export_keep.add(source)
         _cleanup_intermediate_exports(export_intermediate - export_keep)
         result.final_duration_s = get_video_duration(source)
+        prog(f"[EXPORT] Arquivo final pronto: {Path(source).name}", 0.87)
 
         # ── 4. Vertical version ─────────────────────────────────────────────
         if config.generate_vertical:
