@@ -16,6 +16,7 @@ from src.ui.app import (
     _clip_options_from_timeline_model,
     _clip_edges,
     _clip_for_time,
+    _clip_source_frame_index,
     _hex_to_rgb,
     _clone_timeline_clip,
     _cleanup_project_trash,
@@ -275,6 +276,13 @@ class PreviewUiTests(unittest.TestCase):
 
         self.assertEqual(_clip_for_time(model, 5.5).label, "Clip 2")
         self.assertIsNone(_clip_for_time(model, 4.0))
+
+    def test_clip_source_frame_index_uses_clip_relative_time(self) -> None:
+        clip = TimelineClip(10.0, 20.0, "speech", "B-roll")
+
+        self.assertEqual(_clip_source_frame_index(clip, 12.0, fps=30.0, total_frames=1000), 60)
+        self.assertEqual(_clip_source_frame_index(clip, 9.0, fps=30.0, total_frames=1000), 0)
+        self.assertEqual(_clip_source_frame_index(clip, 60.0, fps=30.0, total_frames=100), 99)
 
     def test_apply_clip_preview_options_scales_and_draws_text(self) -> None:
         image = Image.new("RGB", (100, 80), "white")
