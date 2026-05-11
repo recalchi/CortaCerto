@@ -205,9 +205,12 @@ Principais pontos já estabilizados:
 - Áudio do preview passa a iniciar depois do primeiro frame renderizado no playback, reduzindo dessincronia ao pausar e voltar pela timeline.
 - Timeline permite selecionar clipe, dividir no playhead e excluir clipe; export respeita os segmentos editados.
 - Conversão clique/playhead da timeline usa a área real dos tracks, evitando cortes deslocados pela coluna de rótulos.
+- Timeline ganhou modo **Juntar blocos**, que mostra os clipes mantidos encostados como ripple/compact view sem perder o tempo original de export.
+- Cliques perto das bordas dos clipes usam snap para acertar com mais precisão o ponto exato de transição/corte.
 - Timeline mostra ação de desfazer na barra e informa o tempo exato quando um clipe é dividido.
 - Atalhos: `Espaço` play/pause, `B` divide no playhead, `Delete`/`Backspace` exclui, `Ctrl+Z` desfaz ação da timeline; campos de texto não capturam esses comandos.
 - Controle de silêncio ganhou ajuste de fala mínima para evitar microclipes e cortes nervosos.
+- Corte automático de silêncio inicia desligado; a timeline pode ser analisada para sugestão, mas o export só aplica corte se o usuário ativar ou editar manualmente os clipes.
 - Sliders de color grade e bokeh solicitam novo frame sem bloquear a UI.
 - Callback do preview agora entrega frames pela fila da UI, mantendo renderização no thread principal.
 - Timeline, play loop e diagnósticos de encode/segmentação também retornam para a UI pela fila principal.

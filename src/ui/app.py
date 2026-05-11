@@ -90,6 +90,7 @@ class CortaCertoApp:
         self._timeline_dirty = False
         self._timeline_undo_stack: list[tuple[list[TimelineClip], Optional[int], bool]] = []
         self._waveform_zoom = 1.0
+        self._tl_compact_var = tk.BooleanVar(value=True)
         self._export_modal = None
         self._export_stage_var = None
         self._export_msg_var = None
@@ -326,6 +327,19 @@ class CortaCertoApp:
         )
         self._tl_zoom.set(1.0)
         self._tl_zoom.pack(side="right", padx=(8, 0))
+        tk.Checkbutton(
+            hdr,
+            text="Juntar blocos",
+            variable=self._tl_compact_var,
+            command=self._redraw_timeline,
+            bg=C_PANEL,
+            fg=C_TEXT,
+            selectcolor=C_SURFACE,
+            activebackground=C_PANEL,
+            activeforeground=C_TEXT,
+            font=("Segoe UI", 9),
+            relief="flat",
+        ).pack(side="right", padx=(8, 0))
         tk.Button(hdr, text="Desfazer", command=self._undo_timeline_action,
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=8,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).pack(side="right", padx=(8, 0))
@@ -350,7 +364,8 @@ class CortaCertoApp:
             return
         w   = self._tl_canvas.winfo_width()
         track_x1, track_x2 = self._timeline_track_bounds(w)
-        time_s = self._x_to_time(event.x, track_x1, track_x2)
+        time_s = self._timeline_click_time(event.x, track_x1, track_x2)
+        time_s = self._snap_time_to_clip_edge(time_s)
         frame = self._time_to_frame(time_s)
         self._select_clip_at_time(time_s)
         self._seek_to(frame)
@@ -474,36 +489,60 @@ class CortaCertoApp:
         c.create_rectangle(track_x1, video_y1, track_x2, video_y2, fill="#1b2130", outline="")
         c.create_rectangle(track_x1, audio_y1, track_x2, audio_y2, fill="#171b24", outline="")
 
-        for idx, clip in enumerate(self._timeline_model.video_track.clips):
-            x1 = self._time_to_x(clip.start_s, track_x1, track_x2)
-            x2 = self._time_to_x(clip.end_s, track_x1, track_x2)
+        clips = self._timeline_model.video_track.clips
+        compact = self._timeline_compact_enabled()
+        compact_ranges = _compact_clip_ranges(clips) if compact else []
+        view_duration = (
+            compact_ranges[-1][3]
+            if compact and compact_ranges
+            else self._duration_s
+        )
+
+        for idx, clip in enumerate(clips):
+            if compact and compact_ranges:
+                _, _, display_start, display_end = compact_ranges[idx]
+                x1 = _timeline_time_to_x(display_start, view_duration, track_x1, track_x2)
+                x2 = _timeline_time_to_x(display_end, view_duration, track_x1, track_x2)
+            else:
+                x1 = self._time_to_x(clip.start_s, track_x1, track_x2)
+                x2 = self._time_to_x(clip.end_s, track_x1, track_x2)
             outline = C_YELLOW if idx == self._selected_clip_index else ""
             width = 2 if idx == self._selected_clip_index else 1
             c.create_rectangle(x1, video_y1 + 2, x2, video_y2 - 2, fill=TL_SPEECH, outline=outline, width=width)
             if x2 - x1 > 56:
                 c.create_text((x1 + x2) // 2, (video_y1 + video_y2) // 2, text=clip.label, fill="#d6e6ff", font=("Segoe UI", 8))
+            if compact and idx > 0:
+                c.create_line(x1, video_y1 + 1, x1, video_y2 - 1, fill=TL_HEAD)
 
-        for start_s, end_s in self._timeline_model.removed_ranges:
-            x1 = self._time_to_x(start_s, track_x1, track_x2)
-            x2 = self._time_to_x(end_s, track_x1, track_x2)
-            c.create_rectangle(x1, video_y1 + 6, x2, video_y2 - 6, fill=TL_SILENCE, outline="", stipple="gray50")
+        if not compact:
+            for start_s, end_s in self._timeline_model.removed_ranges:
+                x1 = self._time_to_x(start_s, track_x1, track_x2)
+                x2 = self._time_to_x(end_s, track_x1, track_x2)
+                c.create_rectangle(x1, video_y1 + 6, x2, video_y2 - 6, fill=TL_SILENCE, outline="", stipple="gray50")
 
         self._draw_waveform_track(c, self._timeline_model.waveform, track_x1, track_x2, audio_y1, audio_y2)
 
         tick_step = max(1, int(self._duration_s / 12))
-        for t in range(0, int(self._duration_s) + 1, tick_step):
-            x = self._time_to_x(float(t), track_x1, track_x2)
+        tick_duration = view_duration if compact else self._duration_s
+        for t in range(0, int(tick_duration) + 1, tick_step):
+            x = _timeline_time_to_x(float(t), tick_duration, track_x1, track_x2)
             c.create_line(x, 4, x, h - 4, fill="#222734")
             mm, ss = divmod(t, 60)
             c.create_text(x, h - 7, text=f"{mm}:{ss:02d}", fill=C_MUTED, font=("Courier New", 8))
 
-        pos = self._current_frame / max(1, self._total_frames)
-        px = int(track_x1 + pos * max(1, track_x2 - track_x1))
+        current_time = self._current_frame / max(1.0, self._fps)
+        if compact and compact_ranges:
+            playhead_time = _compact_source_to_display_time(current_time, compact_ranges)
+            px = _timeline_time_to_x(playhead_time, view_duration, track_x1, track_x2)
+        else:
+            pos = self._current_frame / max(1, self._total_frames)
+            px = int(track_x1 + pos * max(1, track_x2 - track_x1))
         self._tl_playhead = c.create_line(px, 2, px, h - 2, fill=TL_HEAD, width=2)
 
         kept = sum(clip.end_s - clip.start_s for clip in self._timeline_model.video_track.clips)
+        mode = "compacta" if compact else "original"
         self._tl_info.configure(
-            text=f"Mantido: {_fmt(kept)}  |  Cortado: {_fmt(self._timeline_model.saved_time_s)}  |  Tracks: 2  |  Preview: {self._preview_backend}"
+            text=f"Mantido: {_fmt(kept)}  |  Cortado: {_fmt(self._timeline_model.saved_time_s)}  |  Vista: {mode}  |  Preview: {self._preview_backend}"
         )
 
     def _draw_waveform_track(
@@ -543,6 +582,34 @@ class CortaCertoApp:
 
     def _time_to_frame(self, time_s: float) -> int:
         return _time_to_frame(time_s, self._fps, self._total_frames)
+
+    def _timeline_compact_enabled(self) -> bool:
+        return bool(self._tl_compact_var.get()) and bool(
+            self._timeline_model and self._timeline_model.video_track.clips
+        )
+
+    def _compact_ranges_for_view(self) -> list[tuple[float, float, float, float]]:
+        if not self._timeline_compact_enabled() or not self._timeline_model:
+            return []
+        return _compact_clip_ranges(self._timeline_model.video_track.clips)
+
+    def _timeline_click_time(self, x: int, x1: int, x2: int) -> float:
+        compact_ranges = self._compact_ranges_for_view()
+        if compact_ranges:
+            view_duration = compact_ranges[-1][3]
+            display_time = _timeline_x_to_time(x, view_duration, x1, x2)
+            return _compact_display_to_source_time(display_time, compact_ranges)
+        return self._x_to_time(x, x1, x2)
+
+    def _snap_time_to_clip_edge(self, time_s: float) -> float:
+        if not self._timeline_model:
+            return time_s
+        threshold_s = max(1.0 / max(1.0, self._fps), 0.08)
+        return _snap_time_to_edges(
+            time_s,
+            _clip_edges(self._timeline_model.video_track.clips),
+            threshold_s,
+        )
 
     def _clip_index_at_time(self, time_s: float) -> Optional[int]:
         if not self._timeline_model:
@@ -597,7 +664,7 @@ class CortaCertoApp:
 
         # -- Corte de Silêncio ---------------------------------------------
         self._section(s, "CORTE DE SILÊNCIO", 7)
-        self._rm_silence_var = tk.BooleanVar(value=True)
+        self._rm_silence_var = tk.BooleanVar(value=False)
         self._check(s, "Ativar corte de silêncios", self._rm_silence_var, 8)
 
         sf = tk.Frame(s, bg=C_PANEL)
@@ -929,9 +996,16 @@ class CortaCertoApp:
         c   = self._tl_canvas
         w   = c.winfo_width()
         h   = c.winfo_height()
-        pos = self._current_frame / max(1, self._total_frames)
         track_x1, track_x2 = self._timeline_track_bounds(w)
-        px  = int(track_x1 + pos * max(1, track_x2 - track_x1))
+        current_time = self._current_frame / max(1.0, self._fps)
+        compact_ranges = self._compact_ranges_for_view()
+        if compact_ranges:
+            view_duration = compact_ranges[-1][3]
+            display_time = _compact_source_to_display_time(current_time, compact_ranges)
+            px = _timeline_time_to_x(display_time, view_duration, track_x1, track_x2)
+        else:
+            pos = self._current_frame / max(1, self._total_frames)
+            px = int(track_x1 + pos * max(1, track_x2 - track_x1))
         if self._tl_playhead:
             c.coords(self._tl_playhead, px, 2, px, h - 2)
         else:
@@ -1567,6 +1641,67 @@ def _timeline_time_to_x(time_s: float, duration_s: float, x1: int, x2: int) -> i
 def _time_to_frame(time_s: float, fps: float, total_frames: int) -> int:
     max_frame = max(0, total_frames - 1)
     return max(0, min(max_frame, int(time_s * max(1.0, fps))))
+
+
+def _compact_clip_ranges(
+    clips: list[TimelineClip],
+) -> list[tuple[float, float, float, float]]:
+    ranges: list[tuple[float, float, float, float]] = []
+    cursor = 0.0
+    for clip in clips:
+        duration = max(0.0, clip.end_s - clip.start_s)
+        if duration <= 0:
+            continue
+        display_start = cursor
+        display_end = cursor + duration
+        ranges.append((clip.start_s, clip.end_s, display_start, display_end))
+        cursor = display_end
+    return ranges
+
+
+def _compact_display_to_source_time(
+    display_time_s: float,
+    ranges: list[tuple[float, float, float, float]],
+) -> float:
+    if not ranges:
+        return 0.0
+    display_time_s = max(0.0, min(ranges[-1][3], display_time_s))
+    for source_start, source_end, display_start, display_end in ranges:
+        if display_start <= display_time_s <= display_end:
+            return min(source_end, source_start + (display_time_s - display_start))
+    return ranges[-1][1]
+
+
+def _compact_source_to_display_time(
+    source_time_s: float,
+    ranges: list[tuple[float, float, float, float]],
+) -> float:
+    if not ranges:
+        return 0.0
+    if source_time_s <= ranges[0][0]:
+        return ranges[0][2]
+    for source_start, source_end, display_start, display_end in ranges:
+        if source_start <= source_time_s <= source_end:
+            return min(display_end, display_start + (source_time_s - source_start))
+        if source_time_s < source_start:
+            return display_start
+    return ranges[-1][3]
+
+
+def _clip_edges(clips: list[TimelineClip]) -> list[float]:
+    edges: list[float] = []
+    for clip in clips:
+        edges.extend([clip.start_s, clip.end_s])
+    return edges
+
+
+def _snap_time_to_edges(time_s: float, edges: list[float], threshold_s: float) -> float:
+    if not edges:
+        return time_s
+    nearest = min(edges, key=lambda edge: abs(edge - time_s))
+    if abs(nearest - time_s) <= threshold_s:
+        return nearest
+    return time_s
 
 
 def _playback_delay_ms(fps: float, render_ms: float) -> int:
