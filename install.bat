@@ -63,7 +63,17 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/2] Instalacao concluida!
+echo [2/2] Validando entrada do CortaCerto...
+%PYTHON_CMD% main.py --check-startup
+if errorlevel 1 (
+    echo [ERRO] A validacao de startup falhou.
+    echo Corrija a mensagem acima e tente novamente.
+    pause
+    exit /b 1
+)
+
+echo.
+echo Instalacao concluida!
 echo.
 echo Para iniciar: python main.py
 echo Ou clique em: run.bat

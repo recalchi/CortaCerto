@@ -40,8 +40,8 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon";    Description: "Criar ícone na Área de Trabalho"; GroupDescription: "Ícones adicionais:"; Flags: unchecked
-Name: "quicklaunchicon"; Description: "Criar ícone na Barra de Tarefas Rápida"; GroupDescription: "Ícones adicionais:"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
+Name: "desktopicon";     Description: "Criar icone na Area de Trabalho"; GroupDescription: "Icones adicionais:"; Flags: unchecked
+Name: "quicklaunchicon"; Description: "Criar icone na Barra de Tarefas Rapida"; GroupDescription: "Icones adicionais:"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
 
 [Files]
 ; Main executable (built by PyInstaller)
@@ -67,8 +67,8 @@ var
 begin
   IsUpdate := RegQueryStringValue(HKCU, 'Software\CortaCerto', 'Version', ExistingVer);
   if IsUpdate then begin
-    MsgBox('Uma versão anterior do CortaCerto foi detectada.' + #13#10 +
-           'O instalador irá atualizar para a versão {#AppVersion}.', mbInformation, MB_OK);
+    MsgBox('Uma versao anterior do CortaCerto foi detectada.' + #13#10 +
+           'O instalador ira atualizar para a versao {#AppVersion}.', mbInformation, MB_OK);
   end;
 end;
 
