@@ -258,6 +258,7 @@ Principais pontos já estabilizados:
 - Export sem edições pesadas também cria `{nome}_editado.mp4` em `CortaCerto_output/`, copiando o original sem mover ou apagar o arquivo de entrada.
 - Export registra explicitamente o nome do arquivo final entregue.
 - Color grade sem bokeh usa ffmpeg quando possível, sem cair no pipeline frame a frame.
+- Testes cobrem o caminho rápido de color grade sem bokeh para evitar regressão para OpenCV frame a frame.
 - Bokeh fast mantém progresso por frame e deixa claro que o efeito roda em CPU com encode selecionado.
 - Cleanup do bokeh fast fecha pipe/captura com mais previsibilidade quando há erro ou cancelamento.
 - Cancelamento de export aciona o evento de cancelamento e registra `[CANCEL]`.

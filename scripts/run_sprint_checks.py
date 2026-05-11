@@ -46,6 +46,7 @@ CHECKS: list[tuple[str, list[str]]] = [
             "src/pipeline.py",
             "src/ui/app.py",
             "tests/test_bootstrap.py",
+            "tests/test_effect_renderer.py",
             "tests/test_editor_consistency.py",
             "tests/test_pipeline_cleanup.py",
             "tests/test_preview_ui.py",
