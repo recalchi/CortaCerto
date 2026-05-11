@@ -591,21 +591,25 @@ class CortaCertoApp:
             outline = C_YELLOW if idx == self._selected_clip_index else ""
             width = 2 if idx == self._selected_clip_index else 1
             c.create_rectangle(x1, video_y1 + 2, x2, video_y2 - 2, fill=TL_SPEECH, outline=outline, width=width)
+            audio_fill = "#203449" if idx == self._selected_clip_index else "#1b2a3a"
+            audio_outline = C_YELLOW if idx == self._selected_clip_index else "#26384a"
+            c.create_rectangle(x1, audio_y1 + 2, x2, audio_y2 - 2, fill=audio_fill, outline=audio_outline, width=width)
             if idx == self._selected_clip_index or (self._trim_drag and self._trim_drag[0] == idx):
-                c.create_rectangle(x1 - 3, video_y1 + 1, x1 + 3, video_y2 - 1, fill=TL_HEAD, outline="")
-                c.create_rectangle(x2 - 3, video_y1 + 1, x2 + 3, video_y2 - 1, fill=TL_HEAD, outline="")
+                _draw_timeline_handle_zone(c, x1, video_y1, audio_y2, "start")
+                _draw_timeline_handle_zone(c, x2, video_y1, audio_y2, "end")
             if x2 - x1 > 56:
                 c.create_text((x1 + x2) // 2, (video_y1 + video_y2) // 2, text=clip.label, fill="#d6e6ff", font=("Segoe UI", 8))
             if compact and idx > 0:
-                c.create_line(x1, video_y1 + 1, x1, video_y2 - 1, fill=TL_HEAD)
+                c.create_line(x1, video_y1 + 1, x1, audio_y2 - 1, fill=TL_HEAD)
+
+        self._draw_waveform_track(c, self._timeline_model.waveform, track_x1, track_x2, audio_y1, audio_y2)
 
         if not compact:
             for start_s, end_s in self._timeline_model.removed_ranges:
                 x1 = self._time_to_x(start_s, track_x1, track_x2)
                 x2 = self._time_to_x(end_s, track_x1, track_x2)
                 c.create_rectangle(x1, video_y1 + 6, x2, video_y2 - 6, fill=TL_SILENCE, outline="", stipple="gray50")
-
-        self._draw_waveform_track(c, self._timeline_model.waveform, track_x1, track_x2, audio_y1, audio_y2)
+                c.create_rectangle(x1, audio_y1 + 4, x2, audio_y2 - 4, fill="#11151d", outline="", stipple="gray50")
 
         tick_step = max(1, int(self._duration_s / 12))
         tick_duration = view_duration if compact else self._duration_s
@@ -691,7 +695,8 @@ class CortaCertoApp:
             return None
         top = 8
         video_y1, video_y2 = top + 12, top + 40
-        if y < video_y1 - 6 or y > video_y2 + 6:
+        audio_y1, audio_y2 = top + 56, self._tl_canvas.winfo_height() - 18
+        if not _timeline_handle_y_in_range(y, video_y1, video_y2, audio_y1, audio_y2):
             return None
 
         w = self._tl_canvas.winfo_width()
@@ -1888,6 +1893,24 @@ def _timeline_handle_edge_at(x: int, x1: int, x2: int, handle_px: int) -> Option
     if abs(x - x2) <= handle_px:
         return "end"
     return None
+
+
+def _timeline_handle_y_in_range(
+    y: int,
+    video_y1: int,
+    video_y2: int,
+    audio_y1: int,
+    audio_y2: int,
+    margin_px: int = 6,
+) -> bool:
+    return video_y1 - margin_px <= y <= audio_y2 + margin_px and not video_y2 + margin_px < y < audio_y1 - margin_px
+
+
+def _draw_timeline_handle_zone(canvas: tk.Canvas, x: int, y1: int, y2: int, edge: str) -> None:
+    color = "#ffd34d" if edge == "start" else "#ffb347"
+    canvas.create_rectangle(x - 8, y1, x + 8, y2, fill="#3a3218", outline=color, width=1, stipple="gray25")
+    canvas.create_rectangle(x - 3, y1, x + 3, y2, fill=TL_HEAD, outline="")
+    canvas.create_line(x, y1, x, y2, fill="#fff2a8", width=1)
 
 
 def _trim_bounds_changed(
