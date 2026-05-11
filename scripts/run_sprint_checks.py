@@ -48,6 +48,7 @@ CHECKS: list[tuple[str, list[str]]] = [
             "tests/test_bootstrap.py",
             "tests/test_effect_renderer.py",
             "tests/test_editor_consistency.py",
+            "tests/test_ffmpeg_env.py",
             "tests/test_pipeline_cleanup.py",
             "tests/test_preview_ui.py",
             "tests/test_sprint_checks.py",

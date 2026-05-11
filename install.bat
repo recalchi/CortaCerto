@@ -37,8 +37,8 @@ if errorlevel 1 (
     call :check_ffmpeg
     if errorlevel 1 (
         echo [AVISO] O winget terminou, mas este shell ainda nao enxerga o ffmpeg.
-        echo Atualizando PATH local com os aliases do WinGet...
-        set "PATH=%LOCALAPPDATA%\Microsoft\WindowsApps;%LOCALAPPDATA%\Microsoft\WinGet\Packages;%PATH%"
+        echo Atualizando PATH local com os aliases e pacotes do WinGet...
+        set "PATH=%LOCALAPPDATA%\Microsoft\WindowsApps;%LOCALAPPDATA%\Microsoft\WinGet\Packages;%ProgramFiles%\WinGet\Packages;%ProgramFiles(x86)%\WinGet\Packages;%PATH%"
         call :check_ffmpeg
     )
 
