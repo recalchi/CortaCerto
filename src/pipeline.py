@@ -79,6 +79,9 @@ def run_pipeline(
         encoder, _ = detect_video_encoder()
         prog(f"[GPU] Selected mode: encode={encoder}; efeitos OpenCV/bokeh rodam em CPU.", 0.01)
         prog(f"[EXPORT] Saídas selecionadas: {_export_output_plan(config)}.", 0.01)
+        clip_plan = _clip_option_plan(config.clip_options)
+        if clip_plan:
+            prog(f"[EXPORT] Ajustes por clipe recebidos: {clip_plan}.", 0.01)
 
         # ── 1b. Face/person detection (used for bokeh + thumbnail layout) ───
         if config.bokeh_intensity >= 0.05 or config.generate_thumbnail:
@@ -362,3 +365,36 @@ def _export_output_plan(config: ProcessingConfig) -> str:
     if config.generate_thumbnail:
         outputs.append(f"{max(1, int(config.thumbnail_count))} thumbnails")
     return ", ".join(outputs)
+
+
+def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
+    adjusted = 0
+    text = 0
+    audio = 0
+    transitions = 0
+    for option in clip_options:
+        try:
+            scale_pct = float(option.get("scale_pct", 100.0))
+            volume_pct = float(option.get("volume_pct", 100.0))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        transition = str(option.get("transition") or "Corte")
+        text_overlay = str(option.get("text_overlay") or "").strip()
+        if abs(scale_pct - 100.0) > 0.01:
+            adjusted += 1
+        if abs(volume_pct - 100.0) > 0.01:
+            audio += 1
+        if transition != "Corte":
+            transitions += 1
+        if text_overlay:
+            text += 1
+    parts: list[str] = []
+    if adjusted:
+        parts.append(f"escala em {adjusted} clipe(s)")
+    if audio:
+        parts.append(f"volume em {audio} clipe(s)")
+    if transitions:
+        parts.append(f"transição em {transitions} clipe(s)")
+    if text:
+        parts.append(f"texto em {text} clipe(s)")
+    return ", ".join(parts)

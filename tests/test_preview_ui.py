@@ -9,10 +9,12 @@ from src.core.color_grade import ColorGrade
 from src.core.preview_engine import PreviewSettings
 from src.ui.app import (
     _apply_clip_options_to_timeline_model,
+    _apply_clip_preview_options,
     _apply_segments_to_timeline_model,
     _build_project_metadata,
     _clip_options_from_timeline_model,
     _clip_edges,
+    _clip_for_time,
     _clone_timeline_clip,
     _cleanup_project_trash,
     _coerce_frame_to_segments,
@@ -246,6 +248,21 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(cloned.scale_pct, 150.0)
         self.assertEqual(cloned.volume_pct, 70.0)
         self.assertEqual(cloned.transition, "Dissolver")
+
+    def test_clip_for_time_returns_active_clip(self) -> None:
+        model = build_timeline_model(10.0, [(1.0, 3.0), (5.0, 7.0)])
+
+        self.assertEqual(_clip_for_time(model, 5.5).label, "Clip 2")
+        self.assertIsNone(_clip_for_time(model, 4.0))
+
+    def test_apply_clip_preview_options_scales_and_draws_text(self) -> None:
+        image = Image.new("RGB", (100, 80), "white")
+        clip = TimelineClip(0.0, 1.0, "speech", "Intro", scale_pct=50.0, text_overlay="Titulo")
+
+        rendered = _apply_clip_preview_options(image, clip)
+
+        self.assertEqual(rendered.size, image.size)
+        self.assertNotEqual(rendered.getpixel((0, 0)), image.getpixel((0, 0)))
 
     def test_preview_settings_request_token_separates_stale_callbacks(self) -> None:
         first = PreviewSettings(ColorGrade(enabled=False), 0.0, request_token=("playback", 1, 10))
