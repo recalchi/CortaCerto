@@ -70,6 +70,7 @@ class CortaCertoApp:
         self.project_path:  Optional[str]            = None
         self.project_name:  str                      = "Projeto sem nome"
         self._pending_project_state: dict[str, object] = {}
+        self._project_media_paths: list[str]         = []
         self._launcher_media_path: Optional[str] = None
         self._launcher_media_var: Optional[tk.StringVar] = None
         self._queue:        queue.Queue              = queue.Queue()
@@ -305,6 +306,7 @@ class CortaCertoApp:
         metadata = _build_project_metadata(path)
         if self._launcher_media_path:
             metadata["video_path"] = self._launcher_media_path
+            metadata["media_paths"] = [self._launcher_media_path]
         Path(path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
         self._open_project_editor(path)
 
@@ -328,6 +330,7 @@ class CortaCertoApp:
         metadata = _read_project_metadata(project_path) if project_path else {}
         self.project_name = str(metadata.get("name") or _project_name_from_path(project_path))
         self._pending_project_state = metadata
+        self._project_media_paths = _project_media_paths_from_metadata(metadata)
         self._clear_root()
         self.root.geometry("1280x780")
         self.root.minsize(1000, 660)
@@ -335,6 +338,8 @@ class CortaCertoApp:
         self.root.title(f"CortaCerto - {self.project_name}")
         self._tb_status.configure(text=f"Projeto aberto: {self.project_name}")
         video_path = str(metadata.get("video_path") or "")
+        if not video_path:
+            video_path = _first_existing_media_path(self._project_media_paths) or ""
         if video_path and Path(video_path).exists():
             self.root.after(100, lambda path=video_path: self._load_video(path))
         elif video_path:
@@ -417,9 +422,12 @@ class CortaCertoApp:
             self._tb_status.configure(text="Use Abrir vídeo para importar mídia.")
 
     def _on_drop_files(self, event: tk.Event) -> str:
-        path = _first_video_path_from_drop(getattr(event, "data", ""))
-        if path:
-            self._load_video(path)
+        paths = _video_paths_from_drop(getattr(event, "data", ""))
+        if paths:
+            self._register_project_media(paths)
+            self._load_video(paths[0])
+            if len(paths) > 1:
+                self._tb_status.configure(text=f"{len(paths)} vídeos adicionados ao projeto. Primeiro vídeo carregado.")
         else:
             self._tb_status.configure(text="Solte um arquivo de vídeo compatível.")
         return "break"
@@ -1330,6 +1338,7 @@ class CortaCertoApp:
             return
 
         self.video_path    = path
+        self._register_project_media([path])
         self._save_project_video_path(path)
         self._segments     = []
         self._analysis_done= False
@@ -1345,7 +1354,7 @@ class CortaCertoApp:
         name = Path(path).name
         size_mb = os.path.getsize(path) / 1_000_000
         self._vid_info.configure(
-            text=f"{name}\n{_fmt(self._duration_s)}  |  {size_mb:.1f} MB  |  {self._fps:.1f} fps",
+            text=f"{name}\n{_fmt(self._duration_s)}  |  {size_mb:.1f} MB  |  {self._fps:.1f} fps\nMídias no projeto: {len(self._project_media_paths)}",
             fg=C_TEXT)
 
         # Auto-fill title
@@ -1390,6 +1399,8 @@ class CortaCertoApp:
             return
         try:
             metadata = _read_project_metadata(self.project_path)
+            media_paths = _merge_media_paths(metadata.get("media_paths"), [video_path])
+            self._project_media_paths = media_paths
             metadata.update(
                 {
                     "app": "CortaCerto",
@@ -1397,6 +1408,7 @@ class CortaCertoApp:
                     "name": self.project_name,
                     "slug": _safe_project_slug(self.project_name),
                     "video_path": video_path,
+                    "media_paths": media_paths,
                     "updated_at": int(time.time()),
                 }
             )
@@ -1412,6 +1424,7 @@ class CortaCertoApp:
             metadata.update(_project_state_payload(
                 project_name=self.project_name,
                 video_path=self.video_path,
+                media_paths=self._project_media_paths,
                 current_time_s=self._current_frame / max(1.0, self._fps),
                 timeline_segments=self._segments,
                 timeline_dirty=self._timeline_dirty,
@@ -1419,6 +1432,9 @@ class CortaCertoApp:
             Path(self.project_path).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as exc:
             print(f"[PROJECT] Não foi possível atualizar retomada do projeto: {exc}")
+
+    def _register_project_media(self, paths: list[str]) -> None:
+        self._project_media_paths = _merge_media_paths(self._project_media_paths, paths)
 
     def _restore_project_timeline_if_available(self, timeline_model: TimelineModel) -> Optional[list[tuple[float, float]]]:
         metadata = self._pending_project_state
@@ -2184,6 +2200,7 @@ def _build_project_metadata(project_path: str) -> dict[str, object]:
         "name": name,
         "slug": _safe_project_slug(name),
         "video_path": None,
+        "media_paths": [],
         "created_at": int(time.time()),
     }
 
@@ -2194,6 +2211,7 @@ def _project_state_payload(
     current_time_s: float,
     timeline_segments: list[tuple[float, float]],
     timeline_dirty: bool,
+    media_paths: Optional[list[str]] = None,
 ) -> dict[str, object]:
     return {
         "app": "CortaCerto",
@@ -2201,6 +2219,7 @@ def _project_state_payload(
         "name": project_name,
         "slug": _safe_project_slug(project_name),
         "video_path": video_path,
+        "media_paths": _merge_media_paths(media_paths, [video_path]),
         "current_time_s": max(0.0, float(current_time_s)),
         "timeline_segments": [
             {"start_s": float(start), "end_s": float(end)}
@@ -2228,6 +2247,7 @@ def _read_project_metadata(project_path: Optional[str]) -> dict[str, object]:
     metadata.update(data)
     metadata["name"] = str(metadata.get("name") or _project_name_from_path(project_path))
     metadata["slug"] = str(metadata.get("slug") or _safe_project_slug(str(metadata["name"])))
+    metadata["media_paths"] = _merge_media_paths(metadata.get("media_paths"), [str(metadata.get("video_path") or "")])
     return metadata
 
 
@@ -2297,11 +2317,35 @@ def _is_video_path(path: str) -> bool:
 
 
 def _first_video_path_from_drop(drop_data: str) -> Optional[str]:
-    for item in _split_drop_paths(drop_data):
-        clean = item.strip().strip("{}")
-        if _is_video_path(clean):
-            return clean
+    paths = _video_paths_from_drop(drop_data)
+    return paths[0] if paths else None
+
+
+def _video_paths_from_drop(drop_data: str) -> list[str]:
+    return _merge_media_paths([], [item.strip().strip("{}") for item in _split_drop_paths(drop_data) if _is_video_path(item)])
+
+
+def _project_media_paths_from_metadata(metadata: dict[str, object]) -> list[str]:
+    return _merge_media_paths(metadata.get("media_paths"), [str(metadata.get("video_path") or "")])
+
+
+def _first_existing_media_path(media_paths: list[str]) -> Optional[str]:
+    for path in media_paths:
+        if Path(path).exists():
+            return path
     return None
+
+
+def _merge_media_paths(existing: object, new_paths: list[str]) -> list[str]:
+    merged: list[str] = []
+    raw_existing = existing if isinstance(existing, list) else []
+    for path in [*raw_existing, *new_paths]:
+        clean = str(path).strip().strip("{}")
+        if not clean or not _is_video_path(clean):
+            continue
+        if clean not in merged:
+            merged.append(clean)
+    return merged
 
 
 def _split_drop_paths(drop_data: str) -> list[str]:

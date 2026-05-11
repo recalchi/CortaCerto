@@ -19,6 +19,7 @@ from src.ui.app import (
     _compact_source_to_display_time,
     _fit_preview_image,
     _first_video_path_from_drop,
+    _merge_media_paths,
     _is_video_path,
     _move_project_to_trash,
     _playback_delay_ms,
@@ -36,6 +37,7 @@ from src.ui.app import (
     _snap_time_to_edges,
     _snap_time_to_edges_with_flag,
     _split_drop_paths,
+    _video_paths_from_drop,
     _time_to_frame,
     _timeline_time_to_x,
     _timeline_track_bounds,
@@ -61,18 +63,20 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(metadata["version"], 1)
         self.assertEqual(metadata["name"], "meu-corte")
         self.assertEqual(metadata["slug"], "meu-corte")
+        self.assertEqual(metadata["media_paths"], [])
         self.assertIn("created_at", metadata)
 
     def test_read_project_metadata_merges_existing_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "canal.ccp"
-            path.write_text('{"name":"Canal","video_path":"C:/video.mp4"}', encoding="utf-8")
+            path.write_text('{"name":"Canal","video_path":"C:/video.mp4","media_paths":["C:/extra.mov"]}', encoding="utf-8")
 
             metadata = _read_project_metadata(str(path))
 
         self.assertEqual(metadata["name"], "Canal")
         self.assertEqual(metadata["slug"], "canal")
         self.assertEqual(metadata["video_path"], "C:/video.mp4")
+        self.assertEqual(metadata["media_paths"], ["C:/extra.mov", "C:/video.mp4"])
 
     def test_read_project_metadata_recovers_from_invalid_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -150,6 +154,16 @@ class PreviewUiTests(unittest.TestCase):
             _first_video_path_from_drop("{C:/midias/audio.mp3} {C:/midias/video final.mp4}"),
             "C:/midias/video final.mp4",
         )
+        self.assertEqual(
+            _video_paths_from_drop("{C:/midias/a.mp4} {C:/midias/b.mov} C:/midias/audio.mp3"),
+            ["C:/midias/a.mp4", "C:/midias/b.mov"],
+        )
+
+    def test_merge_media_paths_keeps_supported_unique_order(self) -> None:
+        self.assertEqual(
+            _merge_media_paths(["C:/midias/a.mp4", "C:/midias/audio.mp3"], ["C:/midias/a.mp4", "C:/midias/b.MOV"]),
+            ["C:/midias/a.mp4", "C:/midias/b.MOV"],
+        )
 
     def test_split_drop_paths_handles_braced_paths(self) -> None:
         paths = _split_drop_paths("{C:/midias/video final.mp4} C:/midias/outro.mov")
@@ -160,12 +174,14 @@ class PreviewUiTests(unittest.TestCase):
         payload = _project_state_payload(
             project_name="Canal",
             video_path="C:/video.mp4",
+            media_paths=["C:/extra.mov"],
             current_time_s=12.5,
             timeline_segments=[(1.0, 3.0), (5.0, 5.0), (6.0, 8.0)],
             timeline_dirty=True,
         )
 
         self.assertEqual(payload["video_path"], "C:/video.mp4")
+        self.assertEqual(payload["media_paths"], ["C:/extra.mov", "C:/video.mp4"])
         self.assertEqual(payload["current_time_s"], 12.5)
         self.assertEqual(payload["timeline_segments"], [
             {"start_s": 1.0, "end_s": 3.0},
