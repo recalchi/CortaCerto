@@ -228,6 +228,8 @@ Principais pontos já estabilizados:
 - Instalador foi reforçado para não acusar falha quando o FFmpeg foi instalado mas o shell ainda não atualizou o PATH.
 - Entrada do app agora usa um bootstrap dedicado para validar FFmpeg antes da UI e mostrar instruções claras de correção.
 - `run.bat` escolhe a venv disponível, mostra qual Python será usado, mantém a janela aberta quando a inicialização falha e aceita `--check-startup` para validar sem abrir a UI.
+- `install.bat` e o build do instalador validam `main.py --check-startup` para detectar falhas de entrada antes de declarar sucesso.
+- O build PyInstaller valida `dist\CortaCerto\CortaCerto.exe --check-startup` antes de chamar o Inno Setup.
 - Artefatos gerados pelo PyInstaller (`*.spec`, `LICENSE.txt`, `dist/`, `build/`) ficam fora do versionamento.
 
 Limitações conhecidas:

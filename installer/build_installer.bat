@@ -7,7 +7,7 @@ echo  CortaCerto - Build do Instalador
 echo ============================================================
 echo.
 
-echo [1/6] Verificando Python...
+echo [1/7] Verificando Python...
 set "PYTHON_CMD="
 where python >nul 2>&1
 if not errorlevel 1 set "PYTHON_CMD=python"
@@ -21,14 +21,14 @@ if not defined PYTHON_CMD (
     exit /b 1
 )
 
-echo [2/6] Verificando ffmpeg...
-%PYTHON_CMD% -c "from src.ffmpeg_env import ensure_ffmpeg; print(ensure_ffmpeg())"
+echo [2/7] Verificando entrada do app...
+%PYTHON_CMD% main.py --check-startup
 if errorlevel 1 (
-    echo [AVISO] ffmpeg nao foi encontrado por este terminal.
-    echo O instalador pode ser gerado, mas o usuario precisara instalar ffmpeg.
+    echo [AVISO] A validacao de entrada falhou neste terminal.
+    echo O instalador pode ser gerado, mas o usuario precisara corrigir FFmpeg/Python no destino.
 )
 
-echo [3/6] Preparando ambiente virtual...
+echo [3/7] Preparando ambiente virtual...
 if not exist venv\Scripts\activate.bat (
     echo Criando ambiente virtual...
     %PYTHON_CMD% -m venv venv
@@ -50,7 +50,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [4/6] Convertendo icone...
+echo [4/7] Convertendo icone...
 "%VENV_PYTHON%" -c "from PIL import Image; img=Image.open('corta_certo_icon.png'); img.save('corta_certo_icon.ico', format='ICO', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
 if errorlevel 1 (
     echo [ERRO] Falha ao converter icone.
@@ -58,14 +58,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [5/6] Preparando LICENSE.txt...
+echo [5/7] Preparando LICENSE.txt...
 if not exist LICENSE.txt (
     echo CortaCerto - Uso pessoal. > LICENSE.txt
     echo ffmpeg: https://ffmpeg.org/legal.html >> LICENSE.txt
 )
 
 echo.
-echo [6/6] Gerando executavel com PyInstaller...
+echo [6/7] Gerando executavel com PyInstaller...
 "%VENV_PYTHON%" -m PyInstaller --noconfirm --onedir --windowed ^
     --name "CortaCerto" ^
     --icon "corta_certo_icon.ico" ^
@@ -77,6 +77,15 @@ echo [6/6] Gerando executavel com PyInstaller...
 
 if errorlevel 1 (
     echo [ERRO] PyInstaller falhou.
+    pause
+    exit /b 1
+)
+
+echo.
+echo [7/7] Validando executavel gerado...
+dist\CortaCerto\CortaCerto.exe --check-startup
+if errorlevel 1 (
+    echo [ERRO] O executavel gerado falhou na validacao de startup.
     pause
     exit /b 1
 )
