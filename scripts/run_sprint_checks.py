@@ -114,6 +114,16 @@ def check_text_encoding(print_fn=print) -> int:
     return 1
 
 
+def check_test_inventory(print_fn=print) -> int:
+    test_files = sorted(Path("tests").glob("test_*.py"))
+    test_count = 0
+    for path in test_files:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        test_count += text.count("def test_")
+    print_fn(f"\n[OK] Inventário de testes: {len(test_files)} arquivos, {test_count} casos declarados.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Executa a bateria curta da sprint CortaCerto.")
     parser.add_argument(
@@ -147,6 +157,10 @@ def main() -> int:
         return code
 
     code = check_text_encoding()
+    if code != 0:
+        return code
+
+    code = check_test_inventory()
     if code != 0:
         return code
 

@@ -127,11 +127,12 @@ Protótipos antigos baseados em MoviePy/pydub foram preservados em `legacy/old_m
 ### Fluxo básico
 
 1. Abrir — `run.bat` ou `python main.py`
-2. Escolher vídeo — clique em "Escolher vídeo…"
-3. Configurar — ajuste silêncio, plataforma, música de fundo
-4. Cor & Efeitos — color grade e bokeh com preview em tempo real
-5. Processar — clique em "Exportar"
-6. Resultado — abra o vídeo final; thumbnails e versão vertical só são geradas se as saídas extras estiverem ativadas
+2. Criar ou abrir projeto `.ccp` — use a tela inicial de projetos
+3. Importar mídia — use o campo da tela inicial ou clique em "Abrir vídeo" na interface de edição
+4. Configurar — ajuste silêncio, plataforma, música de fundo
+5. Cor & Efeitos — color grade e bokeh com preview em tempo real
+6. Processar — clique em "Exportar"
+7. Resultado — abra o vídeo final; thumbnails e versão vertical só são geradas se as saídas extras estiverem ativadas
 
 ### Arquivos gerados
 
@@ -223,6 +224,14 @@ Base consolidada a partir do commit funcional `6613d66`, com continuação regis
 Principais pontos já estabilizados:
 
 - Preview usa `PreviewEngine` com fila de requests drenada corretamente, evitando frame preto por descarte indevido.
+- Abertura do app agora começa numa tela de projetos para criar/abrir `.ccp` antes da edição, mantendo compatibilidade com `.cortacerto.json`.
+- Projetos salvam o vídeo associado e tentam reabrir esse vídeo automaticamente quando o projeto é carregado.
+- Projetos também salvam playhead e segmentos editados para retomar a edição do ponto onde parou.
+- Tela inicial tem importação simples de mídia e lixeira com limpeza automática de itens acima de 30 dias.
+- Projetos podem ser movidos para a lixeira pela toolbar da edição sem apagar o vídeo original.
+- Projetos na lixeira podem ser restaurados pela tela inicial para uma pasta escolhida, sem sobrescrever projetos existentes.
+- Preview aceita drag-and-drop de arquivos de vídeo quando o backend TkDnD estiver disponível, com fallback pelo botão Abrir vídeo.
+- Runner da sprint exibe inventário de testes para acompanhar cobertura funcional sem gastar tempo em checks manuais.
 - Primeiro frame volta a aparecer após carregar vídeo.
 - Carregamento de vídeo pede primeiro um frame rápido sem efeitos, depois atualiza o preview completo.
 - Resize do preview tem teste unitário para evitar regressão como `Image`/`ImageTk` quebrado.
@@ -244,6 +253,7 @@ Principais pontos já estabilizados:
 - Conversão clique/playhead da timeline usa a área real dos tracks, evitando cortes deslocados pela coluna de rótulos.
 - Timeline ganhou modo **Juntar blocos**, que mostra os clipes mantidos encostados como ripple/compact view sem perder o tempo original de export.
 - Cliques perto das bordas dos clipes usam snap para acertar com mais precisão o ponto exato de transição/corte.
+- Barra de status informa quando clique ou trim encaixou por snap em uma borda de clipe.
 - Split/delete/undo param o playback e reancoram o playhead em um trecho mantido para evitar timeline parada com preview avançando.
 - Testes de invariantes do editor validam que playback, timeline compacta e cursor não apontam para lacunas removidas.
 - Timeline mostra ação de desfazer na barra e informa o tempo exato quando um clipe é dividido.
