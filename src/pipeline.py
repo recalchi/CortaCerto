@@ -372,6 +372,7 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
     text = 0
     audio = 0
     transitions = 0
+    chroma = 0
     for option in clip_options:
         try:
             scale_pct = float(option.get("scale_pct", 100.0))
@@ -380,6 +381,7 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
             continue
         transition = str(option.get("transition") or "Corte")
         text_overlay = str(option.get("text_overlay") or "").strip()
+        chroma_enabled = bool(option.get("chroma_enabled", False))
         if abs(scale_pct - 100.0) > 0.01:
             adjusted += 1
         if abs(volume_pct - 100.0) > 0.01:
@@ -388,6 +390,8 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
             transitions += 1
         if text_overlay:
             text += 1
+        if chroma_enabled:
+            chroma += 1
     parts: list[str] = []
     if adjusted:
         parts.append(f"escala em {adjusted} clipe(s)")
@@ -397,4 +401,6 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
         parts.append(f"transição em {transitions} clipe(s)")
     if text:
         parts.append(f"texto em {text} clipe(s)")
+    if chroma:
+        parts.append(f"chroma em {chroma} clipe(s)")
     return ", ".join(parts)

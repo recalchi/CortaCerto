@@ -16,6 +16,9 @@ class TimelineClip:
     volume_pct: float = 100.0
     transition: str = "Corte"
     text_overlay: str = ""
+    chroma_enabled: bool = False
+    chroma_color: str = "#00ff00"
+    chroma_tolerance: float = 45.0
 
 
 @dataclass

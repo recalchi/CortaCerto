@@ -29,13 +29,14 @@ class PipelineCleanupTests(unittest.TestCase):
 
     def test_clip_option_plan_summarizes_editor_adjustments(self) -> None:
         plan = _clip_option_plan([
-            {"scale_pct": 125.0, "volume_pct": 80.0, "transition": "Fade", "text_overlay": "Intro"},
+            {"scale_pct": 125.0, "volume_pct": 80.0, "transition": "Fade", "text_overlay": "Intro", "chroma_enabled": True},
             {"scale_pct": 100.0, "volume_pct": 100.0, "transition": "Corte", "text_overlay": ""},
         ])
 
         self.assertIn("escala em 1 clipe(s)", plan)
         self.assertIn("volume em 1 clipe(s)", plan)
         self.assertIn("texto em 1 clipe(s)", plan)
+        self.assertIn("chroma em 1 clipe(s)", plan)
 
     def test_cleanup_intermediate_exports_removes_existing_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
