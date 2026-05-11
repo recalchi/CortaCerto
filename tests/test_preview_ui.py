@@ -4,6 +4,7 @@ from PIL import Image
 
 from src.ui.app import (
     _clip_edges,
+    _coerce_time_to_segments,
     _compact_clip_ranges,
     _compact_display_to_source_time,
     _compact_source_to_display_time,
@@ -87,6 +88,14 @@ class PreviewUiTests(unittest.TestCase):
 
         self.assertEqual(_snap_time_to_edges(2.96, edges, 0.08), 3.0)
         self.assertEqual(_snap_time_to_edges(3.20, edges, 0.08), 3.20)
+
+    def test_coerce_time_to_segments_skips_removed_gaps(self) -> None:
+        segments = [(1.0, 3.0), (6.0, 9.0)]
+
+        self.assertEqual(_coerce_time_to_segments(2.0, segments, 10.0), 2.0)
+        self.assertEqual(_coerce_time_to_segments(4.0, segments, 10.0), 6.0)
+        self.assertEqual(_coerce_time_to_segments(9.5, segments, 10.0), 9.0)
+        self.assertEqual(_coerce_time_to_segments(0.2, segments, 10.0), 1.0)
 
 
 if __name__ == "__main__":

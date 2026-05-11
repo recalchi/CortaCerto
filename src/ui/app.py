@@ -384,6 +384,7 @@ class CortaCertoApp:
         if not self._timeline_model:
             self._tb_status.configure(text="Carregue um vídeo antes de dividir.")
             return
+        self._stop_playback(reset_button=True)
         split_s = self._current_frame / max(1.0, self._fps)
         index = self._clip_index_at_time(split_s)
         if index is None:
@@ -405,17 +406,21 @@ class CortaCertoApp:
         self._sync_manual_timeline()
         self._timeline_dirty = True
         self._selected_clip_index += 1
+        self._seek_to(self._current_frame)
         self._tb_status.configure(text=f"Clipe dividido em {_fmt(split_s)}.")
 
     def _delete_selected_clip(self) -> None:
         if not self._timeline_model or self._selected_clip_index is None:
             self._tb_status.configure(text="Selecione um clipe na timeline para excluir.")
             return
+        self._stop_playback(reset_button=True)
+        current_time = self._current_frame / max(1.0, self._fps)
         self._push_timeline_undo()
         del self._timeline_model.video_track.clips[self._selected_clip_index]
         self._selected_clip_index = None
         self._sync_manual_timeline()
         self._timeline_dirty = True
+        self._seek_to(self._time_to_frame(self._nearest_kept_time(current_time)))
         self._tb_status.configure(text="Clipe removido da timeline.")
 
     def _push_timeline_undo(self) -> None:
@@ -433,6 +438,8 @@ class CortaCertoApp:
         if not self._timeline_model or not self._timeline_undo_stack:
             self._tb_status.configure(text="Nada para desfazer.")
             return
+        self._stop_playback(reset_button=True)
+        current_time = self._current_frame / max(1.0, self._fps)
         clips, selected_index, was_dirty = self._timeline_undo_stack.pop()
         self._timeline_model.video_track.clips = [
             TimelineClip(c.start_s, c.end_s, c.clip_type, c.label) for c in clips
@@ -440,6 +447,7 @@ class CortaCertoApp:
         self._selected_clip_index = selected_index
         self._timeline_dirty = was_dirty
         self._sync_manual_timeline(mark_dirty=was_dirty)
+        self._seek_to(self._time_to_frame(self._nearest_kept_time(current_time)))
         self._tb_status.configure(text="Ação desfeita.")
 
     def _sync_manual_timeline(self, mark_dirty: Optional[bool] = None) -> None:
@@ -462,6 +470,7 @@ class CortaCertoApp:
     def _redraw_timeline(self) -> None:
         c = self._tl_canvas
         c.delete("all")
+        self._tl_playhead = None
         w = c.winfo_width()
         h = c.winfo_height()
         if w < 10 or h < 10:
@@ -996,6 +1005,8 @@ class CortaCertoApp:
         c   = self._tl_canvas
         w   = c.winfo_width()
         h   = c.winfo_height()
+        if w < 10 or h < 10:
+            return
         track_x1, track_x2 = self._timeline_track_bounds(w)
         current_time = self._current_frame / max(1.0, self._fps)
         compact_ranges = self._compact_ranges_for_view()
@@ -1006,7 +1017,7 @@ class CortaCertoApp:
         else:
             pos = self._current_frame / max(1, self._total_frames)
             px = int(track_x1 + pos * max(1, track_x2 - track_x1))
-        if self._tl_playhead:
+        if self._tl_playhead and c.find_withtag(self._tl_playhead):
             c.coords(self._tl_playhead, px, 2, px, h - 2)
         else:
             self._tl_playhead = c.create_line(
@@ -1198,6 +1209,7 @@ class CortaCertoApp:
         )
         if target <= self._current_frame:
             target = self._current_frame + 1
+        target = self._coerce_playback_frame_to_timeline(target)
         if target >= self._total_frames:
             self._stop_playback(reset_button=True)
             return
@@ -1208,6 +1220,26 @@ class CortaCertoApp:
         self._play_target_frame = target
         self._preview_bootstrap_key = settings.cache_key()
         self._preview_engine.request_frame(target, settings)
+
+    def _coerce_playback_frame_to_timeline(self, frame: int) -> int:
+        if not self._timeline_dirty or not self._timeline_model:
+            return frame
+        time_s = frame / max(1.0, self._fps)
+        kept_time = _coerce_time_to_segments(
+            time_s,
+            [(clip.start_s, clip.end_s) for clip in self._timeline_model.video_track.clips],
+            self._duration_s,
+        )
+        return self._time_to_frame(kept_time)
+
+    def _nearest_kept_time(self, time_s: float) -> float:
+        if not self._timeline_model:
+            return max(0.0, min(self._duration_s, time_s))
+        return _coerce_time_to_segments(
+            time_s,
+            [(clip.start_s, clip.end_s) for clip in self._timeline_model.video_track.clips],
+            self._duration_s,
+        )
 
     def _schedule_next_playback_frame(self, render_ms: float) -> None:
         if not self._playing:
@@ -1702,6 +1734,24 @@ def _snap_time_to_edges(time_s: float, edges: list[float], threshold_s: float) -
     if abs(nearest - time_s) <= threshold_s:
         return nearest
     return time_s
+
+
+def _coerce_time_to_segments(
+    time_s: float,
+    segments: list[tuple[float, float]],
+    duration_s: float,
+) -> float:
+    duration_s = max(0.0, duration_s)
+    time_s = max(0.0, min(duration_s, time_s))
+    valid = [(start, end) for start, end in sorted(segments) if end > start]
+    if not valid:
+        return duration_s
+    for start, end in valid:
+        if start <= time_s <= end:
+            return time_s
+        if time_s < start:
+            return start
+    return valid[-1][1]
 
 
 def _playback_delay_ms(fps: float, render_ms: float) -> int:

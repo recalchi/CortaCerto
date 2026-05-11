@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 import main
 from src.bootstrap import build_ffmpeg_error_message, ensure_startup_dependencies
@@ -41,7 +42,8 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("não achei", calls[0][1])
 
     def test_main_check_startup_exits_without_opening_ui(self) -> None:
-        self.assertEqual(main.main(["--check-startup"]), 0)
+        with mock.patch("main.ensure_ffmpeg", return_value="C:/ffmpeg/bin/ffmpeg.exe"):
+            self.assertEqual(main.main(["--check-startup"]), 0)
 
 
 if __name__ == "__main__":
