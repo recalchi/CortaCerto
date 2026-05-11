@@ -234,6 +234,7 @@ Principais pontos já estabilizados:
 - Áudio do preview passa a iniciar depois do primeiro frame renderizado no playback, reduzindo dessincronia ao pausar e voltar pela timeline.
 - Timeline permite selecionar clipe, dividir no playhead e excluir clipe; export respeita os segmentos editados.
 - Timeline permite ajustar cortes arrastando as bordas dos clipes, com duração mínima e sem sobrepor clipes vizinhos.
+- Ajuste por borda só grava histórico quando o corte muda de fato, evitando `Ctrl+Z` poluído por cliques sem arraste.
 - Timeline mostra handles nas bordas do clipe selecionado e cursor de resize quando o mouse passa sobre um ajuste possível.
 - Conversão clique/playhead da timeline usa a área real dos tracks, evitando cortes deslocados pela coluna de rótulos.
 - Timeline ganhou modo **Juntar blocos**, que mostra os clipes mantidos encostados como ripple/compact view sem perder o tempo original de export.

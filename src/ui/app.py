@@ -90,6 +90,7 @@ class CortaCertoApp:
         self._timeline_dirty = False
         self._timeline_undo_stack: list[tuple[list[TimelineClip], Optional[int], bool]] = []
         self._trim_drag: Optional[tuple[int, str]] = None
+        self._trim_undo_captured = False
         self._trim_min_duration_s = 0.15
         self._waveform_zoom = 1.0
         self._tl_compact_var = tk.BooleanVar(value=True)
@@ -372,8 +373,8 @@ class CortaCertoApp:
         if handle is not None:
             self._stop_playback(reset_button=True)
             self._selected_clip_index, edge = handle
-            self._push_timeline_undo()
             self._trim_drag = (self._selected_clip_index, edge)
+            self._trim_undo_captured = False
             self._redraw_timeline()
             self._tb_status.configure(text="Ajustando corte...")
             return "break"
@@ -409,6 +410,11 @@ class CortaCertoApp:
             self._trim_min_duration_s,
         )
         clip = clips[index]
+        if not _trim_bounds_changed(clip.start_s, clip.end_s, new_start, new_end):
+            return "break"
+        if not self._trim_undo_captured:
+            self._push_timeline_undo()
+            self._trim_undo_captured = True
         clip.start_s = new_start
         clip.end_s = new_end
         self._selected_clip_index = index
@@ -421,9 +427,11 @@ class CortaCertoApp:
     def _tl_release(self, event: tk.Event) -> str | None:
         if not self._trim_drag:
             return None
+        changed = self._trim_undo_captured
         self._trim_drag = None
+        self._trim_undo_captured = False
         self._tl_canvas.configure(cursor="hand2")
-        self._tb_status.configure(text="Corte ajustado.")
+        self._tb_status.configure(text="Corte ajustado." if changed else "Corte mantido.")
         return "break"
 
     def _tl_motion(self, event: tk.Event) -> None:
@@ -1850,6 +1858,16 @@ def _timeline_handle_edge_at(x: int, x1: int, x2: int, handle_px: int) -> Option
     if abs(x - x2) <= handle_px:
         return "end"
     return None
+
+
+def _trim_bounds_changed(
+    old_start: float,
+    old_end: float,
+    new_start: float,
+    new_end: float,
+    epsilon: float = 1e-6,
+) -> bool:
+    return abs(float(old_start) - float(new_start)) > epsilon or abs(float(old_end) - float(new_end)) > epsilon
 
 
 def _snap_time_to_edges(time_s: float, edges: list[float], threshold_s: float) -> float:
