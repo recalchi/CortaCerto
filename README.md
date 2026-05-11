@@ -199,7 +199,14 @@ Principais pontos já estabilizados:
 - Carregamento de vídeo pede primeiro um frame rápido sem efeitos, depois atualiza o preview completo.
 - Resize do preview tem teste unitário para evitar regressão como `Image`/`ImageTk` quebrado.
 - Reprodução no preview usa caminho rápido sem efeitos por frame para ficar assistível durante a edição.
+- Playback agora é dirigido pelo frame renderizado: a imagem avança junto com a timeline, sem descartar frames atrasados.
+- Playback pula frames quando necessário para acompanhar o relógio e mostra FPS efetivo/render na barra de status.
+- Áudio de preview usa `ffplay` em modo áudio puro (`-vn`) e é interrompido junto com pause/seek/início/fim.
+- Áudio do preview passa a iniciar depois do primeiro frame renderizado no playback, reduzindo dessincronia ao pausar e voltar pela timeline.
 - Timeline permite selecionar clipe, dividir no playhead e excluir clipe; export respeita os segmentos editados.
+- Conversão clique/playhead da timeline usa a área real dos tracks, evitando cortes deslocados pela coluna de rótulos.
+- Timeline mostra ação de desfazer na barra e informa o tempo exato quando um clipe é dividido.
+- Atalhos: `Espaço` play/pause, `B` divide no playhead, `Delete`/`Backspace` exclui, `Ctrl+Z` desfaz ação da timeline; campos de texto não capturam esses comandos.
 - Controle de silêncio ganhou ajuste de fala mínima para evitar microclipes e cortes nervosos.
 - Sliders de color grade e bokeh solicitam novo frame sem bloquear a UI.
 - Callback do preview agora entrega frames pela fila da UI, mantendo renderização no thread principal.

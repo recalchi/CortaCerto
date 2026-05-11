@@ -112,6 +112,18 @@ def ffprobe() -> str:
     raise RuntimeError("ffprobe não encontrado.")
 
 
+def ffplay() -> str:
+    ensure_ffmpeg()
+    player = shutil.which("ffplay")
+    if player:
+        return player
+    bin_dir = Path(ensure_ffmpeg()).parent
+    player_path = bin_dir / "ffplay.exe"
+    if player_path.exists():
+        return str(player_path)
+    raise RuntimeError("ffplay não encontrado.")
+
+
 # -- GPU / encoder detection --------------------------------------------------
 
 _ENCODER_CACHE: tuple[str, list[str]] | None = None
