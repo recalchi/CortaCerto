@@ -232,6 +232,7 @@ Principais pontos já estabilizados:
 - Playback respeita a timeline editada: ao excluir clipes, a reprodução pula lacunas removidas em vez de seguir pelo tempo bruto do arquivo.
 - Áudio de preview usa `ffplay` em modo áudio puro (`-vn`) e é interrompido junto com pause/seek/início/fim.
 - Áudio do preview passa a iniciar depois do primeiro frame renderizado no playback, reduzindo dessincronia ao pausar e voltar pela timeline.
+- Playback com timeline editada reinicia o áudio ao atravessar um corte removido, evitando que o som continue no trecho descartado.
 - Timeline permite selecionar clipe, dividir no playhead e excluir clipe; export respeita os segmentos editados.
 - Timeline permite ajustar cortes arrastando as bordas dos clipes, com duração mínima e sem sobrepor clipes vizinhos.
 - Ajuste por borda só grava histórico quando o corte muda de fato, evitando `Ctrl+Z` poluído por cliques sem arraste.
