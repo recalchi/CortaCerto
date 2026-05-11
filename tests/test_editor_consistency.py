@@ -11,6 +11,7 @@ from src.ui.app import (
     _timeline_time_to_x,
     _timeline_track_bounds,
     _timeline_x_to_time,
+    _timeline_handle_edge_at,
     _trim_clip_bounds,
 )
 
@@ -80,6 +81,11 @@ class EditorConsistencyTests(unittest.TestCase):
 
         start, end = _trim_clip_bounds(self.clips, 1, "end", 5.01, self.duration_s, 0.15)
         self.assertEqual((start, end), (5.0, 5.15))
+
+    def test_timeline_handle_detection_prefers_visible_edges(self) -> None:
+        self.assertEqual(_timeline_handle_edge_at(102, 100, 200, 8), "start")
+        self.assertEqual(_timeline_handle_edge_at(196, 100, 200, 8), "end")
+        self.assertIsNone(_timeline_handle_edge_at(150, 100, 200, 8))
 
 
 if __name__ == "__main__":

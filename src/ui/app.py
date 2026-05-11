@@ -359,6 +359,8 @@ class CortaCertoApp:
         self._tl_canvas.bind("<ButtonPress-1>", self._tl_press)
         self._tl_canvas.bind("<B1-Motion>", self._tl_drag_motion)
         self._tl_canvas.bind("<ButtonRelease-1>", self._tl_release)
+        self._tl_canvas.bind("<Motion>", self._tl_motion)
+        self._tl_canvas.bind("<Leave>", lambda e: self._tl_canvas.configure(cursor="hand2"))
 
         self._tl_playhead = None
         self._redraw_timeline()
@@ -420,8 +422,16 @@ class CortaCertoApp:
         if not self._trim_drag:
             return None
         self._trim_drag = None
+        self._tl_canvas.configure(cursor="hand2")
         self._tb_status.configure(text="Corte ajustado.")
         return "break"
+
+    def _tl_motion(self, event: tk.Event) -> None:
+        if self._trim_drag:
+            self._tl_canvas.configure(cursor="sb_h_double_arrow")
+            return
+        cursor = "sb_h_double_arrow" if self._trim_handle_at(event.x, event.y) else "hand2"
+        self._tl_canvas.configure(cursor=cursor)
 
     # -- Properties panel ------------------------------------------------------
 
@@ -571,6 +581,9 @@ class CortaCertoApp:
             outline = C_YELLOW if idx == self._selected_clip_index else ""
             width = 2 if idx == self._selected_clip_index else 1
             c.create_rectangle(x1, video_y1 + 2, x2, video_y2 - 2, fill=TL_SPEECH, outline=outline, width=width)
+            if idx == self._selected_clip_index or (self._trim_drag and self._trim_drag[0] == idx):
+                c.create_rectangle(x1 - 3, video_y1 + 1, x1 + 3, video_y2 - 1, fill=TL_HEAD, outline="")
+                c.create_rectangle(x2 - 3, video_y1 + 1, x2 + 3, video_y2 - 1, fill=TL_HEAD, outline="")
             if x2 - x1 > 56:
                 c.create_text((x1 + x2) // 2, (video_y1 + video_y2) // 2, text=clip.label, fill="#d6e6ff", font=("Segoe UI", 8))
             if compact and idx > 0:
@@ -686,10 +699,9 @@ class CortaCertoApp:
             else:
                 x1 = self._time_to_x(clip.start_s, track_x1, track_x2)
                 x2 = self._time_to_x(clip.end_s, track_x1, track_x2)
-            if abs(x - x1) <= handle_px:
-                return idx, "start"
-            if abs(x - x2) <= handle_px:
-                return idx, "end"
+            edge = _timeline_handle_edge_at(x, x1, x2, handle_px)
+            if edge:
+                return idx, edge
         return None
 
     def _snap_time_to_clip_edge(self, time_s: float) -> float:
@@ -1830,6 +1842,14 @@ def _trim_clip_bounds(
         new_end = min(next_start, max(float(time_s), clip.start_s + min_duration_s))
         return clip.start_s, new_end
     raise ValueError(f"Borda de trim inválida: {edge}")
+
+
+def _timeline_handle_edge_at(x: int, x1: int, x2: int, handle_px: int) -> Optional[str]:
+    if abs(x - x1) <= handle_px:
+        return "start"
+    if abs(x - x2) <= handle_px:
+        return "end"
+    return None
 
 
 def _snap_time_to_edges(time_s: float, edges: list[float], threshold_s: float) -> float:
