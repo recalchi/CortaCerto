@@ -2,6 +2,7 @@ import unittest
 
 from src.core.timeline_model import TimelineClip
 from src.ui.app import (
+    _active_timeline_handle_edge,
     _coerce_frame_to_segments,
     _coerce_time_to_segments,
     _compact_clip_ranges,
@@ -15,6 +16,7 @@ from src.ui.app import (
     _timeline_handle_y_in_range,
     _trim_bounds_changed,
     _trim_clip_bounds,
+    _trim_edge_label,
     _waveform_indices_for_time_range,
 )
 
@@ -95,6 +97,16 @@ class EditorConsistencyTests(unittest.TestCase):
         self.assertTrue(_timeline_handle_y_in_range(82, 20, 48, 64, 104))
         self.assertFalse(_timeline_handle_y_in_range(56, 20, 48, 70, 104))
         self.assertFalse(_timeline_handle_y_in_range(116, 20, 48, 64, 104))
+
+    def test_active_timeline_handle_prefers_drag_then_hover_then_selection(self) -> None:
+        self.assertEqual(_active_timeline_handle_edge(1, 1, None, None), "both")
+        self.assertEqual(_active_timeline_handle_edge(1, 1, None, (1, "start")), "start")
+        self.assertEqual(_active_timeline_handle_edge(1, 1, (1, "end"), (1, "start")), "end")
+        self.assertIsNone(_active_timeline_handle_edge(2, 1, None, (1, "start")))
+
+    def test_trim_edge_label_is_user_facing(self) -> None:
+        self.assertEqual(_trim_edge_label("start"), "borda inicial")
+        self.assertEqual(_trim_edge_label("end"), "borda final")
 
     def test_waveform_indices_follow_source_clip_time(self) -> None:
         self.assertEqual(_waveform_indices_for_time_range(100, 10.0, 2.0, 5.0), (20, 50))
