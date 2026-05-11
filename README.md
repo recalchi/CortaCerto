@@ -226,11 +226,12 @@ Principais pontos já estabilizados:
 - Preview usa `PreviewEngine` com fila de requests drenada corretamente, evitando frame preto por descarte indevido.
 - Abertura do app agora começa numa tela de projetos para criar/abrir `.ccp` antes da edição, mantendo compatibilidade com `.cortacerto.json`.
 - Projetos salvam o vídeo associado e tentam reabrir esse vídeo automaticamente quando o projeto é carregado.
+- Projetos registram a lista de mídias importadas/dropadas em `media_paths`, preservando o arquivo principal em `video_path`.
 - Projetos também salvam playhead e segmentos editados para retomar a edição do ponto onde parou.
 - Tela inicial tem importação simples de mídia e lixeira com limpeza automática de itens acima de 30 dias.
 - Projetos podem ser movidos para a lixeira pela toolbar da edição sem apagar o vídeo original.
 - Projetos na lixeira podem ser restaurados pela tela inicial para uma pasta escolhida, sem sobrescrever projetos existentes.
-- Preview aceita drag-and-drop de arquivos de vídeo quando o backend TkDnD estiver disponível, com fallback pelo botão Abrir vídeo.
+- Preview aceita drag-and-drop de um ou mais arquivos de vídeo quando o backend TkDnD estiver disponível, com fallback pelo botão Abrir vídeo.
 - Runner da sprint exibe inventário de testes para acompanhar cobertura funcional sem gastar tempo em checks manuais.
 - Primeiro frame volta a aparecer após carregar vídeo.
 - Carregamento de vídeo pede primeiro um frame rápido sem efeitos, depois atualiza o preview completo.
