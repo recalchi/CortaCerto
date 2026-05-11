@@ -15,6 +15,7 @@ from src.ui.app import (
     _timeline_handle_y_in_range,
     _trim_bounds_changed,
     _trim_clip_bounds,
+    _waveform_indices_for_time_range,
 )
 
 
@@ -94,6 +95,12 @@ class EditorConsistencyTests(unittest.TestCase):
         self.assertTrue(_timeline_handle_y_in_range(82, 20, 48, 64, 104))
         self.assertFalse(_timeline_handle_y_in_range(56, 20, 48, 70, 104))
         self.assertFalse(_timeline_handle_y_in_range(116, 20, 48, 64, 104))
+
+    def test_waveform_indices_follow_source_clip_time(self) -> None:
+        self.assertEqual(_waveform_indices_for_time_range(100, 10.0, 2.0, 5.0), (20, 50))
+        self.assertEqual(_waveform_indices_for_time_range(100, 10.0, -1.0, 1.0), (0, 10))
+        self.assertEqual(_waveform_indices_for_time_range(100, 10.0, 9.8, 20.0), (98, 100))
+        self.assertEqual(_waveform_indices_for_time_range(100, 10.0, 5.0, 5.0), (0, 0))
 
     def test_trim_undo_is_needed_only_when_bounds_change(self) -> None:
         self.assertFalse(_trim_bounds_changed(5.0, 7.0, 5.0, 7.0))

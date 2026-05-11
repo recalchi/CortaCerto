@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import tkinter as tk
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -602,7 +603,17 @@ class CortaCertoApp:
             if compact and idx > 0:
                 c.create_line(x1, video_y1 + 1, x1, audio_y2 - 1, fill=TL_HEAD)
 
-        self._draw_waveform_track(c, self._timeline_model.waveform, track_x1, track_x2, audio_y1, audio_y2)
+        self._draw_waveform_track(
+            c,
+            self._timeline_model.waveform,
+            clips,
+            compact_ranges,
+            view_duration,
+            track_x1,
+            track_x2,
+            audio_y1,
+            audio_y2,
+        )
 
         if not compact:
             for start_s, end_s in self._timeline_model.removed_ranges:
@@ -638,6 +649,9 @@ class CortaCertoApp:
         self,
         canvas: tk.Canvas,
         samples: list[float],
+        clips: list[TimelineClip],
+        compact_ranges: list[tuple[float, float, float, float]],
+        view_duration: float,
         x1: int,
         x2: int,
         y1: int,
@@ -647,12 +661,47 @@ class CortaCertoApp:
             canvas.create_text((x1 + x2) // 2, (y1 + y2) // 2, text="Waveform indisponível", fill=C_MUTED, font=("Segoe UI", 9))
             return
 
+        if not clips:
+            self._draw_waveform_segment(canvas, samples, 0.0, self._duration_s, x1, x2, y1, y2)
+            return
+
+        for idx, clip in enumerate(clips):
+            if compact_ranges:
+                _, _, display_start, display_end = compact_ranges[idx]
+                sx1 = _timeline_time_to_x(display_start, view_duration, x1, x2)
+                sx2 = _timeline_time_to_x(display_end, view_duration, x1, x2)
+            else:
+                sx1 = _timeline_time_to_x(clip.start_s, self._duration_s, x1, x2)
+                sx2 = _timeline_time_to_x(clip.end_s, self._duration_s, x1, x2)
+            self._draw_waveform_segment(canvas, samples, clip.start_s, clip.end_s, sx1, sx2, y1, y2)
+
+    def _draw_waveform_segment(
+        self,
+        canvas: tk.Canvas,
+        samples: list[float],
+        start_s: float,
+        end_s: float,
+        x1: int,
+        x2: int,
+        y1: int,
+        y2: int,
+    ) -> None:
+        start_idx, end_idx = _waveform_indices_for_time_range(
+            len(samples),
+            self._duration_s,
+            start_s,
+            end_s,
+        )
+        segment = samples[start_idx:end_idx]
+        if not segment or x2 <= x1:
+            return
+
         width = max(1, x2 - x1)
         half_h = (y2 - y1) / 2
         center_y = y1 + half_h
-        visible = max(8, int(len(samples) / max(1.0, self._waveform_zoom)))
-        stride = max(1, len(samples) // visible)
-        bars = samples[::stride]
+        visible = max(4, int(len(segment) / max(1.0, self._waveform_zoom)))
+        stride = max(1, len(segment) // visible)
+        bars = segment[::stride]
         bar_w = max(1, width / max(1, len(bars)))
 
         for idx, amp in enumerate(bars):
@@ -1863,6 +1912,23 @@ def _clip_edges(clips: list[TimelineClip]) -> list[float]:
     for clip in clips:
         edges.extend([clip.start_s, clip.end_s])
     return edges
+
+
+def _waveform_indices_for_time_range(
+    sample_count: int,
+    duration_s: float,
+    start_s: float,
+    end_s: float,
+) -> tuple[int, int]:
+    if sample_count <= 0 or duration_s <= 0:
+        return 0, 0
+    start_ratio = max(0.0, min(1.0, float(start_s) / duration_s))
+    end_ratio = max(0.0, min(1.0, float(end_s) / duration_s))
+    if end_ratio <= start_ratio:
+        return 0, 0
+    start_idx = max(0, min(sample_count - 1, int(start_ratio * sample_count)))
+    end_idx = max(start_idx + 1, min(sample_count, math.ceil(end_ratio * sample_count)))
+    return start_idx, end_idx
 
 
 def _trim_clip_bounds(
