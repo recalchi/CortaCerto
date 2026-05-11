@@ -231,6 +231,9 @@ Principais pontos já estabilizados:
 - Editor ganhou uma biblioteca simples de mídias do projeto e um inspetor inicial do clipe selecionado.
 - O inspetor já salva metadados por clipe para escala do vídeo, volume, transição e texto associado, preparando a ponte para preview/export avançados.
 - Preview já aplica escala e texto do clipe ativo, permitindo validar ajustes básicos do conteúdo selecionado sem esperar export.
+- Biblioteca de mídias do editor separa adicionar mídia, associar mídia ao clipe selecionado e abrir uma mídia como vídeo principal.
+- Inspetor do clipe ganhou base de chroma key por clipe, com cor/tolerância e preview substituindo o fundo cromado por marcação neutra.
+- Timeline ganhou botões de zoom `+`/`-` além do slider, e o painel lateral mostra um status rápido de mídias, clipes, seleção e zoom.
 - Export recebe e registra os metadados por clipe no log para preparar a aplicação física desses ajustes no arquivo final.
 - Tela inicial tem importação simples de mídia e lixeira com limpeza automática de itens acima de 30 dias.
 - Projetos podem ser movidos para a lixeira pela toolbar da edição sem apagar o vídeo original.

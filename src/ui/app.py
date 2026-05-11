@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 import customtkinter as ctk
+import numpy as np
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageDraw, ImageTk
 
@@ -114,6 +115,10 @@ class CortaCertoApp:
         self._clip_scale_var = tk.DoubleVar(value=100.0)
         self._clip_volume_var = tk.DoubleVar(value=100.0)
         self._clip_transition_var = tk.StringVar(value="Corte")
+        self._clip_chroma_var = tk.BooleanVar(value=False)
+        self._clip_chroma_color_var = tk.StringVar(value="#00ff00")
+        self._clip_chroma_tolerance_var = tk.DoubleVar(value=45.0)
+        self._project_status_var = tk.StringVar(value="")
         self._media_listbox: Optional[tk.Listbox] = None
         self._clip_inspector_enabled = False
         self._export_modal = None
@@ -605,6 +610,12 @@ class CortaCertoApp:
         )
         self._tl_zoom.set(1.0)
         self._tl_zoom.pack(side="right", padx=(8, 0))
+        tk.Button(hdr, text="+", command=lambda: self._adjust_timeline_zoom(0.25),
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=7,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).pack(side="right", padx=(4, 0))
+        tk.Button(hdr, text="-", command=lambda: self._adjust_timeline_zoom(-0.25),
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=8,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).pack(side="right", padx=(4, 0))
         tk.Checkbutton(
             hdr,
             text="Juntar blocos",
@@ -740,6 +751,12 @@ class CortaCertoApp:
     def _on_timeline_zoom(self, value: float) -> None:
         self._waveform_zoom = float(value)
         self._redraw_timeline()
+        self._refresh_project_status()
+
+    def _adjust_timeline_zoom(self, delta: float) -> None:
+        value = max(1.0, min(3.0, float(self._tl_zoom.get()) + float(delta)))
+        self._tl_zoom.set(value)
+        self._on_timeline_zoom(value)
 
     def _select_clip_at_time(self, time_s: float) -> None:
         self._selected_clip_index = self._clip_index_at_time(time_s)
@@ -765,9 +782,14 @@ class CortaCertoApp:
             return
         self._push_timeline_undo()
         clips = self._timeline_model.video_track.clips
+        left_clip = _clone_timeline_clip(clip)
+        left_clip.end_s = split_s
+        right_clip = _clone_timeline_clip(clip)
+        right_clip.start_s = split_s
+        right_clip.label = f"{clip.label} 2"
         clips[self._selected_clip_index:self._selected_clip_index + 1] = [
-            TimelineClip(clip.start_s, split_s, clip.clip_type, clip.label),
-            TimelineClip(split_s, clip.end_s, clip.clip_type, f"Clip {self._selected_clip_index + 2}"),
+            left_clip,
+            right_clip,
         ]
         self._sync_manual_timeline()
         self._timeline_dirty = True
@@ -1250,12 +1272,16 @@ class CortaCertoApp:
         media_actions.grid(row=row + 2, column=0, sticky="ew", padx=10, pady=(0, 4))
         media_actions.grid_columnconfigure(0, weight=1)
         media_actions.grid_columnconfigure(1, weight=1)
+        media_actions.grid_columnconfigure(2, weight=1)
         tk.Button(media_actions, text="Adicionar mídia", command=self._add_project_media,
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        tk.Button(media_actions, text="Carregar na timeline", command=self._load_selected_project_media,
+        tk.Button(media_actions, text="Usar no clipe", command=self._assign_selected_media_to_clip,
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
-                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=1, sticky="ew", padx=4)
+        tk.Button(media_actions, text="Abrir principal", command=self._load_selected_project_media,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=2, sticky="ew", padx=(4, 0))
 
         self._section(parent, "CLIPE SELECIONADO", row + 3)
         self._clip_label_entry = ctk.CTkEntry(
@@ -1305,8 +1331,49 @@ class CortaCertoApp:
         tk.Button(clip_actions, text="Aplicar transição", command=self._apply_clip_inspector,
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        chroma = tk.Frame(parent, bg=C_PANEL)
+        chroma.grid(row=row + 9, column=0, sticky="ew", padx=10, pady=(0, 4))
+        chroma.grid_columnconfigure(1, weight=1)
+        tk.Checkbutton(
+            chroma,
+            text="Chroma key",
+            variable=self._clip_chroma_var,
+            command=self._apply_clip_inspector,
+            bg=C_PANEL,
+            fg=C_TEXT,
+            selectcolor=C_SURFACE,
+            activebackground=C_PANEL,
+            activeforeground=C_TEXT,
+            font=("Segoe UI", 9),
+            relief="flat",
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkEntry(
+            chroma,
+            textvariable=self._clip_chroma_color_var,
+            fg_color=C_SURFACE,
+            border_color=C_BORDER,
+            text_color=C_TEXT,
+            font=ctk.CTkFont(size=10),
+            width=82,
+            height=26,
+        ).grid(row=0, column=1, sticky="e", padx=(6, 0))
+        self._clip_chroma_tolerance_label = self._inspector_slider(
+            parent, "Tolerância chroma", self._clip_chroma_tolerance_var, 5, 160, row + 10
+        )
+        self._section(parent, "STATUS DO PROJETO", row + 11)
+        tk.Label(
+            parent,
+            textvariable=self._project_status_var,
+            bg=C_PANEL,
+            fg=C_MUTED,
+            justify="left",
+            anchor="w",
+            wraplength=260,
+            font=("Segoe UI", 9),
+        ).grid(row=row + 12, column=0, sticky="ew", padx=12, pady=(0, 10))
         self._refresh_media_list()
         self._refresh_clip_inspector()
+        self._refresh_project_status()
 
     def _inspector_slider(self, parent, label: str, var: tk.DoubleVar, lo: int, hi: int, row: int, suffix: str = "") -> tk.Label:
         frame = tk.Frame(parent, bg=C_PANEL)
@@ -1336,6 +1403,7 @@ class CortaCertoApp:
         self._media_listbox.delete(0, "end")
         for path in self._project_media_paths:
             self._media_listbox.insert("end", Path(path).name)
+        self._refresh_project_status()
 
     def _selected_project_media_path(self) -> Optional[str]:
         if self._media_listbox is None:
@@ -1386,12 +1454,19 @@ class CortaCertoApp:
             self._clip_scale_var.set(100.0)
             self._clip_volume_var.set(100.0)
             self._clip_transition_var.set("Corte")
+            self._clip_chroma_var.set(False)
+            self._clip_chroma_color_var.set("#00ff00")
+            self._clip_chroma_tolerance_var.set(45.0)
         else:
             self._clip_label_var.set(clip.text_overlay or clip.label)
             self._clip_scale_var.set(float(getattr(clip, "scale_pct", 100.0)))
             self._clip_volume_var.set(float(getattr(clip, "volume_pct", 100.0)))
             self._clip_transition_var.set(str(getattr(clip, "transition", "Corte") or "Corte"))
+            self._clip_chroma_var.set(bool(getattr(clip, "chroma_enabled", False)))
+            self._clip_chroma_color_var.set(str(getattr(clip, "chroma_color", "#00ff00") or "#00ff00"))
+            self._clip_chroma_tolerance_var.set(float(getattr(clip, "chroma_tolerance", 45.0)))
         self._clip_inspector_enabled = True
+        self._refresh_project_status()
 
     def _apply_clip_inspector(self) -> None:
         if not self._clip_inspector_enabled:
@@ -1403,6 +1478,9 @@ class CortaCertoApp:
         clip.scale_pct = float(self._clip_scale_var.get())
         clip.volume_pct = float(self._clip_volume_var.get())
         clip.transition = self._clip_transition_var.get()
+        clip.chroma_enabled = bool(self._clip_chroma_var.get())
+        clip.chroma_color = _normalize_hex_color(self._clip_chroma_color_var.get())
+        clip.chroma_tolerance = float(self._clip_chroma_tolerance_var.get())
         self._timeline_dirty = True
         self._sync_manual_timeline(mark_dirty=True)
         self._tb_status.configure(text="Ajustes do clipe atualizados.")
@@ -1418,6 +1496,35 @@ class CortaCertoApp:
         self._timeline_dirty = True
         self._sync_manual_timeline(mark_dirty=True)
         self._tb_status.configure(text="Texto associado ao clipe selecionado.")
+
+    def _assign_selected_media_to_clip(self) -> None:
+        path = self._selected_project_media_path()
+        clip = self._selected_timeline_clip()
+        if not path:
+            self._tb_status.configure(text="Selecione uma mídia do projeto.")
+            return
+        if clip is None:
+            self._tb_status.configure(text="Selecione um clipe da timeline.")
+            return
+        clip.source_path = path
+        clip.label = Path(path).stem
+        self._clip_label_var.set(clip.label)
+        self._timeline_dirty = True
+        self._sync_manual_timeline(mark_dirty=True)
+        self._tb_status.configure(text="Mídia associada ao clipe selecionado.")
+
+    def _refresh_project_status(self) -> None:
+        selected = self._selected_timeline_clip()
+        clip_name = selected.label if selected else "nenhum"
+        source = Path(selected.source_path).name if selected and selected.source_path else "mídia principal"
+        clips = len(self._timeline_model.video_track.clips) if self._timeline_model else 0
+        self._project_status_var.set(
+            f"Mídias: {len(self._project_media_paths)}\n"
+            f"Clipes: {clips}\n"
+            f"Selecionado: {clip_name}\n"
+            f"Origem do clipe: {source}\n"
+            f"Zoom timeline: {self._waveform_zoom:.2f}x"
+        )
 
     # -- Widget helpers --------------------------------------------------------
 
@@ -2628,6 +2735,9 @@ def _clone_timeline_clip(clip: TimelineClip) -> TimelineClip:
         float(getattr(clip, "volume_pct", 100.0)),
         str(getattr(clip, "transition", "Corte") or "Corte"),
         str(getattr(clip, "text_overlay", "") or ""),
+        bool(getattr(clip, "chroma_enabled", False)),
+        str(getattr(clip, "chroma_color", "#00ff00") or "#00ff00"),
+        float(getattr(clip, "chroma_tolerance", 45.0)),
     )
 
 
@@ -2642,6 +2752,9 @@ def _clip_options_from_timeline_model(timeline_model: Optional[TimelineModel]) -
             "volume_pct": float(getattr(clip, "volume_pct", 100.0)),
             "transition": str(getattr(clip, "transition", "Corte") or "Corte"),
             "text_overlay": str(getattr(clip, "text_overlay", "") or ""),
+            "chroma_enabled": bool(getattr(clip, "chroma_enabled", False)),
+            "chroma_color": str(getattr(clip, "chroma_color", "#00ff00") or "#00ff00"),
+            "chroma_tolerance": float(getattr(clip, "chroma_tolerance", 45.0)),
         }
         for clip in timeline_model.video_track.clips
     ]
@@ -2659,6 +2772,9 @@ def _apply_clip_options_to_timeline_model(timeline_model: TimelineModel, raw_opt
         clip.volume_pct = _project_float(raw.get("volume_pct"), 100.0)
         clip.transition = str(raw.get("transition") or "Corte")
         clip.text_overlay = str(raw.get("text_overlay") or "")
+        clip.chroma_enabled = bool(raw.get("chroma_enabled", False))
+        clip.chroma_color = _normalize_hex_color(str(raw.get("chroma_color") or "#00ff00"))
+        clip.chroma_tolerance = _project_float(raw.get("chroma_tolerance"), 45.0)
     timeline_model.audio_track.clips = [_clone_timeline_clip(clip) for clip in timeline_model.video_track.clips]
 
 
@@ -2680,11 +2796,18 @@ def _apply_clip_preview_options(image: Image.Image, clip: Optional[TimelineClip]
         return image
     scale_pct = max(25.0, min(300.0, float(getattr(clip, "scale_pct", 100.0))))
     text_overlay = str(getattr(clip, "text_overlay", "") or "").strip()
+    chroma_enabled = bool(getattr(clip, "chroma_enabled", False))
     needs_scale = abs(scale_pct - 100.0) > 0.01
-    if not needs_scale and not text_overlay:
+    if not needs_scale and not text_overlay and not chroma_enabled:
         return image
 
     out = image.copy()
+    if chroma_enabled:
+        out = _apply_chroma_key_preview(
+            out,
+            str(getattr(clip, "chroma_color", "#00ff00") or "#00ff00"),
+            float(getattr(clip, "chroma_tolerance", 45.0)),
+        )
     if needs_scale:
         out = _scale_preview_image_centered(out, scale_pct)
     if text_overlay:
@@ -2721,6 +2844,33 @@ def _draw_preview_text_overlay(image: Image.Image, text: str) -> Image.Image:
     draw.rectangle((0, y1, width, y1 + box_h), fill=(0, 0, 0))
     draw.text((max(12, width // 30), y1 + max(8, box_h // 4)), text[:80], fill=(255, 255, 255))
     return out
+
+
+def _apply_chroma_key_preview(image: Image.Image, color: str, tolerance: float) -> Image.Image:
+    target = np.array(_hex_to_rgb(_normalize_hex_color(color)), dtype=np.int16)
+    arr = np.array(image.convert("RGB"), dtype=np.int16)
+    diff = np.linalg.norm(arr - target, axis=2)
+    mask = diff <= max(1.0, float(tolerance))
+    if not mask.any():
+        return image
+    out = arr.astype(np.uint8)
+    checker = ((np.indices(mask.shape).sum(axis=0) // 18) % 2) * 42 + 24
+    out[mask] = np.stack([checker, checker, checker], axis=2)[mask].astype(np.uint8)
+    return Image.fromarray(out, "RGB")
+
+
+def _normalize_hex_color(value: str) -> str:
+    text = str(value or "").strip()
+    if not text.startswith("#"):
+        text = f"#{text}"
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", text):
+        return text.lower()
+    return "#00ff00"
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    color = _normalize_hex_color(value)
+    return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
 
 
 def _fit_preview_image(image: Image.Image, canvas_w: int, canvas_h: int) -> Image.Image:

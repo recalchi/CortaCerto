@@ -9,12 +9,14 @@ from src.core.color_grade import ColorGrade
 from src.core.preview_engine import PreviewSettings
 from src.ui.app import (
     _apply_clip_options_to_timeline_model,
+    _apply_chroma_key_preview,
     _apply_clip_preview_options,
     _apply_segments_to_timeline_model,
     _build_project_metadata,
     _clip_options_from_timeline_model,
     _clip_edges,
     _clip_for_time,
+    _hex_to_rgb,
     _clone_timeline_clip,
     _cleanup_project_trash,
     _coerce_frame_to_segments,
@@ -25,6 +27,7 @@ from src.ui.app import (
     _fit_preview_image,
     _first_video_path_from_drop,
     _merge_media_paths,
+    _normalize_hex_color,
     _is_video_path,
     _move_project_to_trash,
     _playback_delay_ms,
@@ -227,6 +230,9 @@ class PreviewUiTests(unittest.TestCase):
         clip.volume_pct = 80.0
         clip.transition = "Fade"
         clip.text_overlay = "Abertura"
+        clip.chroma_enabled = True
+        clip.chroma_color = "#00ff00"
+        clip.chroma_tolerance = 70.0
 
         options = _clip_options_from_timeline_model(model)
         restored = build_timeline_model(10.0, [(0.0, 4.0)])
@@ -238,16 +244,31 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(restored_clip.volume_pct, 80.0)
         self.assertEqual(restored_clip.transition, "Fade")
         self.assertEqual(restored_clip.text_overlay, "Abertura")
+        self.assertTrue(restored_clip.chroma_enabled)
+        self.assertEqual(restored_clip.chroma_color, "#00ff00")
+        self.assertEqual(restored_clip.chroma_tolerance, 70.0)
         self.assertEqual(restored.audio_track.clips[0].scale_pct, 135.0)
 
     def test_clone_timeline_clip_preserves_editor_options(self) -> None:
-        clip = TimelineClip(1.0, 2.0, "speech", "Corte 1", scale_pct=150.0, volume_pct=70.0, transition="Dissolver")
+        clip = TimelineClip(
+            1.0,
+            2.0,
+            "speech",
+            "Corte 1",
+            scale_pct=150.0,
+            volume_pct=70.0,
+            transition="Dissolver",
+            chroma_enabled=True,
+            chroma_color="#112233",
+        )
 
         cloned = _clone_timeline_clip(clip)
 
         self.assertEqual(cloned.scale_pct, 150.0)
         self.assertEqual(cloned.volume_pct, 70.0)
         self.assertEqual(cloned.transition, "Dissolver")
+        self.assertTrue(cloned.chroma_enabled)
+        self.assertEqual(cloned.chroma_color, "#112233")
 
     def test_clip_for_time_returns_active_clip(self) -> None:
         model = build_timeline_model(10.0, [(1.0, 3.0), (5.0, 7.0)])
@@ -263,6 +284,18 @@ class PreviewUiTests(unittest.TestCase):
 
         self.assertEqual(rendered.size, image.size)
         self.assertNotEqual(rendered.getpixel((0, 0)), image.getpixel((0, 0)))
+
+    def test_chroma_key_preview_replaces_target_color(self) -> None:
+        image = Image.new("RGB", (8, 8), "#00ff00")
+
+        rendered = _apply_chroma_key_preview(image, "#00ff00", 5.0)
+
+        self.assertNotEqual(rendered.getpixel((0, 0)), (0, 255, 0))
+
+    def test_hex_color_helpers_normalize_invalid_values(self) -> None:
+        self.assertEqual(_normalize_hex_color("00FF00"), "#00ff00")
+        self.assertEqual(_normalize_hex_color("oops"), "#00ff00")
+        self.assertEqual(_hex_to_rgb("#112233"), (17, 34, 51))
 
     def test_preview_settings_request_token_separates_stale_callbacks(self) -> None:
         first = PreviewSettings(ColorGrade(enabled=False), 0.0, request_token=("playback", 1, 10))
