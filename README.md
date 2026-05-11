@@ -37,7 +37,7 @@ Notas atuais do instalador:
 
 - Detecta `python` ou `py -3`, evitando falha em máquinas onde só o Python Launcher está no PATH.
 - Depois do `winget install --id Gyan.FFmpeg`, revalida o `ffmpeg` de verdade antes de declarar erro.
-- Inclui caminhos comuns do WinGet/WindowsApps na sessão atual para reduzir a necessidade de reiniciar o terminal.
+- Inclui caminhos comuns do WinGet/WindowsApps, tanto do usuário quanto machine-wide, para reduzir a necessidade de reiniciar o terminal.
 - Se ainda falhar, mostra instruções manuais claras sem travar a inicialização do app.
 - O build do instalador usa o Python da venv explicitamente, evitando chamadas acidentais para outro `python` do sistema.
 
@@ -266,6 +266,7 @@ Principais pontos já estabilizados:
 - Timeline foi protegida contra sobreposição de labels e playhead.
 - Diagnóstico de encode diferencia CPU, NVENC, AMF e QSV.
 - Instalador foi reforçado para não acusar falha quando o FFmpeg foi instalado mas o shell ainda não atualizou o PATH.
+- Detecção de FFmpeg cobre pacotes WinGet instalados no perfil do usuário e em `Program Files`.
 - Entrada do app agora usa um bootstrap dedicado para validar FFmpeg antes da UI e mostrar instruções claras de correção.
 - `run.bat` escolhe a venv disponível, mostra qual Python será usado, mantém a janela aberta quando a inicialização falha e aceita `--check-startup` para validar sem abrir a UI.
 - `install.bat` e o build do instalador validam `main.py --check-startup` para detectar falhas de entrada antes de declarar sucesso.

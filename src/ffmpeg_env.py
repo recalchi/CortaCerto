@@ -13,6 +13,9 @@ _FALLBACK_LOCATIONS = [
     Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/WindowsApps",
     # WinGet (Gyan.FFmpeg)
     Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/WinGet/Packages",
+    Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "WinGet/Packages",
+    Path(os.environ.get("ProgramW6432", "C:/Program Files")) / "WinGet/Packages",
+    Path(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)")) / "WinGet/Packages",
     # Chocolatey
     Path("C:/ProgramData/chocolatey/bin"),
     # Scoop
@@ -42,6 +45,23 @@ def _find_in_winget_packages(base: Path) -> str | None:
     for candidate in base.glob("Gyan.FFmpeg*/**/ffmpeg.exe"):
         return str(candidate.parent)
     return None
+
+
+def _winget_package_roots() -> list[Path]:
+    roots = [
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/WinGet/Packages",
+        Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "WinGet/Packages",
+        Path(os.environ.get("ProgramW6432", "C:/Program Files")) / "WinGet/Packages",
+        Path(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)")) / "WinGet/Packages",
+    ]
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root).lower()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
 
 
 def _append_path(path: Path | str) -> None:
@@ -81,13 +101,13 @@ def ensure_ffmpeg() -> str:
             _FFMPEG_BIN = str(loc / "ffmpeg.exe")
             return _FFMPEG_BIN
 
-    # 3. WinGet glob scan
-    winget_base = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/WinGet/Packages"
-    winget_bin = _find_in_winget_packages(winget_base)
-    if winget_bin:
-        _append_path(winget_bin)
-        _FFMPEG_BIN = str(Path(winget_bin) / "ffmpeg.exe")
-        return _FFMPEG_BIN
+    # 3. WinGet glob scan (user and machine-wide installs)
+    for winget_base in _winget_package_roots():
+        winget_bin = _find_in_winget_packages(winget_base)
+        if winget_bin:
+            _append_path(winget_bin)
+            _FFMPEG_BIN = str(Path(winget_bin) / "ffmpeg.exe")
+            return _FFMPEG_BIN
 
     raise RuntimeError(
         "ffmpeg não encontrado.\n\n"
