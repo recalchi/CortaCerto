@@ -228,6 +228,7 @@ Principais pontos já estabilizados:
 - Resize do preview tem teste unitário para evitar regressão como `Image`/`ImageTk` quebrado.
 - Reprodução no preview usa caminho rápido sem efeitos por frame para ficar assistível durante a edição.
 - Playback agora é dirigido pelo frame renderizado: a imagem avança junto com a timeline, sem descartar frames atrasados.
+- Requisições de preview/playback carregam token próprio para ignorar callbacks antigos depois de play, pause ou seek.
 - Playback pula frames quando necessário para acompanhar o relógio e mostra FPS efetivo/render na barra de status.
 - Playback respeita a timeline editada: ao excluir clipes, a reprodução pula lacunas removidas em vez de seguir pelo tempo bruto do arquivo.
 - Áudio de preview usa `ffplay` em modo áudio puro (`-vn`) e é interrompido junto com pause/seek/início/fim.

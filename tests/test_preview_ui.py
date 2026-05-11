@@ -2,6 +2,8 @@ import unittest
 
 from PIL import Image
 
+from src.core.color_grade import ColorGrade
+from src.core.preview_engine import PreviewSettings
 from src.ui.app import (
     _clip_edges,
     _coerce_frame_to_segments,
@@ -25,6 +27,12 @@ from src.core.timeline_model import TimelineClip
 
 
 class PreviewUiTests(unittest.TestCase):
+    def test_preview_settings_request_token_separates_stale_callbacks(self) -> None:
+        first = PreviewSettings(ColorGrade(enabled=False), 0.0, request_token=("playback", 1, 10))
+        second = PreviewSettings(ColorGrade(enabled=False), 0.0, request_token=("playback", 2, 10))
+
+        self.assertNotEqual(first.cache_key(), second.cache_key())
+
     def test_fit_preview_image_keeps_aspect_ratio(self) -> None:
         image = Image.new("RGB", (1920, 1080), "black")
 
