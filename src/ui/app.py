@@ -89,6 +89,8 @@ class CortaCertoApp:
         self._selected_clip_index: Optional[int] = None
         self._timeline_dirty = False
         self._timeline_undo_stack: list[tuple[list[TimelineClip], Optional[int], bool]] = []
+        self._trim_drag: Optional[tuple[int, str]] = None
+        self._trim_min_duration_s = 0.15
         self._waveform_zoom = 1.0
         self._tl_compact_var = tk.BooleanVar(value=True)
         self._export_modal = None
@@ -354,14 +356,29 @@ class CortaCertoApp:
                                      highlightthickness=0, cursor="hand2")
         self._tl_canvas.grid(row=1, column=0, sticky="nsew", padx=4, pady=(2,4))
         self._tl_canvas.bind("<Configure>", lambda e: self._redraw_timeline())
-        self._tl_canvas.bind("<Button-1>", self._tl_click)
+        self._tl_canvas.bind("<ButtonPress-1>", self._tl_press)
+        self._tl_canvas.bind("<B1-Motion>", self._tl_drag_motion)
+        self._tl_canvas.bind("<ButtonRelease-1>", self._tl_release)
 
         self._tl_playhead = None
         self._redraw_timeline()
 
-    def _tl_click(self, event: tk.Event) -> None:
+    def _tl_press(self, event: tk.Event) -> str | None:
         if self._duration_s <= 0:
-            return
+            return None
+        handle = self._trim_handle_at(event.x, event.y)
+        if handle is not None:
+            self._stop_playback(reset_button=True)
+            self._selected_clip_index, edge = handle
+            self._push_timeline_undo()
+            self._trim_drag = (self._selected_clip_index, edge)
+            self._redraw_timeline()
+            self._tb_status.configure(text="Ajustando corte...")
+            return "break"
+        self._tl_click(event)
+        return None
+
+    def _tl_click(self, event: tk.Event) -> None:
         w   = self._tl_canvas.winfo_width()
         track_x1, track_x2 = self._timeline_track_bounds(w)
         time_s = self._timeline_click_time(event.x, track_x1, track_x2)
@@ -369,6 +386,42 @@ class CortaCertoApp:
         frame = self._time_to_frame(time_s)
         self._select_clip_at_time(time_s)
         self._seek_to(frame)
+
+    def _tl_drag_motion(self, event: tk.Event) -> str | None:
+        if not self._trim_drag or not self._timeline_model:
+            return None
+        index, edge = self._trim_drag
+        if index >= len(self._timeline_model.video_track.clips):
+            return "break"
+        w = self._tl_canvas.winfo_width()
+        track_x1, track_x2 = self._timeline_track_bounds(w)
+        time_s = self._timeline_click_time(event.x, track_x1, track_x2)
+        time_s = self._snap_time_to_clip_edge(time_s)
+        clips = self._timeline_model.video_track.clips
+        new_start, new_end = _trim_clip_bounds(
+            clips,
+            index,
+            edge,
+            time_s,
+            self._duration_s,
+            self._trim_min_duration_s,
+        )
+        clip = clips[index]
+        clip.start_s = new_start
+        clip.end_s = new_end
+        self._selected_clip_index = index
+        self._sync_manual_timeline(mark_dirty=True)
+        self._timeline_dirty = True
+        self._seek_to(self._time_to_frame(new_start if edge == "start" else new_end))
+        self._tb_status.configure(text=f"Corte ajustado: {_fmt(new_start)} - {_fmt(new_end)}.")
+        return "break"
+
+    def _tl_release(self, event: tk.Event) -> str | None:
+        if not self._trim_drag:
+            return None
+        self._trim_drag = None
+        self._tb_status.configure(text="Corte ajustado.")
+        return "break"
 
     # -- Properties panel ------------------------------------------------------
 
@@ -609,6 +662,35 @@ class CortaCertoApp:
             display_time = _timeline_x_to_time(x, view_duration, x1, x2)
             return _compact_display_to_source_time(display_time, compact_ranges)
         return self._x_to_time(x, x1, x2)
+
+    def _trim_handle_at(self, x: int, y: int) -> Optional[tuple[int, str]]:
+        if not self._timeline_model:
+            return None
+        top = 8
+        video_y1, video_y2 = top + 12, top + 40
+        if y < video_y1 - 6 or y > video_y2 + 6:
+            return None
+
+        w = self._tl_canvas.winfo_width()
+        track_x1, track_x2 = self._timeline_track_bounds(w)
+        clips = self._timeline_model.video_track.clips
+        compact_ranges = self._compact_ranges_for_view()
+        view_duration = compact_ranges[-1][3] if compact_ranges else self._duration_s
+        handle_px = 8
+
+        for idx, clip in enumerate(clips):
+            if compact_ranges:
+                _, _, start_s, end_s = compact_ranges[idx]
+                x1 = _timeline_time_to_x(start_s, view_duration, track_x1, track_x2)
+                x2 = _timeline_time_to_x(end_s, view_duration, track_x1, track_x2)
+            else:
+                x1 = self._time_to_x(clip.start_s, track_x1, track_x2)
+                x2 = self._time_to_x(clip.end_s, track_x1, track_x2)
+            if abs(x - x1) <= handle_px:
+                return idx, "start"
+            if abs(x - x2) <= handle_px:
+                return idx, "end"
+        return None
 
     def _snap_time_to_clip_edge(self, time_s: float) -> float:
         if not self._timeline_model:
@@ -1726,6 +1808,28 @@ def _clip_edges(clips: list[TimelineClip]) -> list[float]:
     for clip in clips:
         edges.extend([clip.start_s, clip.end_s])
     return edges
+
+
+def _trim_clip_bounds(
+    clips: list[TimelineClip],
+    index: int,
+    edge: str,
+    time_s: float,
+    duration_s: float,
+    min_duration_s: float,
+) -> tuple[float, float]:
+    clip = clips[index]
+    prev_end = clips[index - 1].end_s if index > 0 else 0.0
+    next_start = clips[index + 1].start_s if index + 1 < len(clips) else duration_s
+    min_duration_s = max(0.01, min_duration_s)
+
+    if edge == "start":
+        new_start = max(prev_end, min(float(time_s), clip.end_s - min_duration_s))
+        return new_start, clip.end_s
+    if edge == "end":
+        new_end = min(next_start, max(float(time_s), clip.start_s + min_duration_s))
+        return clip.start_s, new_end
+    raise ValueError(f"Borda de trim inválida: {edge}")
 
 
 def _snap_time_to_edges(time_s: float, edges: list[float], threshold_s: float) -> float:

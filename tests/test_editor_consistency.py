@@ -11,6 +11,7 @@ from src.ui.app import (
     _timeline_time_to_x,
     _timeline_track_bounds,
     _timeline_x_to_time,
+    _trim_clip_bounds,
 )
 
 
@@ -65,6 +66,20 @@ class EditorConsistencyTests(unittest.TestCase):
 
         self.assertGreaterEqual(source_time, 5.0)
         self.assertLessEqual(source_time, 7.0)
+
+    def test_trim_start_respects_previous_clip_and_min_duration(self) -> None:
+        start, end = _trim_clip_bounds(self.clips, 1, "start", 1.0, self.duration_s, 0.15)
+        self.assertEqual((start, end), (2.0, 7.0))
+
+        start, end = _trim_clip_bounds(self.clips, 1, "start", 6.95, self.duration_s, 0.15)
+        self.assertEqual((start, end), (6.85, 7.0))
+
+    def test_trim_end_respects_next_clip_and_min_duration(self) -> None:
+        start, end = _trim_clip_bounds(self.clips, 1, "end", 10.0, self.duration_s, 0.15)
+        self.assertEqual((start, end), (5.0, 9.0))
+
+        start, end = _trim_clip_bounds(self.clips, 1, "end", 5.01, self.duration_s, 0.15)
+        self.assertEqual((start, end), (5.0, 5.15))
 
 
 if __name__ == "__main__":
