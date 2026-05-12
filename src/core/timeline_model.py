@@ -40,6 +40,7 @@ class TimelineModel:
     removed_ranges: list[tuple[float, float]]
     waveform: list[float]
     saved_time_s: float
+    text_track: TimelineTrack = field(default_factory=lambda: TimelineTrack(name="Texto"))
 
 
 def build_timeline_model(
@@ -73,4 +74,5 @@ def build_timeline_model(
         removed_ranges=removed_ranges,
         waveform=waveform_values,
         saved_time_s=saved,
+        text_track=TimelineTrack(name="Texto"),
     )

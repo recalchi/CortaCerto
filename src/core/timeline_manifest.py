@@ -13,6 +13,7 @@ def build_timeline_manifest(
 ) -> dict[str, Any]:
     """Build an OTIO-inspired edit manifest without embedding media."""
     clips = timeline_model.video_track.clips if timeline_model else []
+    text_clips = timeline_model.text_track.clips if timeline_model else []
     media_refs = _media_references(primary_media, clips)
     return {
         "schema": "cortacerto.timeline.v1",
@@ -29,6 +30,11 @@ def build_timeline_manifest(
                 "name": "Audio",
                 "kind": "audio",
                 "clips": _manifest_audio_clips(clips, primary_media),
+            },
+            {
+                "name": "Texto",
+                "kind": "text",
+                "clips": _manifest_text_clips(text_clips),
             },
         ],
     }
@@ -89,6 +95,29 @@ def _manifest_audio_clips(clips: list[TimelineClip], primary_media: str) -> list
             }
         )
         output_cursor += duration_s
+    return result
+
+
+def _manifest_text_clips(clips: list[TimelineClip]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for idx, clip in enumerate(clips, start=1):
+        result.append(
+            {
+                "id": f"text-{idx:04d}",
+                "name": clip.label or f"Texto {idx}",
+                "source_start_s": float(clip.start_s),
+                "source_end_s": float(clip.end_s),
+                "effects": [
+                    {
+                        "type": "text",
+                        "text": str(clip.text_overlay or clip.label).strip(),
+                        "position_x_pct": float(getattr(clip, "text_position_x_pct", 0.0)),
+                        "position_y_pct": float(getattr(clip, "text_position_y_pct", 72.0)),
+                        "size_pct": float(getattr(clip, "text_size_pct", 100.0)),
+                    }
+                ],
+            }
+        )
     return result
 
 
