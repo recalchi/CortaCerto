@@ -3,7 +3,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts.run_sprint_checks import check_legacy_root_files, check_test_inventory, check_text_encoding, safe_console
+from scripts.run_sprint_checks import (
+    check_legacy_root_files,
+    check_secret_leaks,
+    check_test_inventory,
+    check_text_encoding,
+    safe_console,
+)
 
 
 class SprintChecksTests(unittest.TestCase):
@@ -51,6 +57,22 @@ class SprintChecksTests(unittest.TestCase):
                 self.assertEqual(check_test_inventory(print_fn=messages.append), 0)
 
         self.assertIn("1 arquivos, 1 casos", "\n".join(messages))
+
+    def test_secret_leak_check_flags_openai_key_outside_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "bad.py"
+            bad.write_text('OPENAI_API_KEY="' + "sk-proj-" + 'abcdefghijklmnopqrstuvwxyz"\n', encoding="utf-8")
+
+            with mock.patch("scripts.run_sprint_checks.iter_text_files", return_value=[bad]):
+                self.assertEqual(check_secret_leaks(print_fn=lambda _: None), 1)
+
+    def test_secret_leak_check_ignores_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / ".env"
+            env_file.write_text('OPENAI_API_KEY="' + "sk-proj-" + 'abcdefghijklmnopqrstuvwxyz"\n', encoding="utf-8")
+
+            with mock.patch("scripts.run_sprint_checks.iter_text_files", return_value=[env_file]):
+                self.assertEqual(check_secret_leaks(print_fn=lambda _: None), 0)
 
 
 if __name__ == "__main__":
