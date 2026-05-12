@@ -5,7 +5,10 @@ from unittest import mock
 
 from src.config import ProcessingConfig
 from src.pipeline import (
+    _build_clip_volume_filter,
     _clip_options_with_output_ranges,
+    _clip_volume_adjustments,
+    _has_clip_audio_adjustments,
     _has_clip_source_replacements,
     _clip_option_plan,
     _cleanup_intermediate_exports,
@@ -60,6 +63,24 @@ class PipelineCleanupTests(unittest.TestCase):
             {"source_path": "", "output_start_s": 0.0, "output_end_s": 1.0},
             {"source_path": "x.mp4", "output_start_s": 2.0, "output_end_s": 2.0},
         ]))
+
+    def test_clip_volume_filter_targets_adjusted_output_ranges(self) -> None:
+        options = [
+            {"volume_pct": 80.0, "output_start_s": 0.0, "output_end_s": 2.5},
+            {"volume_pct": 100.0, "output_start_s": 2.5, "output_end_s": 5.0},
+            {"volume_pct": 130.0, "output_start_s": 5.0, "output_end_s": 8.0},
+        ]
+
+        self.assertTrue(_has_clip_audio_adjustments(options))
+        self.assertEqual(_clip_volume_adjustments(options), [(0.0, 2.5, 80.0), (5.0, 8.0, 130.0)])
+        self.assertEqual(
+            _build_clip_volume_filter(options),
+            "volume=0.8000:enable='between(t,0.000,2.500)',volume=1.3000:enable='between(t,5.000,8.000)'",
+        )
+
+    def test_clip_volume_filter_returns_anull_without_adjustments(self) -> None:
+        self.assertFalse(_has_clip_audio_adjustments([{"volume_pct": 100.0, "output_start_s": 0.0, "output_end_s": 1.0}]))
+        self.assertEqual(_build_clip_volume_filter([]), "anull")
 
     def test_cleanup_intermediate_exports_removes_existing_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

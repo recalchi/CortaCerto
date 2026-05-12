@@ -221,6 +221,29 @@ def run_pipeline(
         else:
             prog("[4/6] Sem color grade/bokeh; usando caminho rápido sem passe frame a frame.", 0.70)
 
+        if _has_clip_audio_adjustments(clip_options):
+            with ProcessManager(cancel) as pm:
+                clip_audio_out = os.path.join(output_dir, f"{base}_clip_audio.mp4")
+                export_intermediate.add(clip_audio_out)
+                audio_filter = _build_clip_volume_filter(clip_options)
+                prog("[5/6] Aplicando volume por clipe...", 0.72)
+                pm.run_checked(
+                    [
+                        ffmpeg(), "-y",
+                        "-i", source,
+                        "-c:v", "copy",
+                        "-af", audio_filter,
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        clip_audio_out,
+                    ],
+                    context="volume por clipe",
+                    timeout_s=max(60.0, result.final_duration_s * 5.0),
+                )
+                source = clip_audio_out
+                export_keep.add(source)
+                prog("[5/6] Volume por clipe aplicado.", 0.74)
+
         if config.noise_reduction or config.music_path:
             with ProcessManager(cancel) as pm:
                 af_parts: list[str] = []
@@ -454,3 +477,32 @@ def _has_clip_source_replacements(clip_options: list[dict[str, object]]) -> bool
         if option.get("source_path") and end_s > start_s:
             return True
     return False
+
+
+def _has_clip_audio_adjustments(clip_options: list[dict[str, object]]) -> bool:
+    return bool(_clip_volume_adjustments(clip_options))
+
+
+def _build_clip_volume_filter(clip_options: list[dict[str, object]]) -> str:
+    adjustments = _clip_volume_adjustments(clip_options)
+    if not adjustments:
+        return "anull"
+    filters = []
+    for start_s, end_s, volume_pct in adjustments:
+        volume = max(0.0, float(volume_pct) / 100.0)
+        filters.append(f"volume={volume:.4f}:enable='between(t,{start_s:.3f},{end_s:.3f})'")
+    return ",".join(filters)
+
+
+def _clip_volume_adjustments(clip_options: list[dict[str, object]]) -> list[tuple[float, float, float]]:
+    adjustments: list[tuple[float, float, float]] = []
+    for option in clip_options:
+        try:
+            volume_pct = float(option.get("volume_pct", 100.0))
+            start_s = float(option.get("output_start_s", option.get("start_s", 0.0)) or 0.0)
+            end_s = float(option.get("output_end_s", option.get("end_s", 0.0)) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if end_s > start_s and abs(volume_pct - 100.0) > 0.01:
+            adjustments.append((start_s, end_s, volume_pct))
+    return adjustments
