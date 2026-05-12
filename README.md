@@ -240,6 +240,7 @@ Principais pontos já estabilizados:
 - Integrações por API devem ficar apenas em `.env`; o runner verifica vazamentos comuns de chave em arquivos rastreáveis e o app usa valores mascarados em diagnósticos.
 - Camada `ai_assistant` cria uma interface única para sugestões de título/subtítulo/descrição, com fallback local e provedores configurados sem chamada de rede por enquanto.
 - Tela do editor ganhou ação `Sugerir com IA` para preencher título e subtítulo da thumbnail via camada `ai_assistant`.
+- A ação de IA também preenche uma descrição curta e o projeto salva esses metadados em `publish`.
 - Projetos passam a salvar `timeline_manifest`, uma estrutura inspirada em OTIO/MLT com mídia externa, tracks, clips, ranges compactados e efeitos por escopo.
 - Inspetor do clipe ganhou base de chroma key por clipe, com cor/tolerância e preview substituindo o fundo cromado por marcação neutra.
 - Timeline ganhou botões de zoom `+`/`-` além do slider, e o painel lateral mostra um status rápido de mídias, clipes, seleção e zoom.
