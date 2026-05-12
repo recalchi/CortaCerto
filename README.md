@@ -248,6 +248,7 @@ Principais pontos já estabilizados:
 - Preview exibe moldura/handle no clipe selecionado ativo; arrastar dentro move e arrastar o canto ajusta escala.
 - Trechos removidos ficam pretos no preview, a inserção deixa claro que substitui um trecho, e texto no clipe ganhou posição/tamanho editáveis com handle no preview.
 - Troca/abertura de projeto limpa runtime anterior antes de carregar o novo, evitando preview/timeline/mídias antigas em pré-load.
+- Zoom da timeline agora usa janela temporal flexível com margem ao redor do playhead, permitindo aproximar mais sem perder contexto.
 - Projetos passam a salvar `timeline_manifest`, uma estrutura inspirada em OTIO/MLT com mídia externa, tracks, clips, ranges compactados e efeitos por escopo.
 - Inspetor do clipe ganhou base de chroma key por clipe, com cor/tolerância e preview substituindo o fundo cromado por marcação neutra.
 - Timeline ganhou botões de zoom `+`/`-` além do slider, e o painel lateral mostra um status rápido de mídias, clipes, seleção e zoom.

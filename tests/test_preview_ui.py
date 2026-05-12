@@ -61,6 +61,9 @@ from src.ui.app import (
     _timeline_time_to_x,
     _timeline_track_bounds,
     _timeline_x_to_time,
+    _timeline_view_time_to_x,
+    _timeline_x_to_view_time,
+    _timeline_zoom_window,
 )
 from src.core.timeline_model import TimelineClip, build_timeline_model
 
@@ -455,6 +458,20 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(_timeline_x_to_time(0, 60.0, x1, x2), 0.0)
         self.assertAlmostEqual(_timeline_x_to_time((x1 + x2) // 2, 60.0, x1, x2), 30.0, delta=0.1)
         self.assertEqual(_timeline_time_to_x(60.0, 60.0, x1, x2), x2)
+
+    def test_timeline_zoom_window_keeps_margin_around_playhead(self) -> None:
+        start, end = _timeline_zoom_window(120.0, 4.0, 60.0)
+
+        self.assertLess(start, 60.0)
+        self.assertGreater(end, 60.0)
+        self.assertLess(end - start, 120.0)
+        self.assertGreater(end - start, 30.0)
+
+    def test_timeline_view_coordinate_mapping_is_reversible(self) -> None:
+        x = _timeline_view_time_to_x(45.0, 30.0, 60.0, 100, 700)
+
+        self.assertEqual(x, 400)
+        self.assertAlmostEqual(_timeline_x_to_view_time(x, 30.0, 60.0, 100, 700), 45.0)
 
     def test_time_to_frame_clamps_to_video_range(self) -> None:
         self.assertEqual(_time_to_frame(1.0, 30.0, 100), 30)
