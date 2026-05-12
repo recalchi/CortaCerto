@@ -197,7 +197,12 @@ def _apply_clip_frame_options_bgr(frame_bgr: object, option: dict[str, object]) 
             str(option.get("chroma_color") or "#00ff00"),
             float(option.get("chroma_tolerance", 45.0) or 45.0),
         )
-    rendered = _scale_frame_bgr_centered(rendered, float(option.get("scale_pct", 100.0) or 100.0))
+    rendered = _scale_frame_bgr_positioned(
+        rendered,
+        float(option.get("scale_pct", 100.0) or 100.0),
+        float(option.get("position_x_pct", 0.0) or 0.0),
+        float(option.get("position_y_pct", 0.0) or 0.0),
+    )
     text = str(option.get("text_overlay") or "").strip()
     if text:
         rendered = _draw_text_overlay_bgr(rendered, text)
@@ -205,24 +210,43 @@ def _apply_clip_frame_options_bgr(frame_bgr: object, option: dict[str, object]) 
 
 
 def _scale_frame_bgr_centered(frame_bgr: object, scale_pct: float) -> object:
+    return _scale_frame_bgr_positioned(frame_bgr, scale_pct, 0.0, 0.0)
+
+
+def _scale_frame_bgr_positioned(
+    frame_bgr: object,
+    scale_pct: float,
+    pos_x_pct: float = 0.0,
+    pos_y_pct: float = 0.0,
+) -> object:
     frame = frame_bgr
     height, width = frame.shape[:2]
     scale = max(0.25, min(3.0, float(scale_pct) / 100.0))
-    if abs(scale - 1.0) < 0.0001:
+    pos_x = max(-100.0, min(100.0, float(pos_x_pct))) / 100.0
+    pos_y = max(-100.0, min(100.0, float(pos_y_pct))) / 100.0
+    if abs(scale - 1.0) < 0.0001 and abs(pos_x) < 0.0001 and abs(pos_y) < 0.0001:
         return frame
     if scale > 1.0:
         crop_w = max(1, int(width / scale))
         crop_h = max(1, int(height / scale))
-        x1 = max(0, (width - crop_w) // 2)
-        y1 = max(0, (height - crop_h) // 2)
+        max_x = max(0, width - crop_w)
+        max_y = max(0, height - crop_h)
+        x1 = int(round(max_x / 2 + pos_x * max_x / 2))
+        y1 = int(round(max_y / 2 + pos_y * max_y / 2))
+        x1 = max(0, min(max_x, x1))
+        y1 = max(0, min(max_y, y1))
         cropped = frame[y1:y1 + crop_h, x1:x1 + crop_w]
         return cv2.resize(cropped, (width, height), interpolation=cv2.INTER_LINEAR)
     resized_w = max(1, int(width * scale))
     resized_h = max(1, int(height * scale))
     resized = cv2.resize(frame, (resized_w, resized_h), interpolation=cv2.INTER_AREA)
     canvas = np.zeros_like(frame)
-    x1 = (width - resized_w) // 2
-    y1 = (height - resized_h) // 2
+    free_x = max(0, width - resized_w)
+    free_y = max(0, height - resized_h)
+    x1 = int(round(free_x / 2 + pos_x * free_x / 2))
+    y1 = int(round(free_y / 2 + pos_y * free_y / 2))
+    x1 = max(0, min(free_x, x1))
+    y1 = max(0, min(free_y, y1))
     canvas[y1:y1 + resized_h, x1:x1 + resized_w] = resized
     return canvas
 

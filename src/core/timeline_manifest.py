@@ -94,8 +94,17 @@ def _manifest_audio_clips(clips: list[TimelineClip], primary_media: str) -> list
 
 def _clip_effects(clip: TimelineClip) -> list[dict[str, Any]]:
     effects: list[dict[str, Any]] = []
-    if abs(float(clip.scale_pct) - 100.0) > 0.01:
-        effects.append({"type": "transform", "scale_pct": float(clip.scale_pct)})
+    pos_x = float(getattr(clip, "position_x_pct", 0.0))
+    pos_y = float(getattr(clip, "position_y_pct", 0.0))
+    if abs(float(clip.scale_pct) - 100.0) > 0.01 or abs(pos_x) > 0.01 or abs(pos_y) > 0.01:
+        effects.append(
+            {
+                "type": "transform",
+                "scale_pct": float(clip.scale_pct),
+                "position_x_pct": pos_x,
+                "position_y_pct": pos_y,
+            }
+        )
     if str(clip.text_overlay or "").strip():
         effects.append({"type": "text", "text": str(clip.text_overlay).strip()})
     if bool(clip.chroma_enabled):
