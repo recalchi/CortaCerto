@@ -45,6 +45,8 @@ from src.ui.app import (
     _removed_ranges_from_segments,
     _restore_project_from_trash,
     _safe_project_slug,
+    _preview_control_hit,
+    _preview_control_handles,
     _sample_preview_hex_color,
     _snap_time_to_edges,
     _snap_time_to_edges_with_flag,
@@ -329,6 +331,14 @@ class PreviewUiTests(unittest.TestCase):
 
         self.assertEqual(_sample_preview_hex_color(image, (10, 20, 4, 4), 11, 21), "#112233")
         self.assertIsNone(_sample_preview_hex_color(image, (10, 20, 4, 4), 2, 2))
+
+    def test_preview_control_hit_detects_scale_handle(self) -> None:
+        display_box = (10, 20, 100, 50)
+
+        self.assertEqual(_preview_control_handles(display_box)["scale"], (110, 70))
+        self.assertEqual(_preview_control_hit(display_box, 108, 68), "scale")
+        self.assertIsNone(_preview_control_hit(display_box, 20, 30))
+        self.assertIsNone(_preview_control_hit(display_box, 150, 90))
 
     def test_hex_color_helpers_normalize_invalid_values(self) -> None:
         self.assertEqual(_normalize_hex_color("00FF00"), "#00ff00")
