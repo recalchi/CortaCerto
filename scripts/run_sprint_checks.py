@@ -47,6 +47,7 @@ CHECKS: list[tuple[str, list[str]]] = [
             "src/ui/app.py",
             "tests/test_bootstrap.py",
             "tests/test_effect_renderer.py",
+            "tests/test_export_smoke.py",
             "tests/test_editor_consistency.py",
             "tests/test_ffmpeg_env.py",
             "tests/test_pipeline_cleanup.py",
@@ -132,6 +133,11 @@ def main() -> int:
         help="Também valida FFmpeg real com main.py --check-startup.",
     )
     parser.add_argument(
+        "--include-export-smoke",
+        action="store_true",
+        help="Tambem gera videos sinteticos e valida um export real curto.",
+    )
+    parser.add_argument(
         "--strict-legacy",
         action="store_true",
         help="Falha se arquivos legados conhecidos ainda existirem na raiz.",
@@ -144,6 +150,17 @@ def main() -> int:
             (
                 "Startup real com FFmpeg",
                 [sys.executable, "main.py", "--check-startup"],
+            )
+        )
+    if args.include_export_smoke:
+        checks.append(
+            (
+                "Export real sintetico",
+                [
+                    sys.executable,
+                    "-c",
+                    "import os, unittest; os.environ['CORTACERTO_EXPORT_SMOKE']='1'; unittest.main(module='tests.test_export_smoke')",
+                ],
             )
         )
 
