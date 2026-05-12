@@ -234,6 +234,7 @@ Principais pontos já estabilizados:
 - Biblioteca de mídias do editor separa adicionar mídia, associar mídia ao clipe selecionado e abrir uma mídia como vídeo principal.
 - Preview usa a mídia associada em `source_path` no trecho do clipe selecionado, com fallback para o vídeo principal se a leitura falhar.
 - Export agora aplica um passe visual para mídias associadas por clipe antes dos efeitos globais, mantendo o áudio da timeline atual.
+- O passe de export por clipe já aplica escala, texto e chroma key no frame renderizado antes do color grade/bokeh global.
 - Projetos passam a salvar `timeline_manifest`, uma estrutura inspirada em OTIO/MLT com mídia externa, tracks, clips, ranges compactados e efeitos por escopo.
 - Inspetor do clipe ganhou base de chroma key por clipe, com cor/tolerância e preview substituindo o fundo cromado por marcação neutra.
 - Timeline ganhou botões de zoom `+`/`-` além do slider, e o painel lateral mostra um status rápido de mídias, clipes, seleção e zoom.

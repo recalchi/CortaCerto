@@ -2,10 +2,15 @@ import threading
 import unittest
 from unittest import mock
 
+import numpy as np
+
 from src.core.color_grade import ColorGrade
 from src.core.effect_renderer import (
+    _apply_chroma_key_bgr,
+    _apply_clip_frame_options_bgr,
     _clip_option_for_output_time,
     _clip_option_has_source_replacement,
+    _scale_frame_bgr_centered,
     render_clip_source_pass,
     render_effects_pass,
 )
@@ -46,6 +51,42 @@ class EffectRendererTests(unittest.TestCase):
         self.assertTrue(_clip_option_has_source_replacement({"source_path": "a.mp4", "output_start_s": 0, "output_end_s": 1}))
         self.assertFalse(_clip_option_has_source_replacement({"source_path": "", "output_start_s": 0, "output_end_s": 1}))
         self.assertFalse(_clip_option_has_source_replacement({"source_path": "a.mp4", "output_start_s": 1, "output_end_s": 1}))
+
+    def test_scale_frame_bgr_centered_preserves_frame_shape(self) -> None:
+        frame = np.full((20, 30, 3), 255, dtype=np.uint8)
+
+        zoomed = _scale_frame_bgr_centered(frame, 150.0)
+        shrunk = _scale_frame_bgr_centered(frame, 50.0)
+
+        self.assertEqual(zoomed.shape, frame.shape)
+        self.assertEqual(shrunk.shape, frame.shape)
+        self.assertTrue((shrunk[0, 0] == [0, 0, 0]).all())
+
+    def test_apply_chroma_key_bgr_marks_target_color(self) -> None:
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        frame[:, :] = [0, 255, 0]
+
+        keyed = _apply_chroma_key_bgr(frame, "#00ff00", 5.0)
+
+        self.assertFalse((keyed[0, 0] == [0, 255, 0]).all())
+
+    def test_clip_frame_options_apply_chroma_scale_and_text(self) -> None:
+        frame = np.zeros((80, 100, 3), dtype=np.uint8)
+        frame[:, :] = [0, 255, 0]
+
+        rendered = _apply_clip_frame_options_bgr(
+            frame,
+            {
+                "chroma_enabled": True,
+                "chroma_color": "#00ff00",
+                "chroma_tolerance": 5.0,
+                "scale_pct": 50.0,
+                "text_overlay": "Titulo",
+            },
+        )
+
+        self.assertEqual(rendered.shape, frame.shape)
+        self.assertFalse((rendered == frame).all())
 
     def test_color_grade_without_bokeh_uses_ffmpeg_fast_path(self) -> None:
         cancel = threading.Event()

@@ -6,6 +6,7 @@ import contextlib
 from typing import Callable, Optional
 
 import cv2
+import numpy as np
 
 from ..ffmpeg_env import detect_video_encoder, ffmpeg
 from .color_grade import ColorGrade, build_filter as build_color_filter
@@ -86,6 +87,7 @@ def render_clip_source_pass(
                 replacement = _read_replacement_frame(option, time_s, source_caps, source_meta, width, height)
                 if replacement is not None:
                     frame_bgr = replacement
+                frame_bgr = _apply_clip_frame_options_bgr(frame_bgr, option)
             if proc.stdin is None:
                 raise RuntimeError("Pipe do encoder indisponível.")
             proc.stdin.write(frame_bgr.tobytes())
@@ -185,6 +187,95 @@ def _read_replacement_frame(
     if not ok or frame_bgr is None:
         return None
     return cv2.resize(frame_bgr, (width, height), interpolation=cv2.INTER_AREA)
+
+
+def _apply_clip_frame_options_bgr(frame_bgr: object, option: dict[str, object]) -> object:
+    rendered = frame_bgr
+    if bool(option.get("chroma_enabled", False)):
+        rendered = _apply_chroma_key_bgr(
+            rendered,
+            str(option.get("chroma_color") or "#00ff00"),
+            float(option.get("chroma_tolerance", 45.0) or 45.0),
+        )
+    rendered = _scale_frame_bgr_centered(rendered, float(option.get("scale_pct", 100.0) or 100.0))
+    text = str(option.get("text_overlay") or "").strip()
+    if text:
+        rendered = _draw_text_overlay_bgr(rendered, text)
+    return rendered
+
+
+def _scale_frame_bgr_centered(frame_bgr: object, scale_pct: float) -> object:
+    frame = frame_bgr
+    height, width = frame.shape[:2]
+    scale = max(0.25, min(3.0, float(scale_pct) / 100.0))
+    if abs(scale - 1.0) < 0.0001:
+        return frame
+    if scale > 1.0:
+        crop_w = max(1, int(width / scale))
+        crop_h = max(1, int(height / scale))
+        x1 = max(0, (width - crop_w) // 2)
+        y1 = max(0, (height - crop_h) // 2)
+        cropped = frame[y1:y1 + crop_h, x1:x1 + crop_w]
+        return cv2.resize(cropped, (width, height), interpolation=cv2.INTER_LINEAR)
+    resized_w = max(1, int(width * scale))
+    resized_h = max(1, int(height * scale))
+    resized = cv2.resize(frame, (resized_w, resized_h), interpolation=cv2.INTER_AREA)
+    canvas = np.zeros_like(frame)
+    x1 = (width - resized_w) // 2
+    y1 = (height - resized_h) // 2
+    canvas[y1:y1 + resized_h, x1:x1 + resized_w] = resized
+    return canvas
+
+
+def _apply_chroma_key_bgr(frame_bgr: object, color: str, tolerance: float) -> object:
+    target_rgb = _hex_to_rgb(_normalize_hex_color(color))
+    target_bgr = np.array([target_rgb[2], target_rgb[1], target_rgb[0]], dtype=np.int16)
+    frame_i16 = frame_bgr.astype(np.int16)
+    diff = np.linalg.norm(frame_i16 - target_bgr, axis=2)
+    mask = diff <= max(1.0, float(tolerance))
+    if not mask.any():
+        return frame_bgr
+    output = frame_bgr.copy()
+    checker = ((np.indices(mask.shape).sum(axis=0) // 18) % 2) * 42 + 24
+    output[mask] = np.stack([checker, checker, checker], axis=2)[mask].astype(np.uint8)
+    return output
+
+
+def _draw_text_overlay_bgr(frame_bgr: object, text: str) -> object:
+    frame = frame_bgr.copy()
+    height, width = frame.shape[:2]
+    box_h = max(36, height // 10)
+    y1 = max(0, height - box_h - 18)
+    cv2.rectangle(frame, (0, y1), (width, y1 + box_h), (0, 0, 0), thickness=-1)
+    cv2.putText(
+        frame,
+        text[:80],
+        (max(12, width // 30), y1 + max(24, box_h // 2)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        max(0.5, min(1.3, width / 1280.0)),
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    return frame
+
+
+def _normalize_hex_color(value: str) -> str:
+    text = str(value or "").strip()
+    if not text.startswith("#"):
+        text = f"#{text}"
+    if len(text) == 7:
+        try:
+            int(text[1:], 16)
+            return text.lower()
+        except ValueError:
+            pass
+    return "#00ff00"
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    color = _normalize_hex_color(value)
+    return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
 
 
 def render_effects_pass(
