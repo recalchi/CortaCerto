@@ -241,6 +241,10 @@ Principais pontos já estabilizados:
 - Camada `ai_assistant` cria uma interface única para sugestões de título/subtítulo/descrição, com fallback local e provedores configurados sem chamada de rede por enquanto.
 - Tela do editor ganhou ação `Sugerir com IA` para preencher título e subtítulo da thumbnail via camada `ai_assistant`.
 - A ação de IA também preenche uma descrição curta e o projeto salva esses metadados em `publish`.
+- Editor ganhou conta-gotas de chroma no preview, inserção prática de mídia como clipe visual na timeline e zoom horizontal real na timeline.
+- Clipe selecionado agora aceita posição X/Y por sliders e arraste direto no preview; a transformação é salva no projeto e aplicada no export.
+- Inserção de mídia na timeline passou a substituir um trecho no playhead, preservando bordas antes/depois e permitindo reutilizar a mesma mídia várias vezes.
+- Drag-and-drop na timeline agora tenta inserir vídeos como clipes no ponto solto, enquanto drop no preview continua carregando/importando mídia.
 - Projetos passam a salvar `timeline_manifest`, uma estrutura inspirada em OTIO/MLT com mídia externa, tracks, clips, ranges compactados e efeitos por escopo.
 - Inspetor do clipe ganhou base de chroma key por clipe, com cor/tolerância e preview substituindo o fundo cromado por marcação neutra.
 - Timeline ganhou botões de zoom `+`/`-` além do slider, e o painel lateral mostra um status rápido de mídias, clipes, seleção e zoom.

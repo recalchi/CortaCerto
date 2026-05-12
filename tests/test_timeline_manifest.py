@@ -45,6 +45,8 @@ class TimelineManifestTests(unittest.TestCase):
             chroma_enabled=True,
             chroma_color="#00ff00",
             chroma_tolerance=55.0,
+            position_x_pct=12.0,
+            position_y_pct=-8.0,
         )
         model = TimelineModel(
             duration_s=4.0,
@@ -60,6 +62,8 @@ class TimelineManifestTests(unittest.TestCase):
         video_effects = manifest["tracks"][0]["clips"][0]["effects"]
         audio_effects = manifest["tracks"][1]["clips"][0]["effects"]
         self.assertEqual([effect["type"] for effect in video_effects], ["transform", "text", "chroma_key", "transition"])
+        self.assertEqual(video_effects[0]["position_x_pct"], 12.0)
+        self.assertEqual(video_effects[0]["position_y_pct"], -8.0)
         self.assertEqual(audio_effects, [{"type": "volume", "volume_pct": 70.0}])
 
 

@@ -117,12 +117,20 @@ class CortaCertoApp:
         self._tl_compact_var = tk.BooleanVar(value=True)
         self._clip_label_var = tk.StringVar(value="")
         self._clip_scale_var = tk.DoubleVar(value=100.0)
+        self._clip_pos_x_var = tk.DoubleVar(value=0.0)
+        self._clip_pos_y_var = tk.DoubleVar(value=0.0)
         self._clip_volume_var = tk.DoubleVar(value=100.0)
         self._clip_transition_var = tk.StringVar(value="Corte")
         self._clip_chroma_var = tk.BooleanVar(value=False)
         self._clip_chroma_color_var = tk.StringVar(value="#00ff00")
         self._clip_chroma_tolerance_var = tk.DoubleVar(value=45.0)
         self._project_status_var = tk.StringVar(value="")
+        self._chroma_picker_active = False
+        self._preview_display_image: Optional[Image.Image] = None
+        self._preview_display_box: tuple[int, int, int, int] = (0, 0, 0, 0)
+        self._preview_drag: Optional[tuple[int, int, float, float]] = None
+        self._preview_drag_moved = False
+        self._preview_click_consumed = False
         self._media_listbox: Optional[tk.Listbox] = None
         self._clip_inspector_enabled = False
         self._clip_source_caps: dict[str, cv2.VideoCapture] = {}
@@ -434,6 +442,8 @@ class CortaCertoApp:
             for widget in (self.root, self._preview_canvas):
                 widget.tk.call("tkdnd::drop_target", "register", widget, "DND_Files")
                 widget.bind("<<Drop>>", self._on_drop_files)
+            self._tl_canvas.tk.call("tkdnd::drop_target", "register", self._tl_canvas, "DND_Files")
+            self._tl_canvas.bind("<<Drop>>", self._on_timeline_drop_files)
             self._tb_status.configure(text="Arraste um vídeo para o preview ou use Abrir vídeo.")
         except Exception:
             self._tb_status.configure(text="Use Abrir vídeo para importar mídia.")
@@ -447,6 +457,25 @@ class CortaCertoApp:
                 self._tb_status.configure(text=f"{len(paths)} vídeos adicionados ao projeto. Primeiro vídeo carregado.")
         else:
             self._tb_status.configure(text="Solte um arquivo de vídeo compatível.")
+        return "break"
+
+    def _on_timeline_drop_files(self, event: tk.Event) -> str:
+        paths = _video_paths_from_drop(getattr(event, "data", ""))
+        if not paths:
+            self._tb_status.configure(text="Solte um arquivo de vídeo compatível na timeline.")
+            return "break"
+        self._register_project_media(paths)
+        if not self.video_path or not self._timeline_model:
+            self._load_video(paths[0])
+            self._tb_status.configure(text="Vídeo principal carregado pela timeline.")
+            return "break"
+        time_s = self._timeline_time_from_event(event)
+        inserted = 0
+        for offset, path in enumerate(paths):
+            if self._insert_media_path_at_time(path, min(self._duration_s, time_s + offset * 3.0), save=False):
+                inserted += 1
+        self._save_project_media_paths()
+        self._tb_status.configure(text=f"{inserted} mídia(s) inserida(s) na timeline.")
         return "break"
 
     # -- Toolbar ---------------------------------------------------------------
@@ -546,7 +575,9 @@ class CortaCertoApp:
                                           highlightbackground=C_BORDER)
         self._preview_canvas.grid(row=0, column=0, sticky="nsew")
         self._preview_canvas.bind("<Configure>", self._on_preview_resize)
-        self._preview_canvas.bind("<Button-1>", lambda e: self._toggle_play())
+        self._preview_canvas.bind("<ButtonPress-1>", self._on_preview_press)
+        self._preview_canvas.bind("<B1-Motion>", self._on_preview_drag)
+        self._preview_canvas.bind("<ButtonRelease-1>", self._on_preview_release)
 
         # "No video" placeholder text
         self._no_video_id = self._preview_canvas.create_text(
@@ -685,6 +716,16 @@ class CortaCertoApp:
         if snapped:
             self._tb_status.configure(text=f"Playhead encaixado em {_fmt(time_s)}.")
 
+    def _timeline_time_from_event(self, event: tk.Event) -> float:
+        try:
+            x = int(getattr(event, "x"))
+        except (AttributeError, TypeError, ValueError):
+            track_x1, track_x2 = self._timeline_track_bounds(self._tl_canvas.winfo_width())
+            x = _timeline_time_to_x(self._current_frame / max(1.0, self._fps), self._duration_s, track_x1, track_x2)
+        w = self._tl_canvas.winfo_width()
+        track_x1, track_x2 = self._timeline_track_bounds(w)
+        return self._timeline_click_time(x, track_x1, track_x2)
+
     def _tl_drag_motion(self, event: tk.Event) -> str | None:
         if not self._trim_drag or not self._timeline_model:
             return None
@@ -764,6 +805,15 @@ class CortaCertoApp:
         self._tl_zoom.set(value)
         self._on_timeline_zoom(value)
 
+    def _timeline_zoomed_bounds(self, x1: int, x2: int) -> tuple[int, int]:
+        if self._waveform_zoom <= 1.001:
+            return x1, x2
+        width = max(1, x2 - x1)
+        playhead_x = _timeline_time_to_x(self._current_frame / max(1.0, self._fps), self._duration_s, x1, x2)
+        zoomed_width = int(width * self._waveform_zoom)
+        left = min(x1, max(x2 - zoomed_width, playhead_x - zoomed_width // 2))
+        return left, left + zoomed_width
+
     def _select_clip_at_time(self, time_s: float) -> None:
         self._selected_clip_index = self._clip_index_at_time(time_s)
         self._redraw_timeline()
@@ -785,7 +835,7 @@ class CortaCertoApp:
         clip = self._timeline_model.video_track.clips[self._selected_clip_index]
         if split_s <= clip.start_s + 0.15 or split_s >= clip.end_s - 0.15:
             self._tb_status.configure(text="Posicione o playhead dentro do clipe para dividir.")
-            return
+            return False
         self._push_timeline_undo()
         clips = self._timeline_model.video_track.clips
         left_clip = _clone_timeline_clip(clip)
@@ -893,8 +943,11 @@ class CortaCertoApp:
         c.create_text(label_w // 2, (audio_y1 + audio_y2) // 2, text="ÁUDIO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
 
         track_x1, track_x2 = self._timeline_track_bounds(w)
+        draw_x1, draw_x2 = self._timeline_zoomed_bounds(track_x1, track_x2)
         c.create_rectangle(track_x1, video_y1, track_x2, video_y2, fill="#1b2130", outline="")
         c.create_rectangle(track_x1, audio_y1, track_x2, audio_y2, fill="#171b24", outline="")
+        if self._waveform_zoom > 1.001:
+            c.create_text(track_x1 + 8, top + 3, text=f"{self._waveform_zoom:.2f}x", fill=C_MUTED, font=("Segoe UI", 8), anchor="w")
 
         clips = self._timeline_model.video_track.clips
         compact = self._timeline_compact_enabled()
@@ -908,11 +961,11 @@ class CortaCertoApp:
         for idx, clip in enumerate(clips):
             if compact and compact_ranges:
                 _, _, display_start, display_end = compact_ranges[idx]
-                x1 = _timeline_time_to_x(display_start, view_duration, track_x1, track_x2)
-                x2 = _timeline_time_to_x(display_end, view_duration, track_x1, track_x2)
+                x1 = _timeline_time_to_x(display_start, view_duration, draw_x1, draw_x2)
+                x2 = _timeline_time_to_x(display_end, view_duration, draw_x1, draw_x2)
             else:
-                x1 = self._time_to_x(clip.start_s, track_x1, track_x2)
-                x2 = self._time_to_x(clip.end_s, track_x1, track_x2)
+                x1 = self._time_to_x(clip.start_s, draw_x1, draw_x2)
+                x2 = self._time_to_x(clip.end_s, draw_x1, draw_x2)
             outline = C_YELLOW if idx == self._selected_clip_index else ""
             width = 2 if idx == self._selected_clip_index else 1
             c.create_rectangle(x1, video_y1 + 2, x2, video_y2 - 2, fill=TL_SPEECH, outline=outline, width=width)
@@ -936,23 +989,23 @@ class CortaCertoApp:
             clips,
             compact_ranges,
             view_duration,
-            track_x1,
-            track_x2,
+            draw_x1,
+            draw_x2,
             audio_y1,
             audio_y2,
         )
 
         if not compact:
             for start_s, end_s in self._timeline_model.removed_ranges:
-                x1 = self._time_to_x(start_s, track_x1, track_x2)
-                x2 = self._time_to_x(end_s, track_x1, track_x2)
+                x1 = self._time_to_x(start_s, draw_x1, draw_x2)
+                x2 = self._time_to_x(end_s, draw_x1, draw_x2)
                 c.create_rectangle(x1, video_y1 + 6, x2, video_y2 - 6, fill=TL_SILENCE, outline="", stipple="gray50")
                 c.create_rectangle(x1, audio_y1 + 4, x2, audio_y2 - 4, fill="#11151d", outline="", stipple="gray50")
 
         tick_step = max(1, int(self._duration_s / 12))
         tick_duration = view_duration if compact else self._duration_s
         for t in range(0, int(tick_duration) + 1, tick_step):
-            x = _timeline_time_to_x(float(t), tick_duration, track_x1, track_x2)
+            x = _timeline_time_to_x(float(t), tick_duration, draw_x1, draw_x2)
             c.create_line(x, 4, x, h - 4, fill="#222734")
             mm, ss = divmod(t, 60)
             c.create_text(x, h - 7, text=f"{mm}:{ss:02d}", fill=C_MUTED, font=("Courier New", 8))
@@ -960,10 +1013,10 @@ class CortaCertoApp:
         current_time = self._current_frame / max(1.0, self._fps)
         if compact and compact_ranges:
             playhead_time = _compact_source_to_display_time(current_time, compact_ranges)
-            px = _timeline_time_to_x(playhead_time, view_duration, track_x1, track_x2)
+            px = _timeline_time_to_x(playhead_time, view_duration, draw_x1, draw_x2)
         else:
             pos = self._current_frame / max(1, self._total_frames)
-            px = int(track_x1 + pos * max(1, track_x2 - track_x1))
+            px = int(draw_x1 + pos * max(1, draw_x2 - draw_x1))
         self._tl_playhead = c.create_line(px, 2, px, h - 2, fill=TL_HEAD, width=2)
 
         kept = sum(clip.end_s - clip.start_s for clip in self._timeline_model.video_track.clips)
@@ -1059,6 +1112,7 @@ class CortaCertoApp:
         return _compact_clip_ranges(self._timeline_model.video_track.clips)
 
     def _timeline_click_time(self, x: int, x1: int, x2: int) -> float:
+        x1, x2 = self._timeline_zoomed_bounds(x1, x2)
         compact_ranges = self._compact_ranges_for_view()
         if compact_ranges:
             view_duration = compact_ranges[-1][3]
@@ -1077,6 +1131,7 @@ class CortaCertoApp:
 
         w = self._tl_canvas.winfo_width()
         track_x1, track_x2 = self._timeline_track_bounds(w)
+        track_x1, track_x2 = self._timeline_zoomed_bounds(track_x1, track_x2)
         clips = self._timeline_model.video_track.clips
         compact_ranges = self._compact_ranges_for_view()
         view_duration = compact_ranges[-1][3] if compact_ranges else self._duration_s
@@ -1294,6 +1349,7 @@ class CortaCertoApp:
         media_actions.grid_columnconfigure(0, weight=1)
         media_actions.grid_columnconfigure(1, weight=1)
         media_actions.grid_columnconfigure(2, weight=1)
+        media_actions.grid_columnconfigure(3, weight=1)
         tk.Button(media_actions, text="Adicionar mídia", command=self._add_project_media,
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=0, sticky="ew", padx=(0, 4))
@@ -1302,7 +1358,10 @@ class CortaCertoApp:
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=1, sticky="ew", padx=4)
         tk.Button(media_actions, text="Abrir principal", command=self._load_selected_project_media,
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
-                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=2, sticky="ew", padx=(4, 0))
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=2, sticky="ew", padx=4)
+        tk.Button(media_actions, text="Inserir clipe", command=self._insert_selected_media_clip,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=3, sticky="ew", padx=(4, 0))
 
         self._section(parent, "CLIPE SELECIONADO", row + 3)
         self._clip_label_entry = ctk.CTkEntry(
@@ -1323,11 +1382,17 @@ class CortaCertoApp:
         self._clip_scale_label = self._inspector_slider(
             parent, "Escala do vídeo", self._clip_scale_var, 25, 300, row + 5, suffix="%"
         )
+        self._clip_pos_x_label = self._inspector_slider(
+            parent, "Posição X", self._clip_pos_x_var, -100, 100, row + 6, suffix="%"
+        )
+        self._clip_pos_y_label = self._inspector_slider(
+            parent, "Posição Y", self._clip_pos_y_var, -100, 100, row + 7, suffix="%"
+        )
         self._clip_volume_label = self._inspector_slider(
-            parent, "Volume do clipe", self._clip_volume_var, 0, 200, row + 6, suffix="%"
+            parent, "Volume do clipe", self._clip_volume_var, 0, 200, row + 8, suffix="%"
         )
         tr = tk.Frame(parent, bg=C_PANEL)
-        tr.grid(row=row + 7, column=0, sticky="ew", padx=10, pady=(2, 4))
+        tr.grid(row=row + 9, column=0, sticky="ew", padx=10, pady=(2, 4))
         tr.grid_columnconfigure(1, weight=1)
         tk.Label(tr, text="Transição", bg=C_PANEL, fg=C_MUTED,
                  font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
@@ -1343,7 +1408,7 @@ class CortaCertoApp:
             font=ctk.CTkFont(size=11),
         ).grid(row=0, column=1, sticky="e")
         clip_actions = tk.Frame(parent, bg=C_PANEL)
-        clip_actions.grid(row=row + 8, column=0, sticky="ew", padx=10, pady=(0, 8))
+        clip_actions.grid(row=row + 10, column=0, sticky="ew", padx=10, pady=(0, 8))
         clip_actions.grid_columnconfigure(0, weight=1)
         clip_actions.grid_columnconfigure(1, weight=1)
         tk.Button(clip_actions, text="Texto no clipe", command=self._add_text_to_selected_clip,
@@ -1353,7 +1418,7 @@ class CortaCertoApp:
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=1, sticky="ew", padx=(4, 0))
         chroma = tk.Frame(parent, bg=C_PANEL)
-        chroma.grid(row=row + 9, column=0, sticky="ew", padx=10, pady=(0, 4))
+        chroma.grid(row=row + 11, column=0, sticky="ew", padx=10, pady=(0, 4))
         chroma.grid_columnconfigure(1, weight=1)
         tk.Checkbutton(
             chroma,
@@ -1378,10 +1443,13 @@ class CortaCertoApp:
             width=82,
             height=26,
         ).grid(row=0, column=1, sticky="e", padx=(6, 0))
+        tk.Button(chroma, text="Conta-gotas", command=self._arm_chroma_picker,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         self._clip_chroma_tolerance_label = self._inspector_slider(
-            parent, "Tolerância chroma", self._clip_chroma_tolerance_var, 5, 160, row + 10
+            parent, "Tolerância chroma", self._clip_chroma_tolerance_var, 5, 160, row + 12
         )
-        self._section(parent, "STATUS DO PROJETO", row + 11)
+        self._section(parent, "STATUS DO PROJETO", row + 13)
         tk.Label(
             parent,
             textvariable=self._project_status_var,
@@ -1391,7 +1459,7 @@ class CortaCertoApp:
             anchor="w",
             wraplength=260,
             font=("Segoe UI", 9),
-        ).grid(row=row + 12, column=0, sticky="ew", padx=12, pady=(0, 10))
+        ).grid(row=row + 14, column=0, sticky="ew", padx=12, pady=(0, 10))
         self._refresh_media_list()
         self._refresh_clip_inspector()
         self._refresh_project_status()
@@ -1476,6 +1544,8 @@ class CortaCertoApp:
         if clip is None:
             self._clip_label_var.set("")
             self._clip_scale_var.set(100.0)
+            self._clip_pos_x_var.set(0.0)
+            self._clip_pos_y_var.set(0.0)
             self._clip_volume_var.set(100.0)
             self._clip_transition_var.set("Corte")
             self._clip_chroma_var.set(False)
@@ -1484,6 +1554,8 @@ class CortaCertoApp:
         else:
             self._clip_label_var.set(clip.text_overlay or clip.label)
             self._clip_scale_var.set(float(getattr(clip, "scale_pct", 100.0)))
+            self._clip_pos_x_var.set(float(getattr(clip, "position_x_pct", 0.0)))
+            self._clip_pos_y_var.set(float(getattr(clip, "position_y_pct", 0.0)))
             self._clip_volume_var.set(float(getattr(clip, "volume_pct", 100.0)))
             self._clip_transition_var.set(str(getattr(clip, "transition", "Corte") or "Corte"))
             self._clip_chroma_var.set(bool(getattr(clip, "chroma_enabled", False)))
@@ -1500,6 +1572,8 @@ class CortaCertoApp:
             return
         clip.label = self._clip_label_var.get().strip() or clip.label
         clip.scale_pct = float(self._clip_scale_var.get())
+        clip.position_x_pct = float(self._clip_pos_x_var.get())
+        clip.position_y_pct = float(self._clip_pos_y_var.get())
         clip.volume_pct = float(self._clip_volume_var.get())
         clip.transition = self._clip_transition_var.get()
         clip.chroma_enabled = bool(self._clip_chroma_var.get())
@@ -1537,6 +1611,46 @@ class CortaCertoApp:
         self._sync_manual_timeline(mark_dirty=True)
         self._save_project_media_paths()
         self._tb_status.configure(text="Mídia associada ao clipe selecionado.")
+
+    def _insert_selected_media_clip(self) -> None:
+        path = self._selected_project_media_path()
+        if not path:
+            self._tb_status.configure(text="Selecione uma mídia do projeto.")
+            return
+        if not self._timeline_model:
+            self._tb_status.configure(text="Carregue um vídeo principal antes de inserir clipes.")
+            return
+        start_s = min(self._duration_s, max(0.0, self._current_frame / max(1.0, self._fps)))
+        if self._insert_media_path_at_time(path, start_s):
+            self._tb_status.configure(text=f"Clipe inserido na timeline: {Path(path).name}.")
+        return
+
+    def _insert_media_path_at_time(self, path: str, start_s: float, save: bool = True) -> bool:
+        if not self._timeline_model:
+            return False
+        if start_s >= self._duration_s - self._trim_min_duration_s:
+            start_s = max(0.0, self._duration_s - min(3.0, self._duration_s))
+        new_clips, selected_index = _insert_media_clip_replacing_range(
+            self._timeline_model.video_track.clips,
+            path,
+            start_s,
+            self._duration_s,
+            clip_duration_s=3.0,
+            min_duration_s=self._trim_min_duration_s,
+        )
+        if selected_index is None:
+            self._tb_status.configure(text="Sem espaço na timeline para inserir esse clipe.")
+            return
+        self._push_timeline_undo()
+        self._timeline_model.video_track.clips = new_clips
+        self._selected_clip_index = selected_index
+        self._timeline_dirty = True
+        self._sync_manual_timeline(mark_dirty=True)
+        inserted = new_clips[selected_index]
+        self._seek_to(self._time_to_frame(inserted.start_s))
+        if save:
+            self._save_project_media_paths()
+        return True
 
     def _refresh_project_status(self) -> None:
         selected = self._selected_timeline_clip()
@@ -1958,6 +2072,79 @@ class CortaCertoApp:
         if self.video_path:
             self._draw_frame_at(self._current_frame)
 
+    def _on_preview_press(self, event: tk.Event) -> str | None:
+        self._preview_drag = None
+        self._preview_drag_moved = False
+        self._preview_click_consumed = False
+        if self._chroma_picker_active:
+            self._preview_click_consumed = True
+            color = _sample_preview_hex_color(
+                self._preview_display_image,
+                self._preview_display_box,
+                int(event.x),
+                int(event.y),
+            )
+            if color:
+                self._clip_chroma_color_var.set(color)
+                self._clip_chroma_var.set(True)
+                self._apply_clip_inspector()
+                self._tb_status.configure(text=f"Chroma definido pelo conta-gotas: {color}.")
+            else:
+                self._tb_status.configure(text="Clique dentro do frame para capturar a cor do chroma.")
+            self._chroma_picker_active = False
+            return "break"
+        clip = self._selected_timeline_clip()
+        if clip is not None and _point_inside_display_box(self._preview_display_box, int(event.x), int(event.y)):
+            self._preview_drag = (
+                int(event.x),
+                int(event.y),
+                float(getattr(clip, "position_x_pct", 0.0)),
+                float(getattr(clip, "position_y_pct", 0.0)),
+            )
+            self._tb_status.configure(text="Arraste no preview para posicionar o clipe selecionado.")
+            return "break"
+        return None
+
+    def _on_preview_drag(self, event: tk.Event) -> str | None:
+        if not self._preview_drag:
+            return None
+        clip = self._selected_timeline_clip()
+        if clip is None:
+            self._preview_drag = None
+            return None
+        start_x, start_y, base_x, base_y = self._preview_drag
+        _box_x, _box_y, box_w, box_h = self._preview_display_box
+        if box_w <= 0 or box_h <= 0:
+            return "break"
+        dx_pct = (int(event.x) - start_x) / max(1, box_w) * 100.0
+        dy_pct = (int(event.y) - start_y) / max(1, box_h) * 100.0
+        clip.position_x_pct = _clamp_float(base_x + dx_pct, -100.0, 100.0)
+        clip.position_y_pct = _clamp_float(base_y + dy_pct, -100.0, 100.0)
+        self._clip_pos_x_var.set(clip.position_x_pct)
+        self._clip_pos_y_var.set(clip.position_y_pct)
+        self._timeline_dirty = True
+        self._preview_drag_moved = True
+        self._draw_frame_at(self._current_frame, fast=True)
+        return "break"
+
+    def _on_preview_release(self, event: tk.Event) -> str | None:
+        if self._preview_click_consumed:
+            self._preview_click_consumed = False
+            return "break"
+        if self._preview_drag:
+            self._preview_drag = None
+            if self._preview_drag_moved:
+                self._sync_manual_timeline(mark_dirty=True)
+                self._tb_status.configure(text="Posição do clipe atualizada no preview.")
+                return "break"
+        if not self._chroma_picker_active:
+            self._toggle_play()
+        return "break"
+
+    def _arm_chroma_picker(self) -> None:
+        self._chroma_picker_active = True
+        self._tb_status.configure(text="Conta-gotas ativo: clique no preview para capturar a cor do chroma.")
+
     def _draw_frame_at(self, frame_idx: int, fast: bool = False) -> None:
         if not self.video_path:
             return
@@ -2041,6 +2228,8 @@ class CortaCertoApp:
         c.delete("frame")
         x = (cw - nw) // 2
         y = (ch - nh) // 2
+        self._preview_display_image = pil.copy()
+        self._preview_display_box = (x, y, nw, nh)
         c.create_image(x, y, image=photo, anchor="nw", tags="frame")
         c.itemconfigure(self._no_video_id, state="hidden")
         if is_playback:
@@ -2838,6 +3027,8 @@ def _clone_timeline_clip(clip: TimelineClip) -> TimelineClip:
         bool(getattr(clip, "chroma_enabled", False)),
         str(getattr(clip, "chroma_color", "#00ff00") or "#00ff00"),
         float(getattr(clip, "chroma_tolerance", 45.0)),
+        float(getattr(clip, "position_x_pct", 0.0)),
+        float(getattr(clip, "position_y_pct", 0.0)),
     )
 
 
@@ -2857,6 +3048,8 @@ def _clip_options_from_timeline_model(timeline_model: Optional[TimelineModel]) -
             "chroma_enabled": bool(getattr(clip, "chroma_enabled", False)),
             "chroma_color": str(getattr(clip, "chroma_color", "#00ff00") or "#00ff00"),
             "chroma_tolerance": float(getattr(clip, "chroma_tolerance", 45.0)),
+            "position_x_pct": float(getattr(clip, "position_x_pct", 0.0)),
+            "position_y_pct": float(getattr(clip, "position_y_pct", 0.0)),
         }
         for clip in timeline_model.video_track.clips
     ]
@@ -2877,6 +3070,8 @@ def _apply_clip_options_to_timeline_model(timeline_model: TimelineModel, raw_opt
         clip.chroma_enabled = bool(raw.get("chroma_enabled", False))
         clip.chroma_color = _normalize_hex_color(str(raw.get("chroma_color") or "#00ff00"))
         clip.chroma_tolerance = _project_float(raw.get("chroma_tolerance"), 45.0)
+        clip.position_x_pct = _project_float(raw.get("position_x_pct"), 0.0)
+        clip.position_y_pct = _project_float(raw.get("position_y_pct"), 0.0)
     timeline_model.audio_track.clips = [_clone_timeline_clip(clip) for clip in timeline_model.video_track.clips]
 
 
@@ -2903,10 +3098,13 @@ def _apply_clip_preview_options(image: Image.Image, clip: Optional[TimelineClip]
     if clip is None:
         return image
     scale_pct = max(25.0, min(300.0, float(getattr(clip, "scale_pct", 100.0))))
+    pos_x = _clamp_float(float(getattr(clip, "position_x_pct", 0.0)), -100.0, 100.0)
+    pos_y = _clamp_float(float(getattr(clip, "position_y_pct", 0.0)), -100.0, 100.0)
     text_overlay = str(getattr(clip, "text_overlay", "") or "").strip()
     chroma_enabled = bool(getattr(clip, "chroma_enabled", False))
     needs_scale = abs(scale_pct - 100.0) > 0.01
-    if not needs_scale and not text_overlay and not chroma_enabled:
+    needs_position = abs(pos_x) > 0.01 or abs(pos_y) > 0.01
+    if not needs_scale and not needs_position and not text_overlay and not chroma_enabled:
         return image
 
     out = image.copy()
@@ -2916,30 +3114,49 @@ def _apply_clip_preview_options(image: Image.Image, clip: Optional[TimelineClip]
             str(getattr(clip, "chroma_color", "#00ff00") or "#00ff00"),
             float(getattr(clip, "chroma_tolerance", 45.0)),
         )
-    if needs_scale:
-        out = _scale_preview_image_centered(out, scale_pct)
+    if needs_scale or needs_position:
+        out = _scale_preview_image_positioned(out, scale_pct, pos_x, pos_y)
     if text_overlay:
         out = _draw_preview_text_overlay(out, text_overlay)
     return out
 
 
 def _scale_preview_image_centered(image: Image.Image, scale_pct: float) -> Image.Image:
+    return _scale_preview_image_positioned(image, scale_pct, 0.0, 0.0)
+
+
+def _scale_preview_image_positioned(
+    image: Image.Image,
+    scale_pct: float,
+    pos_x_pct: float = 0.0,
+    pos_y_pct: float = 0.0,
+) -> Image.Image:
     width, height = image.size
     scale = max(0.25, min(3.0, scale_pct / 100.0))
-    if abs(scale - 1.0) < 0.0001:
+    pos_x = _clamp_float(pos_x_pct, -100.0, 100.0) / 100.0
+    pos_y = _clamp_float(pos_y_pct, -100.0, 100.0) / 100.0
+    if abs(scale - 1.0) < 0.0001 and abs(pos_x) < 0.0001 and abs(pos_y) < 0.0001:
         return image
     if scale > 1.0:
         crop_w = max(1, int(width / scale))
         crop_h = max(1, int(height / scale))
-        x1 = max(0, (width - crop_w) // 2)
-        y1 = max(0, (height - crop_h) // 2)
+        max_x = max(0, width - crop_w)
+        max_y = max(0, height - crop_h)
+        x1 = int(round(max_x / 2 + pos_x * max_x / 2))
+        y1 = int(round(max_y / 2 + pos_y * max_y / 2))
+        x1 = max(0, min(max_x, x1))
+        y1 = max(0, min(max_y, y1))
         return image.crop((x1, y1, x1 + crop_w, y1 + crop_h)).resize((width, height), Image.LANCZOS)
 
     resized_w = max(1, int(width * scale))
     resized_h = max(1, int(height * scale))
     resized = image.resize((resized_w, resized_h), Image.LANCZOS)
     canvas = Image.new(image.mode, (width, height), "black")
-    canvas.paste(resized, ((width - resized_w) // 2, (height - resized_h) // 2))
+    free_x = max(0, width - resized_w)
+    free_y = max(0, height - resized_h)
+    x1 = int(round(free_x / 2 + pos_x * free_x / 2))
+    y1 = int(round(free_y / 2 + pos_y * free_y / 2))
+    canvas.paste(resized, (max(0, min(free_x, x1)), max(0, min(free_y, y1))))
     return canvas
 
 
@@ -2979,6 +3196,34 @@ def _normalize_hex_color(value: str) -> str:
 def _hex_to_rgb(value: str) -> tuple[int, int, int]:
     color = _normalize_hex_color(value)
     return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+
+
+def _sample_preview_hex_color(
+    image: Optional[Image.Image],
+    display_box: tuple[int, int, int, int],
+    x: int,
+    y: int,
+) -> Optional[str]:
+    if image is None:
+        return None
+    left, top, width, height = display_box
+    if width <= 0 or height <= 0:
+        return None
+    if x < left or y < top or x >= left + width or y >= top + height:
+        return None
+    px = max(0, min(width - 1, x - left))
+    py = max(0, min(height - 1, y - top))
+    r, g, b = image.convert("RGB").getpixel((px, py))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _point_inside_display_box(display_box: tuple[int, int, int, int], x: int, y: int) -> bool:
+    box_x, box_y, box_w, box_h = display_box
+    return box_w > 0 and box_h > 0 and box_x <= x < box_x + box_w and box_y <= y < box_y + box_h
+
+
+def _clamp_float(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, float(value)))
 
 
 def _fit_preview_image(image: Image.Image, canvas_w: int, canvas_h: int) -> Image.Image:
@@ -3073,6 +3318,51 @@ def _compact_source_to_display_time(
         if source_time_s < source_start:
             return display_start
     return ranges[-1][3]
+
+
+def _clip_insert_index(clips: list[TimelineClip], start_s: float) -> int:
+    for idx, clip in enumerate(clips):
+        if start_s < clip.start_s:
+            return idx
+        if clip.start_s <= start_s < clip.end_s:
+            return idx + 1
+    return len(clips)
+
+
+def _insert_media_clip_replacing_range(
+    clips: list[TimelineClip],
+    source_path: str,
+    start_s: float,
+    duration_s: float,
+    clip_duration_s: float = 3.0,
+    min_duration_s: float = 0.15,
+) -> tuple[list[TimelineClip], Optional[int]]:
+    if duration_s <= 0:
+        return [_clone_timeline_clip(clip) for clip in clips], None
+    start = max(0.0, min(float(start_s), max(0.0, float(duration_s) - float(min_duration_s))))
+    end = min(float(duration_s), start + max(float(min_duration_s), float(clip_duration_s)))
+    if end <= start + 0.01:
+        return [_clone_timeline_clip(clip) for clip in clips], None
+
+    result: list[TimelineClip] = []
+    for clip in clips:
+        if clip.end_s <= start or clip.start_s >= end:
+            result.append(_clone_timeline_clip(clip))
+            continue
+        if clip.start_s < start and start - clip.start_s >= min_duration_s:
+            left = _clone_timeline_clip(clip)
+            left.end_s = start
+            result.append(left)
+        if clip.end_s > end and clip.end_s - end >= min_duration_s:
+            right = _clone_timeline_clip(clip)
+            right.start_s = end
+            result.append(right)
+
+    inserted = TimelineClip(start, end, "speech", Path(source_path).stem, source_path=source_path)
+    result.append(inserted)
+    result.sort(key=lambda clip: (clip.start_s, clip.end_s))
+    selected = next((idx for idx, clip in enumerate(result) if clip is inserted), None)
+    return result, selected
 
 
 def _clip_edges(clips: list[TimelineClip]) -> list[float]:

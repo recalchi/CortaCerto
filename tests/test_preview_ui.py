@@ -16,6 +16,8 @@ from src.ui.app import (
     _clip_options_from_timeline_model,
     _clip_edges,
     _clip_for_time,
+    _clip_insert_index,
+    _insert_media_clip_replacing_range,
     _clip_source_frame_index,
     _hex_to_rgb,
     _clone_timeline_clip,
@@ -43,6 +45,7 @@ from src.ui.app import (
     _removed_ranges_from_segments,
     _restore_project_from_trash,
     _safe_project_slug,
+    _sample_preview_hex_color,
     _snap_time_to_edges,
     _snap_time_to_edges_with_flag,
     _split_drop_paths,
@@ -238,6 +241,8 @@ class PreviewUiTests(unittest.TestCase):
         clip.chroma_enabled = True
         clip.chroma_color = "#00ff00"
         clip.chroma_tolerance = 70.0
+        clip.position_x_pct = 25.0
+        clip.position_y_pct = -15.0
 
         options = _clip_options_from_timeline_model(model)
         restored = build_timeline_model(10.0, [(0.0, 4.0)])
@@ -252,6 +257,8 @@ class PreviewUiTests(unittest.TestCase):
         self.assertTrue(restored_clip.chroma_enabled)
         self.assertEqual(restored_clip.chroma_color, "#00ff00")
         self.assertEqual(restored_clip.chroma_tolerance, 70.0)
+        self.assertEqual(restored_clip.position_x_pct, 25.0)
+        self.assertEqual(restored_clip.position_y_pct, -15.0)
         self.assertEqual(restored.audio_track.clips[0].scale_pct, 135.0)
 
     def test_clone_timeline_clip_preserves_editor_options(self) -> None:
@@ -265,6 +272,8 @@ class PreviewUiTests(unittest.TestCase):
             transition="Dissolver",
             chroma_enabled=True,
             chroma_color="#112233",
+            position_x_pct=20.0,
+            position_y_pct=-10.0,
         )
 
         cloned = _clone_timeline_clip(clip)
@@ -274,6 +283,8 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(cloned.transition, "Dissolver")
         self.assertTrue(cloned.chroma_enabled)
         self.assertEqual(cloned.chroma_color, "#112233")
+        self.assertEqual(cloned.position_x_pct, 20.0)
+        self.assertEqual(cloned.position_y_pct, -10.0)
 
     def test_clip_for_time_returns_active_clip(self) -> None:
         model = build_timeline_model(10.0, [(1.0, 3.0), (5.0, 7.0)])
@@ -297,12 +308,27 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(rendered.size, image.size)
         self.assertNotEqual(rendered.getpixel((0, 0)), image.getpixel((0, 0)))
 
+    def test_apply_clip_preview_options_positions_scaled_clip(self) -> None:
+        image = Image.new("RGB", (10, 10), "white")
+        clip = TimelineClip(0.0, 1.0, "speech", "Intro", scale_pct=50.0, position_x_pct=100.0)
+
+        rendered = _apply_clip_preview_options(image, clip)
+
+        self.assertEqual(rendered.getpixel((0, 5)), (0, 0, 0))
+        self.assertEqual(rendered.getpixel((9, 5)), (255, 255, 255))
+
     def test_chroma_key_preview_replaces_target_color(self) -> None:
         image = Image.new("RGB", (8, 8), "#00ff00")
 
         rendered = _apply_chroma_key_preview(image, "#00ff00", 5.0)
 
         self.assertNotEqual(rendered.getpixel((0, 0)), (0, 255, 0))
+
+    def test_sample_preview_hex_color_uses_display_box(self) -> None:
+        image = Image.new("RGB", (4, 4), "#112233")
+
+        self.assertEqual(_sample_preview_hex_color(image, (10, 20, 4, 4), 11, 21), "#112233")
+        self.assertIsNone(_sample_preview_hex_color(image, (10, 20, 4, 4), 2, 2))
 
     def test_hex_color_helpers_normalize_invalid_values(self) -> None:
         self.assertEqual(_normalize_hex_color("00FF00"), "#00ff00")
@@ -376,6 +402,45 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(ranges, [(1.0, 3.0, 0.0, 2.0), (6.0, 9.0, 2.0, 5.0)])
         self.assertEqual(_compact_display_to_source_time(2.5, ranges), 6.5)
         self.assertEqual(_compact_source_to_display_time(7.0, ranges), 3.0)
+
+    def test_clip_insert_index_places_media_clip_after_current_range(self) -> None:
+        clips = [
+            TimelineClip(1.0, 3.0, "speech", "Clip 1"),
+            TimelineClip(6.0, 9.0, "speech", "Clip 2"),
+        ]
+
+        self.assertEqual(_clip_insert_index(clips, 0.5), 0)
+        self.assertEqual(_clip_insert_index(clips, 2.0), 1)
+        self.assertEqual(_clip_insert_index(clips, 5.0), 1)
+        self.assertEqual(_clip_insert_index(clips, 10.0), 2)
+
+    def test_insert_media_clip_replaces_range_and_preserves_edges(self) -> None:
+        clips = [TimelineClip(0.0, 10.0, "speech", "Principal")]
+
+        updated, selected = _insert_media_clip_replacing_range(
+            clips,
+            "C:/media/broll.mp4",
+            start_s=4.0,
+            duration_s=10.0,
+            clip_duration_s=3.0,
+            min_duration_s=0.15,
+        )
+
+        self.assertEqual(selected, 1)
+        self.assertEqual([(c.start_s, c.end_s, c.source_path) for c in updated], [
+            (0.0, 4.0, ""),
+            (4.0, 7.0, "C:/media/broll.mp4"),
+            (7.0, 10.0, ""),
+        ])
+
+    def test_insert_media_clip_can_add_same_source_multiple_times(self) -> None:
+        clips = [TimelineClip(0.0, 10.0, "speech", "Principal")]
+
+        first, _selected = _insert_media_clip_replacing_range(clips, "C:/media/broll.mp4", 2.0, 10.0)
+        second, selected = _insert_media_clip_replacing_range(first, "C:/media/broll.mp4", 7.0, 10.0)
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(sum(1 for clip in second if clip.source_path == "C:/media/broll.mp4"), 2)
 
     def test_snap_time_to_edges_uses_threshold(self) -> None:
         clips = [

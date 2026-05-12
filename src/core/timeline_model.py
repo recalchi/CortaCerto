@@ -19,6 +19,8 @@ class TimelineClip:
     chroma_enabled: bool = False
     chroma_color: str = "#00ff00"
     chroma_tolerance: float = 45.0
+    position_x_pct: float = 0.0
+    position_y_pct: float = 0.0
 
 
 @dataclass

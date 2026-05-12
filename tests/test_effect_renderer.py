@@ -62,6 +62,18 @@ class EffectRendererTests(unittest.TestCase):
         self.assertEqual(shrunk.shape, frame.shape)
         self.assertTrue((shrunk[0, 0] == [0, 0, 0]).all())
 
+    def test_clip_frame_options_apply_positioned_scale(self) -> None:
+        frame = np.full((10, 10, 3), 255, dtype=np.uint8)
+
+        rendered = _apply_clip_frame_options_bgr(
+            frame,
+            {"scale_pct": 50.0, "position_x_pct": 100.0, "position_y_pct": 0.0},
+        )
+
+        self.assertEqual(rendered.shape, frame.shape)
+        self.assertTrue((rendered[5, 0] == [0, 0, 0]).all())
+        self.assertTrue((rendered[5, 9] == [255, 255, 255]).all())
+
     def test_apply_chroma_key_bgr_marks_target_color(self) -> None:
         frame = np.zeros((8, 8, 3), dtype=np.uint8)
         frame[:, :] = [0, 255, 0]
