@@ -128,7 +128,7 @@ class CortaCertoApp:
         self._chroma_picker_active = False
         self._preview_display_image: Optional[Image.Image] = None
         self._preview_display_box: tuple[int, int, int, int] = (0, 0, 0, 0)
-        self._preview_drag: Optional[tuple[int, int, float, float]] = None
+        self._preview_drag: Optional[tuple[str, int, int, float, float, float]] = None
         self._preview_drag_moved = False
         self._preview_click_consumed = False
         self._media_listbox: Optional[tk.Listbox] = None
@@ -2076,13 +2076,14 @@ class CortaCertoApp:
         self._preview_drag = None
         self._preview_drag_moved = False
         self._preview_click_consumed = False
+        event_x, event_y = int(event.x), int(event.y)
         if self._chroma_picker_active:
             self._preview_click_consumed = True
             color = _sample_preview_hex_color(
                 self._preview_display_image,
                 self._preview_display_box,
-                int(event.x),
-                int(event.y),
+                event_x,
+                event_y,
             )
             if color:
                 self._clip_chroma_color_var.set(color)
@@ -2094,14 +2095,18 @@ class CortaCertoApp:
             self._chroma_picker_active = False
             return "break"
         clip = self._selected_timeline_clip()
-        if clip is not None and _point_inside_display_box(self._preview_display_box, int(event.x), int(event.y)):
+        if clip is not None and _point_inside_display_box(self._preview_display_box, event_x, event_y):
+            mode = _preview_control_hit(self._preview_display_box, event_x, event_y) or "move"
             self._preview_drag = (
-                int(event.x),
-                int(event.y),
+                mode,
+                event_x,
+                event_y,
                 float(getattr(clip, "position_x_pct", 0.0)),
                 float(getattr(clip, "position_y_pct", 0.0)),
+                float(getattr(clip, "scale_pct", 100.0)),
             )
-            self._tb_status.configure(text="Arraste no preview para posicionar o clipe selecionado.")
+            action = "redimensionar" if mode == "scale" else "posicionar"
+            self._tb_status.configure(text=f"Arraste no preview para {action} o clipe selecionado.")
             return "break"
         return None
 
@@ -2112,16 +2117,23 @@ class CortaCertoApp:
         if clip is None:
             self._preview_drag = None
             return None
-        start_x, start_y, base_x, base_y = self._preview_drag
+        mode, start_x, start_y, base_x, base_y, base_scale = self._preview_drag
         _box_x, _box_y, box_w, box_h = self._preview_display_box
         if box_w <= 0 or box_h <= 0:
             return "break"
-        dx_pct = (int(event.x) - start_x) / max(1, box_w) * 100.0
-        dy_pct = (int(event.y) - start_y) / max(1, box_h) * 100.0
-        clip.position_x_pct = _clamp_float(base_x + dx_pct, -100.0, 100.0)
-        clip.position_y_pct = _clamp_float(base_y + dy_pct, -100.0, 100.0)
-        self._clip_pos_x_var.set(clip.position_x_pct)
-        self._clip_pos_y_var.set(clip.position_y_pct)
+        dx = int(event.x) - start_x
+        dy = int(event.y) - start_y
+        if mode == "scale":
+            delta = (dx + dy) / max(1, min(box_w, box_h)) * 120.0
+            clip.scale_pct = _clamp_float(base_scale + delta, 25.0, 300.0)
+            self._clip_scale_var.set(clip.scale_pct)
+        else:
+            dx_pct = dx / max(1, box_w) * 100.0
+            dy_pct = dy / max(1, box_h) * 100.0
+            clip.position_x_pct = _clamp_float(base_x + dx_pct, -100.0, 100.0)
+            clip.position_y_pct = _clamp_float(base_y + dy_pct, -100.0, 100.0)
+            self._clip_pos_x_var.set(clip.position_x_pct)
+            self._clip_pos_y_var.set(clip.position_y_pct)
         self._timeline_dirty = True
         self._preview_drag_moved = True
         self._draw_frame_at(self._current_frame, fast=True)
@@ -2173,6 +2185,41 @@ class CortaCertoApp:
 
     def _on_preview_frame_ready(self, preview: PreviewFrame) -> None:
         self._queue.put(("__PREVIEW__", preview))
+
+    def _draw_preview_clip_controls(
+        self,
+        canvas: tk.Canvas,
+        display_box: tuple[int, int, int, int],
+        active_clip: Optional[TimelineClip],
+    ) -> None:
+        selected = self._selected_timeline_clip()
+        if selected is None or active_clip is not selected:
+            return
+        x, y, w, h = display_box
+        if w <= 0 or h <= 0:
+            return
+        x2, y2 = x + w, y + h
+        canvas.create_rectangle(x, y, x2, y2, outline="#ffcc44", width=2, tags=("frame", "preview-controls"))
+        for hx, hy in _preview_control_handles(display_box).values():
+            canvas.create_rectangle(
+                hx - 5,
+                hy - 5,
+                hx + 5,
+                hy + 5,
+                fill="#ffcc44",
+                outline="#111116",
+                width=1,
+                tags=("frame", "preview-controls"),
+            )
+        canvas.create_text(
+            x + 8,
+            y + 8,
+            text="arraste para mover | canto para escala",
+            anchor="nw",
+            fill="#ffec99",
+            font=("Segoe UI", 9),
+            tags=("frame", "preview-controls"),
+        )
 
     def _render_preview_frame(self, preview: PreviewFrame) -> None:
         is_playback = (
@@ -2231,6 +2278,7 @@ class CortaCertoApp:
         self._preview_display_image = pil.copy()
         self._preview_display_box = (x, y, nw, nh)
         c.create_image(x, y, image=photo, anchor="nw", tags="frame")
+        self._draw_preview_clip_controls(c, self._preview_display_box, active_clip)
         c.itemconfigure(self._no_video_id, state="hidden")
         if is_playback:
             elapsed_s = max(0.001, time.monotonic() - self._play_started_at)
@@ -3220,6 +3268,20 @@ def _sample_preview_hex_color(
 def _point_inside_display_box(display_box: tuple[int, int, int, int], x: int, y: int) -> bool:
     box_x, box_y, box_w, box_h = display_box
     return box_w > 0 and box_h > 0 and box_x <= x < box_x + box_w and box_y <= y < box_y + box_h
+
+
+def _preview_control_handles(display_box: tuple[int, int, int, int]) -> dict[str, tuple[int, int]]:
+    box_x, box_y, box_w, box_h = display_box
+    return {"scale": (box_x + box_w, box_y + box_h)}
+
+
+def _preview_control_hit(display_box: tuple[int, int, int, int], x: int, y: int, radius: int = 12) -> Optional[str]:
+    if not _point_inside_display_box(display_box, x, y):
+        return None
+    for name, (hx, hy) in _preview_control_handles(display_box).items():
+        if abs(x - hx) <= radius and abs(y - hy) <= radius:
+            return name
+    return None
 
 
 def _clamp_float(value: float, lo: float, hi: float) -> float:
