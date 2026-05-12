@@ -18,6 +18,9 @@ from src.ui.app import (
     _clip_edges,
     _clip_for_time,
     _clip_insert_index,
+    _text_options_from_timeline_model,
+    _apply_text_options_to_timeline_model,
+    _upsert_text_overlay_clip,
     _insert_media_clip_replacing_range,
     _clip_source_frame_index,
     _hex_to_rgb,
@@ -300,6 +303,28 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(restored_clip.text_position_y_pct, 40.0)
         self.assertEqual(restored_clip.text_size_pct, 130.0)
         self.assertEqual(restored.audio_track.clips[0].scale_pct, 135.0)
+        self.assertEqual(restored.text_track.clips[0].text_overlay, "Abertura")
+
+    def test_text_options_round_trip_independent_track(self) -> None:
+        model = build_timeline_model(10.0, [(0.0, 4.0)])
+        clip = model.video_track.clips[0]
+        clip.text_overlay = "Titulo"
+        clip.text_position_x_pct = 10.0
+        clip.text_position_y_pct = 60.0
+        clip.text_size_pct = 120.0
+        _upsert_text_overlay_clip(model, clip)
+
+        options = _text_options_from_timeline_model(model)
+        restored = build_timeline_model(10.0, [(0.0, 4.0)])
+        _apply_text_options_to_timeline_model(restored, options)
+
+        self.assertEqual(len(restored.text_track.clips), 1)
+        text_clip = restored.text_track.clips[0]
+        self.assertEqual(text_clip.clip_type, "text")
+        self.assertEqual(text_clip.text_overlay, "Titulo")
+        self.assertEqual(text_clip.text_position_x_pct, 10.0)
+        self.assertEqual(text_clip.text_position_y_pct, 60.0)
+        self.assertEqual(text_clip.text_size_pct, 120.0)
 
     def test_clone_timeline_clip_preserves_editor_options(self) -> None:
         clip = TimelineClip(
@@ -518,6 +543,21 @@ class PreviewUiTests(unittest.TestCase):
             (4.0, 7.0, "C:/media/broll.mp4"),
             (7.0, 10.0, ""),
         ])
+
+    def test_insert_media_clip_uses_configured_duration(self) -> None:
+        clips = [TimelineClip(0.0, 12.0, "speech", "Principal")]
+
+        updated, selected = _insert_media_clip_replacing_range(
+            clips,
+            "C:/media/broll.mp4",
+            start_s=2.0,
+            duration_s=12.0,
+            clip_duration_s=6.0,
+            min_duration_s=0.15,
+        )
+
+        self.assertEqual(selected, 1)
+        self.assertEqual((updated[1].start_s, updated[1].end_s), (2.0, 8.0))
 
     def test_insert_media_clip_can_add_same_source_multiple_times(self) -> None:
         clips = [TimelineClip(0.0, 10.0, "speech", "Principal")]

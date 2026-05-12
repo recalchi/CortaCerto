@@ -32,7 +32,7 @@ from ..core.ai_assistant import AiSuggestionRequest, suggest_metadata
 from ..core.color_grade import ColorGrade, PRESET_CAPCUT
 from ..core.preview_engine import PreviewEngine, PreviewFrame, PreviewSettings
 from ..core.timeline_manifest import build_timeline_manifest
-from ..core.timeline_model import TimelineClip, TimelineModel, build_timeline_model
+from ..core.timeline_model import TimelineClip, TimelineModel, TimelineTrack, build_timeline_model
 from ..pipeline import run_pipeline, PipelineResult
 from ..ffmpeg_env import encoder_label, ffplay
 
@@ -152,8 +152,9 @@ class CortaCertoApp:
         self._analysis_done = False
         self._timeline_model: Optional[TimelineModel] = None
         self._selected_clip_index: Optional[int] = None
+        self._selected_text_index: Optional[int] = None
         self._timeline_dirty = False
-        self._timeline_undo_stack: list[tuple[list[TimelineClip], Optional[int], bool]] = []
+        self._timeline_undo_stack: list[tuple[list[TimelineClip], list[TimelineClip], Optional[int], Optional[int], bool]] = []
         self._trim_drag: Optional[tuple[int, str]] = None
         self._hover_trim_handle: Optional[tuple[int, str]] = None
         self._trim_undo_captured = False
@@ -172,6 +173,7 @@ class CortaCertoApp:
         self._clip_chroma_var = tk.BooleanVar(value=False)
         self._clip_chroma_color_var = tk.StringVar(value="#00ff00")
         self._clip_chroma_tolerance_var = tk.DoubleVar(value=45.0)
+        self._insert_duration_var = tk.DoubleVar(value=3.0)
         self._project_status_var = tk.StringVar(value="")
         self._chroma_picker_active = False
         self._preview_display_image: Optional[Image.Image] = None
@@ -449,6 +451,7 @@ class CortaCertoApp:
         self._analysis_done = False
         self._timeline_model = None
         self._selected_clip_index = None
+        self._selected_text_index = None
         self._timeline_dirty = False
         self._timeline_undo_stack.clear()
         self._trim_drag = None
@@ -577,8 +580,9 @@ class CortaCertoApp:
             return "break"
         time_s = self._timeline_time_from_event(event)
         inserted = 0
+        insert_duration = self._insert_duration_s()
         for offset, path in enumerate(paths):
-            if self._insert_media_path_at_time(path, min(self._duration_s, time_s + offset * 3.0), save=False):
+            if self._insert_media_path_at_time(path, min(self._duration_s, time_s + offset * insert_duration), save=False):
                 inserted += 1
         self._save_project_media_paths()
         self._tb_status.configure(text=f"{inserted} mídia(s) inserida(s) na timeline.")
@@ -782,7 +786,7 @@ class CortaCertoApp:
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=8,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).pack(side="right", padx=(8, 0))
 
-        self._tl_canvas = tk.Canvas(tl_outer, bg=TL_BG, height=120,
+        self._tl_canvas = tk.Canvas(tl_outer, bg=TL_BG, height=148,
                                      highlightthickness=0, cursor="hand2")
         self._tl_canvas.grid(row=1, column=0, sticky="nsew", padx=4, pady=(2,4))
         self._tl_canvas.bind("<Configure>", lambda e: self._redraw_timeline())
@@ -817,7 +821,12 @@ class CortaCertoApp:
         time_s = self._timeline_click_time(event.x, track_x1, track_x2)
         time_s, snapped = self._snap_time_to_clip_edge(time_s)
         frame = self._time_to_frame(time_s)
-        self._select_clip_at_time(time_s)
+        top = 8
+        text_y1, text_y2 = top + 46, top + 70
+        if text_y1 <= int(event.y) <= text_y2:
+            self._select_text_at_time(time_s)
+        else:
+            self._select_clip_at_time(time_s)
         self._seek_to(frame)
         if snapped:
             self._tb_status.configure(text=f"Playhead encaixado em {_fmt(time_s)}.")
@@ -924,6 +933,13 @@ class CortaCertoApp:
 
     def _select_clip_at_time(self, time_s: float) -> None:
         self._selected_clip_index = self._clip_index_at_time(time_s)
+        self._selected_text_index = None
+        self._redraw_timeline()
+        self._refresh_clip_inspector()
+
+    def _select_text_at_time(self, time_s: float) -> None:
+        self._selected_text_index = self._text_clip_index_at_time(time_s)
+        self._selected_clip_index = None
         self._redraw_timeline()
         self._refresh_clip_inspector()
 
@@ -962,6 +978,16 @@ class CortaCertoApp:
         self._tb_status.configure(text=f"Clipe dividido em {_fmt(split_s)}.")
 
     def _delete_selected_clip(self) -> None:
+        if self._timeline_model and self._selected_text_index is not None:
+            self._push_timeline_undo()
+            text_clips = _timeline_text_clips(self._timeline_model)
+            if 0 <= self._selected_text_index < len(text_clips):
+                del text_clips[self._selected_text_index]
+            self._selected_text_index = None
+            self._timeline_dirty = True
+            self._sync_manual_timeline(mark_dirty=True)
+            self._tb_status.configure(text="Texto removido da timeline.")
+            return
         if not self._timeline_model or self._selected_clip_index is None:
             self._tb_status.configure(text="Selecione um clipe na timeline para excluir.")
             return
@@ -983,7 +1009,11 @@ class CortaCertoApp:
             _clone_timeline_clip(c)
             for c in self._timeline_model.video_track.clips
         ]
-        self._timeline_undo_stack.append((clips, self._selected_clip_index, self._timeline_dirty))
+        text_clips = [
+            _clone_timeline_clip(c)
+            for c in _timeline_text_clips(self._timeline_model)
+        ]
+        self._timeline_undo_stack.append((clips, text_clips, self._selected_clip_index, self._selected_text_index, self._timeline_dirty))
         if len(self._timeline_undo_stack) > 50:
             self._timeline_undo_stack.pop(0)
 
@@ -993,11 +1023,15 @@ class CortaCertoApp:
             return
         self._stop_playback(reset_button=True)
         current_time = self._current_frame / max(1.0, self._fps)
-        clips, selected_index, was_dirty = self._timeline_undo_stack.pop()
+        clips, text_clips, selected_index, selected_text_index, was_dirty = self._timeline_undo_stack.pop()
         self._timeline_model.video_track.clips = [
             _clone_timeline_clip(c) for c in clips
         ]
+        self._timeline_model.text_track.clips = [
+            _clone_timeline_clip(c) for c in text_clips
+        ]
         self._selected_clip_index = selected_index
+        self._selected_text_index = selected_text_index
         self._timeline_dirty = was_dirty
         self._sync_manual_timeline(mark_dirty=was_dirty)
         self._seek_to(self._time_to_frame(self._nearest_kept_time(current_time)))
@@ -1043,16 +1077,19 @@ class CortaCertoApp:
 
         label_w = TL_LABEL_W
         top = 8
-        video_y1, video_y2 = top + 12, top + 40
-        audio_y1, audio_y2 = top + 56, h - 18
+        video_y1, video_y2 = top + 12, top + 38
+        text_y1, text_y2 = top + 46, top + 70
+        audio_y1, audio_y2 = top + 82, h - 18
 
         c.create_rectangle(0, 0, label_w, h, fill="#101015", outline="")
+        c.create_text(label_w // 2, (text_y1 + text_y2) // 2, text="TEXTO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
         c.create_text(label_w // 2, (video_y1 + video_y2) // 2, text="VÍDEO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
         c.create_text(label_w // 2, (audio_y1 + audio_y2) // 2, text="ÁUDIO", fill=C_MUTED, font=("Segoe UI", 8, "bold"))
 
         track_x1, track_x2 = self._timeline_track_bounds(w)
         draw_x1, draw_x2 = self._timeline_zoomed_bounds(track_x1, track_x2)
         c.create_rectangle(track_x1, video_y1, track_x2, video_y2, fill="#1b2130", outline="")
+        c.create_rectangle(track_x1, text_y1, track_x2, text_y2, fill="#201a28", outline="")
         c.create_rectangle(track_x1, audio_y1, track_x2, audio_y2, fill="#171b24", outline="")
         if self._waveform_zoom > 1.001:
             c.create_text(track_x1 + 8, top + 3, text=f"{self._waveform_zoom:.2f}x", fill=C_MUTED, font=("Segoe UI", 8), anchor="w")
@@ -1091,6 +1128,20 @@ class CortaCertoApp:
                 c.create_text((x1 + x2) // 2, (video_y1 + video_y2) // 2, text=clip.label, fill="#d6e6ff", font=("Segoe UI", 8))
             if compact and idx > 0:
                 c.create_line(x1, video_y1 + 1, x1, audio_y2 - 1, fill=TL_HEAD)
+
+        for text_idx, text_clip in enumerate(_timeline_text_clips(self._timeline_model)):
+            if compact and compact_ranges:
+                start_s = _compact_source_to_display_time(text_clip.start_s, compact_ranges)
+                end_s = _compact_source_to_display_time(text_clip.end_s, compact_ranges)
+            else:
+                start_s, end_s = text_clip.start_s, text_clip.end_s
+            x1 = _timeline_view_time_to_x(start_s, view_start, view_end, draw_x1, draw_x2)
+            x2 = _timeline_view_time_to_x(end_s, view_start, view_end, draw_x1, draw_x2)
+            text_outline = C_YELLOW if text_idx == self._selected_text_index else "#bca8ff"
+            text_width = 2 if text_idx == self._selected_text_index else 1
+            c.create_rectangle(x1, text_y1 + 2, x2, text_y2 - 2, fill="#6f4cc3", outline=text_outline, width=text_width)
+            if x2 - x1 > 48:
+                c.create_text((x1 + x2) // 2, (text_y1 + text_y2) // 2, text=text_clip.label or "Texto", fill="#f0eaff", font=("Segoe UI", 8))
 
         self._draw_waveform_track(
             c,
@@ -1289,6 +1340,14 @@ class CortaCertoApp:
                 return len(self._timeline_model.video_track.clips) - 1
         return None
 
+    def _text_clip_index_at_time(self, time_s: float) -> Optional[int]:
+        if not self._timeline_model:
+            return None
+        for idx, clip in enumerate(_timeline_text_clips(self._timeline_model)):
+            if clip.start_s <= time_s < clip.end_s:
+                return idx
+        return None
+
     def _build_properties(self, parent: tk.Frame) -> None:
         props = tk.Frame(parent, bg=C_PANEL, width=300)
         props.grid(row=0, column=1, rowspan=2, sticky="nsew",
@@ -1480,7 +1539,11 @@ class CortaCertoApp:
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=3, sticky="ew", padx=(4, 0))
 
-        self._section(parent, "CLIPE SELECIONADO", row + 3)
+        self._insert_duration_label = self._inspector_slider(
+            parent, "Duração inserir", self._insert_duration_var, 1, 15, row + 3, suffix="s", command=self._refresh_project_status
+        )
+
+        self._section(parent, "CLIPE SELECIONADO", row + 4)
         self._clip_label_entry = ctk.CTkEntry(
             parent,
             textvariable=self._clip_label_var,
@@ -1492,33 +1555,33 @@ class CortaCertoApp:
             font=ctk.CTkFont(size=11),
             height=30,
         )
-        self._clip_label_entry.grid(row=row + 4, column=0, sticky="ew", padx=10, pady=2)
+        self._clip_label_entry.grid(row=row + 5, column=0, sticky="ew", padx=10, pady=2)
         self._clip_label_entry.bind("<Return>", lambda _e: self._apply_clip_inspector())
         self._clip_label_entry.bind("<FocusOut>", lambda _e: self._apply_clip_inspector())
 
         self._clip_scale_label = self._inspector_slider(
-            parent, "Escala do vídeo", self._clip_scale_var, 25, 300, row + 5, suffix="%"
+            parent, "Escala do vídeo", self._clip_scale_var, 25, 300, row + 6, suffix="%"
         )
         self._clip_pos_x_label = self._inspector_slider(
-            parent, "Posição X", self._clip_pos_x_var, -100, 100, row + 6, suffix="%"
+            parent, "Posição X", self._clip_pos_x_var, -100, 100, row + 7, suffix="%"
         )
         self._clip_pos_y_label = self._inspector_slider(
-            parent, "Posição Y", self._clip_pos_y_var, -100, 100, row + 7, suffix="%"
+            parent, "Posição Y", self._clip_pos_y_var, -100, 100, row + 8, suffix="%"
         )
         self._clip_volume_label = self._inspector_slider(
-            parent, "Volume do clipe", self._clip_volume_var, 0, 200, row + 8, suffix="%"
+            parent, "Volume do clipe", self._clip_volume_var, 0, 200, row + 9, suffix="%"
         )
         self._clip_text_x_label = self._inspector_slider(
-            parent, "Texto X", self._clip_text_x_var, -100, 100, row + 9, suffix="%"
+            parent, "Texto X", self._clip_text_x_var, -100, 100, row + 10, suffix="%"
         )
         self._clip_text_y_label = self._inspector_slider(
-            parent, "Texto Y", self._clip_text_y_var, 0, 100, row + 10, suffix="%"
+            parent, "Texto Y", self._clip_text_y_var, 0, 100, row + 11, suffix="%"
         )
         self._clip_text_size_label = self._inspector_slider(
-            parent, "Tamanho texto", self._clip_text_size_var, 50, 220, row + 11, suffix="%"
+            parent, "Tamanho texto", self._clip_text_size_var, 50, 220, row + 12, suffix="%"
         )
         tr = tk.Frame(parent, bg=C_PANEL)
-        tr.grid(row=row + 12, column=0, sticky="ew", padx=10, pady=(2, 4))
+        tr.grid(row=row + 13, column=0, sticky="ew", padx=10, pady=(2, 4))
         tr.grid_columnconfigure(1, weight=1)
         tk.Label(tr, text="Transição", bg=C_PANEL, fg=C_MUTED,
                  font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
@@ -1534,7 +1597,7 @@ class CortaCertoApp:
             font=ctk.CTkFont(size=11),
         ).grid(row=0, column=1, sticky="e")
         clip_actions = tk.Frame(parent, bg=C_PANEL)
-        clip_actions.grid(row=row + 13, column=0, sticky="ew", padx=10, pady=(0, 8))
+        clip_actions.grid(row=row + 14, column=0, sticky="ew", padx=10, pady=(0, 8))
         clip_actions.grid_columnconfigure(0, weight=1)
         clip_actions.grid_columnconfigure(1, weight=1)
         tk.Button(clip_actions, text="Texto no clipe", command=self._add_text_to_selected_clip,
@@ -1544,7 +1607,7 @@ class CortaCertoApp:
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=1, sticky="ew", padx=(4, 0))
         chroma = tk.Frame(parent, bg=C_PANEL)
-        chroma.grid(row=row + 14, column=0, sticky="ew", padx=10, pady=(0, 4))
+        chroma.grid(row=row + 15, column=0, sticky="ew", padx=10, pady=(0, 4))
         chroma.grid_columnconfigure(1, weight=1)
         tk.Checkbutton(
             chroma,
@@ -1573,9 +1636,9 @@ class CortaCertoApp:
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         self._clip_chroma_tolerance_label = self._inspector_slider(
-            parent, "Tolerância chroma", self._clip_chroma_tolerance_var, 5, 160, row + 15
+            parent, "Tolerância chroma", self._clip_chroma_tolerance_var, 5, 160, row + 16
         )
-        self._section(parent, "STATUS DO PROJETO", row + 16)
+        self._section(parent, "STATUS DO PROJETO", row + 17)
         tk.Label(
             parent,
             textvariable=self._project_status_var,
@@ -1585,12 +1648,12 @@ class CortaCertoApp:
             anchor="w",
             wraplength=260,
             font=("Segoe UI", 9),
-        ).grid(row=row + 17, column=0, sticky="ew", padx=12, pady=(0, 10))
+        ).grid(row=row + 18, column=0, sticky="ew", padx=12, pady=(0, 10))
         self._refresh_media_list()
         self._refresh_clip_inspector()
         self._refresh_project_status()
 
-    def _inspector_slider(self, parent, label: str, var: tk.DoubleVar, lo: int, hi: int, row: int, suffix: str = "") -> tk.Label:
+    def _inspector_slider(self, parent, label: str, var: tk.DoubleVar, lo: int, hi: int, row: int, suffix: str = "", command=None) -> tk.Label:
         frame = tk.Frame(parent, bg=C_PANEL)
         frame.grid(row=row, column=0, sticky="ew", padx=10, pady=2)
         frame.grid_columnconfigure(1, weight=1)
@@ -1607,7 +1670,7 @@ class CortaCertoApp:
             button_color=C_ACCENT,
             progress_color=C_ACCENT,
             fg_color=C_SURFACE,
-            command=lambda _v: (value_lbl.configure(text=f"{int(var.get())}{suffix}"), self._apply_clip_inspector()),
+            command=lambda _v: (value_lbl.configure(text=f"{int(var.get())}{suffix}"), command() if command else self._apply_clip_inspector()),
         )
         slider.grid(row=0, column=1, sticky="ew", padx=6)
         return value_lbl
@@ -1658,6 +1721,10 @@ class CortaCertoApp:
 
     def _selected_timeline_clip(self) -> Optional[TimelineClip]:
         if not self._timeline_model or self._selected_clip_index is None:
+            if self._timeline_model and self._selected_text_index is not None:
+                text_clips = _timeline_text_clips(self._timeline_model)
+                if 0 <= self._selected_text_index < len(text_clips):
+                    return text_clips[self._selected_text_index]
             return None
         clips = self._timeline_model.video_track.clips
         if 0 <= self._selected_clip_index < len(clips):
@@ -1702,6 +1769,17 @@ class CortaCertoApp:
         clip = self._selected_timeline_clip()
         if clip is None:
             return
+        if clip.clip_type == "text":
+            text = self._clip_label_var.get().strip() or clip.label or "Texto"
+            clip.label = text
+            clip.text_overlay = text
+            clip.text_position_x_pct = float(self._clip_text_x_var.get())
+            clip.text_position_y_pct = float(self._clip_text_y_var.get())
+            clip.text_size_pct = float(self._clip_text_size_var.get())
+            self._timeline_dirty = True
+            self._sync_manual_timeline(mark_dirty=True)
+            self._tb_status.configure(text="Texto atualizado.")
+            return
         clip.label = self._clip_label_var.get().strip() or clip.label
         clip.scale_pct = float(self._clip_scale_var.get())
         clip.position_x_pct = float(self._clip_pos_x_var.get())
@@ -1709,6 +1787,8 @@ class CortaCertoApp:
         clip.text_position_x_pct = float(self._clip_text_x_var.get())
         clip.text_position_y_pct = float(self._clip_text_y_var.get())
         clip.text_size_pct = float(self._clip_text_size_var.get())
+        if clip.text_overlay.strip():
+            _upsert_text_overlay_clip(self._timeline_model, clip)
         clip.volume_pct = float(self._clip_volume_var.get())
         clip.transition = self._clip_transition_var.get()
         clip.chroma_enabled = bool(self._clip_chroma_var.get())
@@ -1723,15 +1803,20 @@ class CortaCertoApp:
         if clip is None:
             self._tb_status.configure(text="Selecione um clipe para adicionar texto.")
             return
+        if clip.clip_type == "text":
+            self._apply_clip_inspector()
+            return
+        self._push_timeline_undo()
         text = self._clip_label_var.get().strip() or clip.label or "Texto"
         clip.text_overlay = text
         clip.label = text
         clip.text_position_x_pct = float(self._clip_text_x_var.get())
         clip.text_position_y_pct = float(self._clip_text_y_var.get())
         clip.text_size_pct = float(self._clip_text_size_var.get())
+        _upsert_text_overlay_clip(self._timeline_model, clip)
         self._timeline_dirty = True
         self._sync_manual_timeline(mark_dirty=True)
-        self._tb_status.configure(text="Texto associado ao clipe selecionado.")
+        self._tb_status.configure(text="Texto criado na track de texto e associado ao clipe selecionado.")
 
     def _assign_selected_media_to_clip(self) -> None:
         path = self._selected_project_media_path()
@@ -1760,8 +1845,11 @@ class CortaCertoApp:
             return
         start_s = min(self._duration_s, max(0.0, self._current_frame / max(1.0, self._fps)))
         if self._insert_media_path_at_time(path, start_s):
-            self._tb_status.configure(text=f"Clipe inserido na timeline: {Path(path).name}.")
+            self._tb_status.configure(text=f"Clipe inserido/substituído ({self._insert_duration_s():.0f}s): {Path(path).name}.")
         return
+
+    def _insert_duration_s(self) -> float:
+        return _clamp_float(float(self._insert_duration_var.get()), 1.0, 15.0)
 
     def _insert_media_path_at_time(self, path: str, start_s: float, save: bool = True) -> bool:
         if not self._timeline_model:
@@ -1773,7 +1861,7 @@ class CortaCertoApp:
             path,
             start_s,
             self._duration_s,
-            clip_duration_s=3.0,
+            clip_duration_s=self._insert_duration_s(),
             min_duration_s=self._trim_min_duration_s,
         )
         if selected_index is None:
@@ -1793,13 +1881,14 @@ class CortaCertoApp:
     def _refresh_project_status(self) -> None:
         selected = self._selected_timeline_clip()
         clip_name = selected.label if selected else "nenhum"
-        source = Path(selected.source_path).name if selected and selected.source_path else "mídia principal"
+        source = "track de texto" if selected and selected.clip_type == "text" else (Path(selected.source_path).name if selected and selected.source_path else "mídia principal")
         clips = len(self._timeline_model.video_track.clips) if self._timeline_model else 0
         self._project_status_var.set(
             f"Mídias: {len(self._project_media_paths)}\n"
             f"Clipes: {clips}\n"
             f"Selecionado: {clip_name}\n"
             f"Origem do clipe: {source}\n"
+            f"Inserir/substituir: {self._insert_duration_s():.0f}s\n"
             f"Zoom timeline: {self._waveform_zoom:.2f}x"
         )
 
@@ -2033,6 +2122,7 @@ class CortaCertoApp:
                 timeline_segments=self._segments,
                 timeline_dirty=self._timeline_dirty,
                 clip_options=_clip_options_from_timeline_model(self._timeline_model),
+                text_options=_text_options_from_timeline_model(self._timeline_model),
             ))
             metadata["timeline_manifest"] = build_timeline_manifest(
                 self._timeline_model,
@@ -2067,6 +2157,7 @@ class CortaCertoApp:
             return None
         _apply_segments_to_timeline_model(timeline_model, self._duration_s, segments)
         _apply_clip_options_to_timeline_model(timeline_model, metadata.get("clip_options"))
+        _apply_text_options_to_timeline_model(timeline_model, metadata.get("text_options"))
         self._timeline_dirty = bool(metadata.get("timeline_dirty", True))
         return segments
 
@@ -3010,6 +3101,7 @@ def _project_state_payload(
     subtitle: str = "",
     description: str = "",
     clip_options: Optional[list[dict[str, object]]] = None,
+    text_options: Optional[list[dict[str, object]]] = None,
 ) -> dict[str, object]:
     return {
         "app": "CortaCerto",
@@ -3030,6 +3122,7 @@ def _project_state_payload(
             if float(end) > float(start)
         ],
         "clip_options": clip_options or [],
+        "text_options": text_options or [],
         "timeline_dirty": bool(timeline_dirty),
         "updated_at": int(time.time()),
     }
@@ -3207,6 +3300,7 @@ def _apply_segments_to_timeline_model(
     timeline_model.audio_track.clips = [
         TimelineClip(c.start_s, c.end_s, c.clip_type, c.label) for c in clips
     ]
+    timeline_model.text_track.clips = []
     timeline_model.removed_ranges = _removed_ranges_from_segments(duration_s, segments)
     timeline_model.saved_time_s = sum(end - start for start, end in timeline_model.removed_ranges)
 
@@ -3259,6 +3353,24 @@ def _clip_options_from_timeline_model(timeline_model: Optional[TimelineModel]) -
     ]
 
 
+def _text_options_from_timeline_model(timeline_model: Optional[TimelineModel]) -> list[dict[str, object]]:
+    if timeline_model is None:
+        return []
+    return [
+        {
+            "start_s": float(clip.start_s),
+            "end_s": float(clip.end_s),
+            "label": clip.label,
+            "text_overlay": str(getattr(clip, "text_overlay", "") or clip.label or ""),
+            "text_position_x_pct": float(getattr(clip, "text_position_x_pct", 0.0)),
+            "text_position_y_pct": float(getattr(clip, "text_position_y_pct", 72.0)),
+            "text_size_pct": float(getattr(clip, "text_size_pct", 100.0)),
+        }
+        for clip in _timeline_text_clips(timeline_model)
+        if str(getattr(clip, "text_overlay", "") or clip.label or "").strip()
+    ]
+
+
 def _apply_clip_options_to_timeline_model(timeline_model: TimelineModel, raw_options: object) -> None:
     if not isinstance(raw_options, list):
         return
@@ -3280,6 +3392,81 @@ def _apply_clip_options_to_timeline_model(timeline_model: TimelineModel, raw_opt
         clip.position_x_pct = _project_float(raw.get("position_x_pct"), 0.0)
         clip.position_y_pct = _project_float(raw.get("position_y_pct"), 0.0)
     timeline_model.audio_track.clips = [_clone_timeline_clip(clip) for clip in timeline_model.video_track.clips]
+    _rebuild_text_track_from_video_text(timeline_model)
+
+
+def _apply_text_options_to_timeline_model(timeline_model: TimelineModel, raw_options: object) -> None:
+    if not isinstance(raw_options, list):
+        return
+    text_clips: list[TimelineClip] = []
+    for raw in raw_options:
+        if not isinstance(raw, dict):
+            continue
+        start_s = _project_float(raw.get("start_s"), 0.0)
+        end_s = _project_float(raw.get("end_s"), start_s)
+        text = str(raw.get("text_overlay") or raw.get("label") or "").strip()
+        if end_s <= start_s or not text:
+            continue
+        text_clips.append(
+            TimelineClip(
+                start_s,
+                end_s,
+                "text",
+                text,
+                text_overlay=text,
+                text_position_x_pct=_project_float(raw.get("text_position_x_pct"), 0.0),
+                text_position_y_pct=_project_float(raw.get("text_position_y_pct"), 72.0),
+                text_size_pct=_project_float(raw.get("text_size_pct"), 100.0),
+            )
+        )
+    if text_clips:
+        timeline_model.text_track.clips = text_clips
+
+
+def _timeline_text_clips(timeline_model: Optional[TimelineModel]) -> list[TimelineClip]:
+    if timeline_model is None:
+        return []
+    track = getattr(timeline_model, "text_track", None)
+    if track is None:
+        timeline_model.text_track = TimelineTrack(name="Texto")
+        return []
+    return track.clips
+
+
+def _rebuild_text_track_from_video_text(timeline_model: TimelineModel) -> None:
+    timeline_model.text_track.clips = []
+    for clip in timeline_model.video_track.clips:
+        if str(getattr(clip, "text_overlay", "") or "").strip():
+            _upsert_text_overlay_clip(timeline_model, clip)
+
+
+def _upsert_text_overlay_clip(timeline_model: Optional[TimelineModel], video_clip: TimelineClip) -> None:
+    if timeline_model is None:
+        return
+    text = str(getattr(video_clip, "text_overlay", "") or "").strip()
+    if not text:
+        return
+    text_clips = _timeline_text_clips(timeline_model)
+    for clip in text_clips:
+        if abs(clip.start_s - video_clip.start_s) < 0.001 and abs(clip.end_s - video_clip.end_s) < 0.001:
+            clip.label = text
+            clip.text_overlay = text
+            clip.text_position_x_pct = float(getattr(video_clip, "text_position_x_pct", 0.0))
+            clip.text_position_y_pct = float(getattr(video_clip, "text_position_y_pct", 72.0))
+            clip.text_size_pct = float(getattr(video_clip, "text_size_pct", 100.0))
+            return
+    text_clips.append(
+        TimelineClip(
+            video_clip.start_s,
+            video_clip.end_s,
+            "text",
+            text,
+            text_overlay=text,
+            text_position_x_pct=float(getattr(video_clip, "text_position_x_pct", 0.0)),
+            text_position_y_pct=float(getattr(video_clip, "text_position_y_pct", 72.0)),
+            text_size_pct=float(getattr(video_clip, "text_size_pct", 100.0)),
+        )
+    )
 
 
 def _clip_for_time(timeline_model: Optional[TimelineModel], time_s: float) -> Optional[TimelineClip]:

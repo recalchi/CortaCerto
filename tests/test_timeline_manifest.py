@@ -58,12 +58,28 @@ class TimelineManifestTests(unittest.TestCase):
             removed_ranges=[],
             waveform=[],
             saved_time_s=0.0,
+            text_track=TimelineTrack(
+                "Texto",
+                [
+                    TimelineClip(
+                        0.0,
+                        4.0,
+                        "text",
+                        "Titulo",
+                        text_overlay="Titulo",
+                        text_position_x_pct=10.0,
+                        text_position_y_pct=40.0,
+                        text_size_pct=120.0,
+                    )
+                ],
+            ),
         )
 
         manifest = build_timeline_manifest(model, "Canal", "C:/media/main.mp4")
 
         video_effects = manifest["tracks"][0]["clips"][0]["effects"]
         audio_effects = manifest["tracks"][1]["clips"][0]["effects"]
+        text_effects = manifest["tracks"][2]["clips"][0]["effects"]
         self.assertEqual([effect["type"] for effect in video_effects], ["transform", "text", "chroma_key", "transition"])
         self.assertEqual(video_effects[0]["position_x_pct"], 12.0)
         self.assertEqual(video_effects[0]["position_y_pct"], -8.0)
@@ -71,6 +87,8 @@ class TimelineManifestTests(unittest.TestCase):
         self.assertEqual(video_effects[1]["position_y_pct"], 40.0)
         self.assertEqual(video_effects[1]["size_pct"], 120.0)
         self.assertEqual(audio_effects, [{"type": "volume", "volume_pct": 70.0}])
+        self.assertEqual(manifest["tracks"][2]["kind"], "text")
+        self.assertEqual(text_effects[0]["text"], "Titulo")
 
 
 if __name__ == "__main__":
