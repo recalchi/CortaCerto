@@ -238,6 +238,7 @@ Principais pontos já estabilizados:
 - Export aplica volume por clipe com filtro de áudio por range de saída antes da normalização/loudnorm final.
 - Runner da sprint ganhou `--include-export-smoke` para gerar vídeos sintéticos e validar um export real curto com mídia associada, efeitos e áudio por clipe.
 - Integrações por API devem ficar apenas em `.env`; o runner verifica vazamentos comuns de chave em arquivos rastreáveis e o app usa valores mascarados em diagnósticos.
+- Camada `ai_assistant` cria uma interface única para sugestões de título/subtítulo/descrição, com fallback local e provedores configurados sem chamada de rede por enquanto.
 - Projetos passam a salvar `timeline_manifest`, uma estrutura inspirada em OTIO/MLT com mídia externa, tracks, clips, ranges compactados e efeitos por escopo.
 - Inspetor do clipe ganhou base de chroma key por clipe, com cor/tolerância e preview substituindo o fundo cromado por marcação neutra.
 - Timeline ganhou botões de zoom `+`/`-` além do slider, e o painel lateral mostra um status rápido de mídias, clipes, seleção e zoom.
