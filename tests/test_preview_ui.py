@@ -187,6 +187,9 @@ class PreviewUiTests(unittest.TestCase):
             timeline_segments=[(1.0, 3.0), (5.0, 5.0), (6.0, 8.0)],
             timeline_dirty=True,
             media_paths=["C:/extra.mov"],
+            title="Titulo",
+            subtitle="Sub",
+            description="Descricao",
             clip_options=[{"label": "Intro", "scale_pct": 125.0}],
         )
 
@@ -198,6 +201,7 @@ class PreviewUiTests(unittest.TestCase):
             {"start_s": 6.0, "end_s": 8.0},
         ])
         self.assertEqual(payload["clip_options"], [{"label": "Intro", "scale_pct": 125.0}])
+        self.assertEqual(payload["publish"], {"title": "Titulo", "subtitle": "Sub", "description": "Descricao"})
         self.assertTrue(payload["timeline_dirty"])
 
     def test_project_segments_from_metadata_clamps_invalid_ranges(self) -> None:
