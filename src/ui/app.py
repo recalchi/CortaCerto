@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw, ImageTk
 
 from ..config import ProcessingConfig, Platform, SilenceStyle, PRESETS
 from ..core.audio_waveform import extract_waveform
+from ..core.ai_assistant import AiSuggestionRequest, suggest_metadata
 from ..core.color_grade import ColorGrade, PRESET_CAPCUT
 from ..core.preview_engine import PreviewEngine, PreviewFrame, PreviewSettings
 from ..core.timeline_manifest import build_timeline_manifest
@@ -1140,11 +1141,15 @@ class CortaCertoApp:
         self._section(s, "TÍTULO DA THUMBNAIL", 2)
         self._title_entry = self._entry(s, "Título", 3)
         self._subtitle_entry = self._entry(s, "Subtítulo (ex: CRONOLOGIA)", 4)
+        tk.Button(s, text="Sugerir com IA", command=self._suggest_title_with_ai,
+                  bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=8,
+                  font=("Segoe UI", 9), cursor="hand2", bd=0).grid(
+            row=5, column=0, sticky="ew", padx=10, pady=(2, 8))
 
         # Plataforma
-        self._section(s, "PLATAFORMA", 5)
+        self._section(s, "PLATAFORMA", 6)
         pf = tk.Frame(s, bg=C_PANEL)
-        pf.grid(row=6, column=0, sticky="ew", padx=10, pady=(0,6))
+        pf.grid(row=7, column=0, sticky="ew", padx=10, pady=(0,6))
         self._platform_var = tk.StringVar(value=Platform.YOUTUBE.value)
         plat_opts = [("YouTube", Platform.YOUTUBE), ("Reels/IG", Platform.REELS),
                      ("TikTok",  Platform.TIKTOK),  ("Shorts",  Platform.SHORTS)]
@@ -1156,12 +1161,12 @@ class CortaCertoApp:
                            relief="flat").grid(row=i//2, column=i%2, sticky="w", padx=4)
 
         # -- Corte de Silêncio ---------------------------------------------
-        self._section(s, "CORTE DE SILÊNCIO", 7)
+        self._section(s, "CORTE DE SILÊNCIO", 8)
         self._rm_silence_var = tk.BooleanVar(value=False)
-        self._check(s, "Ativar corte de silêncios", self._rm_silence_var, 8)
+        self._check(s, "Ativar corte de silêncios", self._rm_silence_var, 9)
 
         sf = tk.Frame(s, bg=C_PANEL)
-        sf.grid(row=9, column=0, sticky="ew", padx=10, pady=(0,4))
+        sf.grid(row=10, column=0, sticky="ew", padx=10, pady=(0,4))
         self._silence_var = tk.StringVar(value=SilenceStyle.NATURAL.value)
         for i, (lbl, style) in enumerate([
             ("Agressivo", SilenceStyle.AGGRESSIVE),
@@ -1177,17 +1182,17 @@ class CortaCertoApp:
         self._sliders: dict[str, ctk.CTkSlider] = {}
         self._slider_lbl: dict[str, ctk.CTkLabel] = {}
         self._prop_slider(s, "Limiar de silêncio (dBFS)", "silence_db",
-                          -70, -10, -40, 1, 10)
+                          -70, -10, -40, 1, 11)
         self._prop_slider(s, "Padding de áudio (ms)", "padding",
-                          0, 500, 150, 10, 11)
+                          0, 500, 150, 10, 12)
         self._prop_slider(s, "Fala mínima (ms)", "min_segment_ms",
-                          200, 2000, 300, 100, 12)
+                          200, 2000, 300, 100, 13)
 
         # -- Color Grade ---------------------------------------------------
-        self._section(s, "COLOR GRADE", 13)
+        self._section(s, "COLOR GRADE", 14)
         self._color_enabled = tk.BooleanVar(value=True)
         cf = tk.Frame(s, bg=C_PANEL)
-        cf.grid(row=14, column=0, sticky="ew", padx=10, pady=(0,4))
+        cf.grid(row=15, column=0, sticky="ew", padx=10, pady=(0,4))
         cf.grid_columnconfigure(1, weight=1)
         self._check_frame(cf, "Aplicar grade", self._color_enabled, 0,
                           command=self._schedule_preview)
@@ -1213,21 +1218,21 @@ class CortaCertoApp:
         ]
         for row_off, (label, key, lo, hi, default, fc, pc) in enumerate(color_defs):
             self._color_slider(s, label, key, lo, hi, default, fc, pc,
-                               row=15 + row_off)
+                               row=16 + row_off)
 
         # -- Bokeh ---------------------------------------------------------
-        self._section(s, "BOKEH  (desfoque de fundo)", 22)
+        self._section(s, "BOKEH  (desfoque de fundo)", 23)
         self._bokeh_slider = self._prop_slider(
-            s, "Intensidade", "bokeh", 0, 100, 0, 1, 23,
+            s, "Intensidade", "bokeh", 0, 100, 0, 1, 24,
             suffix="%", color="#223366", prog="#6699dd")
 
         # -- Audio ---------------------------------------------------------
-        self._section(s, "ÁUDIO", 24)
+        self._section(s, "ÁUDIO", 25)
         self._noise_var = tk.BooleanVar(value=True)
-        self._check(s, "Redução de ruído + loudnorm EBU R128", self._noise_var, 25)
+        self._check(s, "Redução de ruído + loudnorm EBU R128", self._noise_var, 26)
 
         mf = tk.Frame(s, bg=C_PANEL)
-        mf.grid(row=26, column=0, sticky="ew", padx=10, pady=(0,6))
+        mf.grid(row=27, column=0, sticky="ew", padx=10, pady=(0,6))
         mf.grid_columnconfigure(1, weight=1)
         tk.Label(mf, text="Música:", bg=C_PANEL, fg=C_MUTED,
                  font=("Segoe UI", 10)).grid(row=0, column=0, sticky="w")
@@ -1242,11 +1247,11 @@ class CortaCertoApp:
                   cursor="hand2", bd=0).grid(row=0, column=3)
 
         # -- Extra outputs -------------------------------------------------
-        self._section(s, "SAÍDAS EXTRAS", 27)
+        self._section(s, "SAÍDAS EXTRAS", 28)
         self._gen_thumb_var  = tk.BooleanVar(value=False)
         self._gen_vert_var   = tk.BooleanVar(value=False)
-        self._check(s, "Gerar 5 thumbnails profissionais", self._gen_thumb_var, 28)
-        self._check(s, "Gerar versão vertical 9:16", self._gen_vert_var, 29)
+        self._check(s, "Gerar 5 thumbnails profissionais", self._gen_thumb_var, 29)
+        self._check(s, "Gerar versão vertical 9:16", self._gen_vert_var, 30)
 
         # -- Preview update btn --------------------------------------------
         ctk.CTkButton(s, text="Atualizar preview",
@@ -1254,9 +1259,9 @@ class CortaCertoApp:
                       fg_color=C_SURFACE, hover_color=C_BORDER,
                       font=ctk.CTkFont(size=12),
                       command=self._update_color_preview).grid(
-            row=30, column=0, padx=10, pady=(8,4), sticky="ew")
+            row=31, column=0, padx=10, pady=(8,4), sticky="ew")
 
-        self._build_editor_assets_panel(s, 31)
+        self._build_editor_assets_panel(s, 32)
 
     def _build_editor_assets_panel(self, parent, row: int) -> None:
         self._section(parent, "MÍDIAS DO PROJETO", row)
@@ -1558,6 +1563,21 @@ class CortaCertoApp:
                           font=ctk.CTkFont(size=11), height=30)
         e.grid(row=row, column=0, sticky="ew", padx=10, pady=2)
         return e
+
+    def _suggest_title_with_ai(self) -> None:
+        suggestion = suggest_metadata(
+            AiSuggestionRequest(
+                video_path=self.video_path or self.project_name,
+                project_name=self.project_name,
+                platform=self._platform_var.get() if hasattr(self, "_platform_var") else Platform.YOUTUBE.value,
+            )
+        )
+        self._title_entry.delete(0, "end")
+        self._title_entry.insert(0, suggestion.title)
+        self._subtitle_entry.delete(0, "end")
+        self._subtitle_entry.insert(0, suggestion.subtitle)
+        self._tb_status.configure(text=f"Sugestão aplicada via {suggestion.provider}.")
+        self._save_project_state()
 
     def _check(self, parent, text: str, var: tk.BooleanVar, row: int,
                command=None) -> None:
