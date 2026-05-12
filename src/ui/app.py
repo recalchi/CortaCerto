@@ -119,6 +119,9 @@ class CortaCertoApp:
         self._clip_scale_var = tk.DoubleVar(value=100.0)
         self._clip_pos_x_var = tk.DoubleVar(value=0.0)
         self._clip_pos_y_var = tk.DoubleVar(value=0.0)
+        self._clip_text_x_var = tk.DoubleVar(value=0.0)
+        self._clip_text_y_var = tk.DoubleVar(value=72.0)
+        self._clip_text_size_var = tk.DoubleVar(value=100.0)
         self._clip_volume_var = tk.DoubleVar(value=100.0)
         self._clip_transition_var = tk.StringVar(value="Corte")
         self._clip_chroma_var = tk.BooleanVar(value=False)
@@ -1359,7 +1362,7 @@ class CortaCertoApp:
         tk.Button(media_actions, text="Abrir principal", command=self._load_selected_project_media,
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=2, sticky="ew", padx=4)
-        tk.Button(media_actions, text="Inserir clipe", command=self._insert_selected_media_clip,
+        tk.Button(media_actions, text="Inserir/substituir", command=self._insert_selected_media_clip,
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=3, sticky="ew", padx=(4, 0))
 
@@ -1391,8 +1394,17 @@ class CortaCertoApp:
         self._clip_volume_label = self._inspector_slider(
             parent, "Volume do clipe", self._clip_volume_var, 0, 200, row + 8, suffix="%"
         )
+        self._clip_text_x_label = self._inspector_slider(
+            parent, "Texto X", self._clip_text_x_var, -100, 100, row + 9, suffix="%"
+        )
+        self._clip_text_y_label = self._inspector_slider(
+            parent, "Texto Y", self._clip_text_y_var, 0, 100, row + 10, suffix="%"
+        )
+        self._clip_text_size_label = self._inspector_slider(
+            parent, "Tamanho texto", self._clip_text_size_var, 50, 220, row + 11, suffix="%"
+        )
         tr = tk.Frame(parent, bg=C_PANEL)
-        tr.grid(row=row + 9, column=0, sticky="ew", padx=10, pady=(2, 4))
+        tr.grid(row=row + 12, column=0, sticky="ew", padx=10, pady=(2, 4))
         tr.grid_columnconfigure(1, weight=1)
         tk.Label(tr, text="Transição", bg=C_PANEL, fg=C_MUTED,
                  font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
@@ -1408,7 +1420,7 @@ class CortaCertoApp:
             font=ctk.CTkFont(size=11),
         ).grid(row=0, column=1, sticky="e")
         clip_actions = tk.Frame(parent, bg=C_PANEL)
-        clip_actions.grid(row=row + 10, column=0, sticky="ew", padx=10, pady=(0, 8))
+        clip_actions.grid(row=row + 13, column=0, sticky="ew", padx=10, pady=(0, 8))
         clip_actions.grid_columnconfigure(0, weight=1)
         clip_actions.grid_columnconfigure(1, weight=1)
         tk.Button(clip_actions, text="Texto no clipe", command=self._add_text_to_selected_clip,
@@ -1418,7 +1430,7 @@ class CortaCertoApp:
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=0, column=1, sticky="ew", padx=(4, 0))
         chroma = tk.Frame(parent, bg=C_PANEL)
-        chroma.grid(row=row + 11, column=0, sticky="ew", padx=10, pady=(0, 4))
+        chroma.grid(row=row + 14, column=0, sticky="ew", padx=10, pady=(0, 4))
         chroma.grid_columnconfigure(1, weight=1)
         tk.Checkbutton(
             chroma,
@@ -1447,9 +1459,9 @@ class CortaCertoApp:
                   bg=C_SURFACE, fg=C_TEXT, relief="flat", padx=6,
                   font=("Segoe UI", 9), cursor="hand2", bd=0).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         self._clip_chroma_tolerance_label = self._inspector_slider(
-            parent, "Tolerância chroma", self._clip_chroma_tolerance_var, 5, 160, row + 12
+            parent, "Tolerância chroma", self._clip_chroma_tolerance_var, 5, 160, row + 15
         )
-        self._section(parent, "STATUS DO PROJETO", row + 13)
+        self._section(parent, "STATUS DO PROJETO", row + 16)
         tk.Label(
             parent,
             textvariable=self._project_status_var,
@@ -1459,7 +1471,7 @@ class CortaCertoApp:
             anchor="w",
             wraplength=260,
             font=("Segoe UI", 9),
-        ).grid(row=row + 14, column=0, sticky="ew", padx=12, pady=(0, 10))
+        ).grid(row=row + 17, column=0, sticky="ew", padx=12, pady=(0, 10))
         self._refresh_media_list()
         self._refresh_clip_inspector()
         self._refresh_project_status()
@@ -1546,6 +1558,9 @@ class CortaCertoApp:
             self._clip_scale_var.set(100.0)
             self._clip_pos_x_var.set(0.0)
             self._clip_pos_y_var.set(0.0)
+            self._clip_text_x_var.set(0.0)
+            self._clip_text_y_var.set(72.0)
+            self._clip_text_size_var.set(100.0)
             self._clip_volume_var.set(100.0)
             self._clip_transition_var.set("Corte")
             self._clip_chroma_var.set(False)
@@ -1556,6 +1571,9 @@ class CortaCertoApp:
             self._clip_scale_var.set(float(getattr(clip, "scale_pct", 100.0)))
             self._clip_pos_x_var.set(float(getattr(clip, "position_x_pct", 0.0)))
             self._clip_pos_y_var.set(float(getattr(clip, "position_y_pct", 0.0)))
+            self._clip_text_x_var.set(float(getattr(clip, "text_position_x_pct", 0.0)))
+            self._clip_text_y_var.set(float(getattr(clip, "text_position_y_pct", 72.0)))
+            self._clip_text_size_var.set(float(getattr(clip, "text_size_pct", 100.0)))
             self._clip_volume_var.set(float(getattr(clip, "volume_pct", 100.0)))
             self._clip_transition_var.set(str(getattr(clip, "transition", "Corte") or "Corte"))
             self._clip_chroma_var.set(bool(getattr(clip, "chroma_enabled", False)))
@@ -1574,6 +1592,9 @@ class CortaCertoApp:
         clip.scale_pct = float(self._clip_scale_var.get())
         clip.position_x_pct = float(self._clip_pos_x_var.get())
         clip.position_y_pct = float(self._clip_pos_y_var.get())
+        clip.text_position_x_pct = float(self._clip_text_x_var.get())
+        clip.text_position_y_pct = float(self._clip_text_y_var.get())
+        clip.text_size_pct = float(self._clip_text_size_var.get())
         clip.volume_pct = float(self._clip_volume_var.get())
         clip.transition = self._clip_transition_var.get()
         clip.chroma_enabled = bool(self._clip_chroma_var.get())
@@ -1591,6 +1612,9 @@ class CortaCertoApp:
         text = self._clip_label_var.get().strip() or clip.label or "Texto"
         clip.text_overlay = text
         clip.label = text
+        clip.text_position_x_pct = float(self._clip_text_x_var.get())
+        clip.text_position_y_pct = float(self._clip_text_y_var.get())
+        clip.text_size_pct = float(self._clip_text_size_var.get())
         self._timeline_dirty = True
         self._sync_manual_timeline(mark_dirty=True)
         self._tb_status.configure(text="Texto associado ao clipe selecionado.")
@@ -1640,7 +1664,7 @@ class CortaCertoApp:
         )
         if selected_index is None:
             self._tb_status.configure(text="Sem espaço na timeline para inserir esse clipe.")
-            return
+            return False
         self._push_timeline_undo()
         self._timeline_model.video_track.clips = new_clips
         self._selected_clip_index = selected_index
@@ -2096,16 +2120,18 @@ class CortaCertoApp:
             return "break"
         clip = self._selected_timeline_clip()
         if clip is not None and _point_inside_display_box(self._preview_display_box, event_x, event_y):
-            mode = _preview_control_hit(self._preview_display_box, event_x, event_y) or "move"
+            mode = _preview_control_hit(self._preview_display_box, event_x, event_y, clip) or "move"
+            base_x = float(getattr(clip, "text_position_x_pct", 0.0)) if mode == "text" else float(getattr(clip, "position_x_pct", 0.0))
+            base_y = float(getattr(clip, "text_position_y_pct", 72.0)) if mode == "text" else float(getattr(clip, "position_y_pct", 0.0))
             self._preview_drag = (
                 mode,
                 event_x,
                 event_y,
-                float(getattr(clip, "position_x_pct", 0.0)),
-                float(getattr(clip, "position_y_pct", 0.0)),
+                base_x,
+                base_y,
                 float(getattr(clip, "scale_pct", 100.0)),
             )
-            action = "redimensionar" if mode == "scale" else "posicionar"
+            action = "posicionar texto" if mode == "text" else ("redimensionar" if mode == "scale" else "posicionar")
             self._tb_status.configure(text=f"Arraste no preview para {action} o clipe selecionado.")
             return "break"
         return None
@@ -2127,6 +2153,13 @@ class CortaCertoApp:
             delta = (dx + dy) / max(1, min(box_w, box_h)) * 120.0
             clip.scale_pct = _clamp_float(base_scale + delta, 25.0, 300.0)
             self._clip_scale_var.set(clip.scale_pct)
+        elif mode == "text":
+            dx_pct = dx / max(1, box_w) * 100.0
+            dy_pct = dy / max(1, box_h) * 100.0
+            clip.text_position_x_pct = _clamp_float(base_x + dx_pct, -100.0, 100.0)
+            clip.text_position_y_pct = _clamp_float(base_y + dy_pct, 0.0, 100.0)
+            self._clip_text_x_var.set(clip.text_position_x_pct)
+            self._clip_text_y_var.set(clip.text_position_y_pct)
         else:
             dx_pct = dx / max(1, box_w) * 100.0
             dy_pct = dy / max(1, box_h) * 100.0
@@ -2200,13 +2233,14 @@ class CortaCertoApp:
             return
         x2, y2 = x + w, y + h
         canvas.create_rectangle(x, y, x2, y2, outline="#ffcc44", width=2, tags=("frame", "preview-controls"))
-        for hx, hy in _preview_control_handles(display_box).values():
+        for name, (hx, hy) in _preview_control_handles(display_box, active_clip).items():
+            fill = "#7dc0ff" if name == "text" else "#ffcc44"
             canvas.create_rectangle(
                 hx - 5,
                 hy - 5,
                 hx + 5,
                 hy + 5,
-                fill="#ffcc44",
+                fill=fill,
                 outline="#111116",
                 width=1,
                 tags=("frame", "preview-controls"),
@@ -2240,7 +2274,8 @@ class CortaCertoApp:
 
         clip_time_s = self._current_frame / max(1.0, self._fps)
         active_clip = _clip_for_time(self._timeline_model, clip_time_s)
-        preview_source = self._clip_source_preview_image(active_clip, clip_time_s) or preview.image
+        preview_source = _preview_base_image_for_timeline(preview.image, self._timeline_model, active_clip)
+        preview_source = self._clip_source_preview_image(active_clip, clip_time_s) or preview_source
         preview_image = _apply_clip_preview_options(preview_source, active_clip)
         pil = _fit_preview_image(preview_image, cw, ch)
         nw, nh = pil.size
@@ -3072,6 +3107,9 @@ def _clone_timeline_clip(clip: TimelineClip) -> TimelineClip:
         float(getattr(clip, "volume_pct", 100.0)),
         str(getattr(clip, "transition", "Corte") or "Corte"),
         str(getattr(clip, "text_overlay", "") or ""),
+        float(getattr(clip, "text_position_x_pct", 0.0)),
+        float(getattr(clip, "text_position_y_pct", 72.0)),
+        float(getattr(clip, "text_size_pct", 100.0)),
         bool(getattr(clip, "chroma_enabled", False)),
         str(getattr(clip, "chroma_color", "#00ff00") or "#00ff00"),
         float(getattr(clip, "chroma_tolerance", 45.0)),
@@ -3093,6 +3131,9 @@ def _clip_options_from_timeline_model(timeline_model: Optional[TimelineModel]) -
             "volume_pct": float(getattr(clip, "volume_pct", 100.0)),
             "transition": str(getattr(clip, "transition", "Corte") or "Corte"),
             "text_overlay": str(getattr(clip, "text_overlay", "") or ""),
+            "text_position_x_pct": float(getattr(clip, "text_position_x_pct", 0.0)),
+            "text_position_y_pct": float(getattr(clip, "text_position_y_pct", 72.0)),
+            "text_size_pct": float(getattr(clip, "text_size_pct", 100.0)),
             "chroma_enabled": bool(getattr(clip, "chroma_enabled", False)),
             "chroma_color": str(getattr(clip, "chroma_color", "#00ff00") or "#00ff00"),
             "chroma_tolerance": float(getattr(clip, "chroma_tolerance", 45.0)),
@@ -3115,6 +3156,9 @@ def _apply_clip_options_to_timeline_model(timeline_model: TimelineModel, raw_opt
         clip.volume_pct = _project_float(raw.get("volume_pct"), 100.0)
         clip.transition = str(raw.get("transition") or "Corte")
         clip.text_overlay = str(raw.get("text_overlay") or "")
+        clip.text_position_x_pct = _project_float(raw.get("text_position_x_pct"), 0.0)
+        clip.text_position_y_pct = _project_float(raw.get("text_position_y_pct"), 72.0)
+        clip.text_size_pct = _project_float(raw.get("text_size_pct"), 100.0)
         clip.chroma_enabled = bool(raw.get("chroma_enabled", False))
         clip.chroma_color = _normalize_hex_color(str(raw.get("chroma_color") or "#00ff00"))
         clip.chroma_tolerance = _project_float(raw.get("chroma_tolerance"), 45.0)
@@ -3165,7 +3209,13 @@ def _apply_clip_preview_options(image: Image.Image, clip: Optional[TimelineClip]
     if needs_scale or needs_position:
         out = _scale_preview_image_positioned(out, scale_pct, pos_x, pos_y)
     if text_overlay:
-        out = _draw_preview_text_overlay(out, text_overlay)
+        out = _draw_preview_text_overlay(
+            out,
+            text_overlay,
+            float(getattr(clip, "text_position_x_pct", 0.0)),
+            float(getattr(clip, "text_position_y_pct", 72.0)),
+            float(getattr(clip, "text_size_pct", 100.0)),
+        )
     return out
 
 
@@ -3208,14 +3258,27 @@ def _scale_preview_image_positioned(
     return canvas
 
 
-def _draw_preview_text_overlay(image: Image.Image, text: str) -> Image.Image:
+def _draw_preview_text_overlay(
+    image: Image.Image,
+    text: str,
+    pos_x_pct: float = 0.0,
+    pos_y_pct: float = 72.0,
+    size_pct: float = 100.0,
+) -> Image.Image:
     out = image.copy()
     draw = ImageDraw.Draw(out)
     width, height = out.size
-    box_h = max(36, height // 10)
-    y1 = max(0, height - box_h - 18)
-    draw.rectangle((0, y1, width, y1 + box_h), fill=(0, 0, 0))
-    draw.text((max(12, width // 30), y1 + max(8, box_h // 4)), text[:80], fill=(255, 255, 255))
+    font_scale = max(0.5, min(2.2, float(size_pct) / 100.0))
+    text_x, text_y = _preview_text_anchor(width, height, pos_x_pct, pos_y_pct)
+    pad = max(5, int(8 * font_scale))
+    line_h = max(18, int(height * 0.045 * font_scale))
+    text_w = min(width - 2 * pad, max(40, int(len(text[:80]) * line_h * 0.48)))
+    draw.rounded_rectangle(
+        (text_x - pad, text_y - pad, min(width - 1, text_x + text_w + pad), min(height - 1, text_y + line_h + pad)),
+        radius=4,
+        fill=(0, 0, 0),
+    )
+    draw.text((text_x, text_y), text[:80], fill=(255, 255, 255))
     return out
 
 
@@ -3265,23 +3328,60 @@ def _sample_preview_hex_color(
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def _preview_base_image_for_timeline(
+    preview_image: Image.Image,
+    timeline_model: Optional[TimelineModel],
+    active_clip: Optional[TimelineClip],
+) -> Image.Image:
+    if timeline_model is None or active_clip is not None:
+        return preview_image
+    return Image.new(preview_image.mode, preview_image.size, "black")
+
+
 def _point_inside_display_box(display_box: tuple[int, int, int, int], x: int, y: int) -> bool:
     box_x, box_y, box_w, box_h = display_box
     return box_w > 0 and box_h > 0 and box_x <= x < box_x + box_w and box_y <= y < box_y + box_h
 
 
-def _preview_control_handles(display_box: tuple[int, int, int, int]) -> dict[str, tuple[int, int]]:
+def _preview_control_handles(
+    display_box: tuple[int, int, int, int],
+    clip: Optional[TimelineClip] = None,
+) -> dict[str, tuple[int, int]]:
     box_x, box_y, box_w, box_h = display_box
-    return {"scale": (box_x + box_w, box_y + box_h)}
+    handles = {"scale": (box_x + box_w, box_y + box_h)}
+    if clip is not None and str(getattr(clip, "text_overlay", "") or "").strip():
+        text_x, text_y = _preview_text_anchor(
+            box_w,
+            box_h,
+            float(getattr(clip, "text_position_x_pct", 0.0)),
+            float(getattr(clip, "text_position_y_pct", 72.0)),
+        )
+        handles["text"] = (box_x + text_x, box_y + text_y)
+    return handles
 
 
-def _preview_control_hit(display_box: tuple[int, int, int, int], x: int, y: int, radius: int = 12) -> Optional[str]:
+def _preview_control_hit(
+    display_box: tuple[int, int, int, int],
+    x: int,
+    y: int,
+    clip: Optional[TimelineClip] = None,
+    radius: int = 12,
+) -> Optional[str]:
     if not _point_inside_display_box(display_box, x, y):
         return None
-    for name, (hx, hy) in _preview_control_handles(display_box).items():
+    for name, (hx, hy) in _preview_control_handles(display_box, clip).items():
         if abs(x - hx) <= radius and abs(y - hy) <= radius:
             return name
     return None
+
+
+def _preview_text_anchor(width: int, height: int, pos_x_pct: float, pos_y_pct: float) -> tuple[int, int]:
+    x_ratio = (_clamp_float(pos_x_pct, -100.0, 100.0) + 100.0) / 200.0
+    y_ratio = _clamp_float(pos_y_pct, 0.0, 100.0) / 100.0
+    return (
+        int(round(max(0, width - 1) * x_ratio)),
+        int(round(max(0, height - 1) * y_ratio)),
+    )
 
 
 def _clamp_float(value: float, lo: float, hi: float) -> float:

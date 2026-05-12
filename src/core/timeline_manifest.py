@@ -106,7 +106,15 @@ def _clip_effects(clip: TimelineClip) -> list[dict[str, Any]]:
             }
         )
     if str(clip.text_overlay or "").strip():
-        effects.append({"type": "text", "text": str(clip.text_overlay).strip()})
+        effects.append(
+            {
+                "type": "text",
+                "text": str(clip.text_overlay).strip(),
+                "position_x_pct": float(getattr(clip, "text_position_x_pct", 0.0)),
+                "position_y_pct": float(getattr(clip, "text_position_y_pct", 72.0)),
+                "size_pct": float(getattr(clip, "text_size_pct", 100.0)),
+            }
+        )
     if bool(clip.chroma_enabled):
         effects.append(
             {

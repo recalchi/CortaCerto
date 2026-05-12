@@ -45,8 +45,10 @@ from src.ui.app import (
     _removed_ranges_from_segments,
     _restore_project_from_trash,
     _safe_project_slug,
+    _preview_base_image_for_timeline,
     _preview_control_hit,
     _preview_control_handles,
+    _preview_text_anchor,
     _sample_preview_hex_color,
     _snap_time_to_edges,
     _snap_time_to_edges_with_flag,
@@ -245,6 +247,9 @@ class PreviewUiTests(unittest.TestCase):
         clip.chroma_tolerance = 70.0
         clip.position_x_pct = 25.0
         clip.position_y_pct = -15.0
+        clip.text_position_x_pct = -20.0
+        clip.text_position_y_pct = 40.0
+        clip.text_size_pct = 130.0
 
         options = _clip_options_from_timeline_model(model)
         restored = build_timeline_model(10.0, [(0.0, 4.0)])
@@ -261,6 +266,9 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(restored_clip.chroma_tolerance, 70.0)
         self.assertEqual(restored_clip.position_x_pct, 25.0)
         self.assertEqual(restored_clip.position_y_pct, -15.0)
+        self.assertEqual(restored_clip.text_position_x_pct, -20.0)
+        self.assertEqual(restored_clip.text_position_y_pct, 40.0)
+        self.assertEqual(restored_clip.text_size_pct, 130.0)
         self.assertEqual(restored.audio_track.clips[0].scale_pct, 135.0)
 
     def test_clone_timeline_clip_preserves_editor_options(self) -> None:
@@ -276,6 +284,9 @@ class PreviewUiTests(unittest.TestCase):
             chroma_color="#112233",
             position_x_pct=20.0,
             position_y_pct=-10.0,
+            text_position_x_pct=10.0,
+            text_position_y_pct=60.0,
+            text_size_pct=120.0,
         )
 
         cloned = _clone_timeline_clip(clip)
@@ -287,6 +298,9 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(cloned.chroma_color, "#112233")
         self.assertEqual(cloned.position_x_pct, 20.0)
         self.assertEqual(cloned.position_y_pct, -10.0)
+        self.assertEqual(cloned.text_position_x_pct, 10.0)
+        self.assertEqual(cloned.text_position_y_pct, 60.0)
+        self.assertEqual(cloned.text_size_pct, 120.0)
 
     def test_clip_for_time_returns_active_clip(self) -> None:
         model = build_timeline_model(10.0, [(1.0, 3.0), (5.0, 7.0)])
@@ -339,6 +353,24 @@ class PreviewUiTests(unittest.TestCase):
         self.assertEqual(_preview_control_hit(display_box, 108, 68), "scale")
         self.assertIsNone(_preview_control_hit(display_box, 20, 30))
         self.assertIsNone(_preview_control_hit(display_box, 150, 90))
+
+    def test_preview_control_hit_detects_text_handle(self) -> None:
+        clip = TimelineClip(0.0, 1.0, "speech", "Intro", text_overlay="Titulo")
+        clip.text_position_x_pct = 0.0
+        clip.text_position_y_pct = 50.0
+
+        self.assertEqual(_preview_text_anchor(100, 50, 0.0, 50.0), (50, 24))
+        self.assertEqual(_preview_control_handles((10, 20, 100, 50), clip)["text"], (60, 44))
+        self.assertEqual(_preview_control_hit((10, 20, 100, 50), 60, 44, clip), "text")
+
+    def test_preview_base_image_is_black_in_removed_timeline_gap(self) -> None:
+        image = Image.new("RGB", (4, 4), "white")
+        model = build_timeline_model(10.0, [(1.0, 3.0)])
+
+        rendered = _preview_base_image_for_timeline(image, model, None)
+
+        self.assertEqual(rendered.getpixel((0, 0)), (0, 0, 0))
+        self.assertIs(_preview_base_image_for_timeline(image, model, model.video_track.clips[0]), image)
 
     def test_hex_color_helpers_normalize_invalid_values(self) -> None:
         self.assertEqual(_normalize_hex_color("00FF00"), "#00ff00")
