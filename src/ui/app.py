@@ -93,6 +93,16 @@ def _register_drop_target(widget: tk.Misc, callback) -> bool:
         return False
 
 
+def _drain_runtime_queue(runtime_queue: queue.Queue) -> int:
+    drained = 0
+    while True:
+        try:
+            runtime_queue.get_nowait()
+        except queue.Empty:
+            return drained
+        drained += 1
+
+
 class CortaCertoApp:
     def __init__(self) -> None:
         self.root = _create_root_window()
@@ -353,7 +363,8 @@ class CortaCertoApp:
         print(f"[PROJECT] Projeto movido para a lixeira: {moved_to}")
         self.project_path = None
         self.project_name = "Projeto sem nome"
-        self.video_path = None
+        self._reset_loaded_project_runtime()
+        self._project_media_paths = []
         self._pending_project_state = {}
         self._show_project_launcher()
 
@@ -389,6 +400,7 @@ class CortaCertoApp:
             self._pick_video()
 
     def _open_project_editor(self, project_path: Optional[str]) -> None:
+        self._reset_loaded_project_runtime()
         self.project_path = project_path
         metadata = _read_project_metadata(project_path) if project_path else {}
         self.project_name = str(metadata.get("name") or _project_name_from_path(project_path))
@@ -408,6 +420,52 @@ class CortaCertoApp:
         elif video_path:
             self._tb_status.configure(text="Projeto aberto, mas o vídeo salvo não foi encontrado.")
             self._pending_project_state = {}
+
+    def _reset_loaded_project_runtime(self) -> None:
+        with contextlib.suppress(Exception):
+            self._stop_playback(reset_button=False)
+        with contextlib.suppress(Exception):
+            self._stop_preview_audio()
+        if self._play_after_id:
+            with contextlib.suppress(Exception):
+                self.root.after_cancel(self._play_after_id)
+        if self._preview_timer:
+            with contextlib.suppress(Exception):
+                self.root.after_cancel(self._preview_timer)
+        self._play_after_id = None
+        self._preview_timer = None
+        self._playing = False
+        self._play_target_frame = None
+        self._play_audio_started = False
+        self._preview_request_id += 1
+        self._preview_settings_key = ()
+        self._preview_bootstrap_key = None
+        self._preview_backend = "preview"
+        self._preview_render_ms = 0.0
+        self.video_path = None
+        self.result = None
+        self._music_path = None
+        self._segments = []
+        self._analysis_done = False
+        self._timeline_model = None
+        self._selected_clip_index = None
+        self._timeline_dirty = False
+        self._timeline_undo_stack.clear()
+        self._trim_drag = None
+        self._hover_trim_handle = None
+        self._trim_undo_captured = False
+        self._total_frames = 0
+        self._fps = 30.0
+        self._duration_s = 0.0
+        self._current_frame = 0
+        self._preview_display_image = None
+        self._preview_display_box = (0, 0, 0, 0)
+        self._preview_drag = None
+        self._preview_drag_moved = False
+        self._preview_click_consumed = False
+        self._chroma_picker_active = False
+        self._release_clip_source_caps()
+        _drain_runtime_queue(self._queue)
 
     # -- Icon ------------------------------------------------------------------
 
