@@ -42,6 +42,9 @@ class TimelineManifestTests(unittest.TestCase):
             volume_pct=70.0,
             transition="Fade",
             text_overlay="Titulo",
+            text_position_x_pct=10.0,
+            text_position_y_pct=40.0,
+            text_size_pct=120.0,
             chroma_enabled=True,
             chroma_color="#00ff00",
             chroma_tolerance=55.0,
@@ -64,6 +67,9 @@ class TimelineManifestTests(unittest.TestCase):
         self.assertEqual([effect["type"] for effect in video_effects], ["transform", "text", "chroma_key", "transition"])
         self.assertEqual(video_effects[0]["position_x_pct"], 12.0)
         self.assertEqual(video_effects[0]["position_y_pct"], -8.0)
+        self.assertEqual(video_effects[1]["position_x_pct"], 10.0)
+        self.assertEqual(video_effects[1]["position_y_pct"], 40.0)
+        self.assertEqual(video_effects[1]["size_pct"], 120.0)
         self.assertEqual(audio_effects, [{"type": "volume", "volume_pct": 70.0}])
 
 

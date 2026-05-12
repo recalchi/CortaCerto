@@ -205,7 +205,13 @@ def _apply_clip_frame_options_bgr(frame_bgr: object, option: dict[str, object]) 
     )
     text = str(option.get("text_overlay") or "").strip()
     if text:
-        rendered = _draw_text_overlay_bgr(rendered, text)
+        rendered = _draw_text_overlay_bgr(
+            rendered,
+            text,
+            float(option.get("text_position_x_pct", 0.0) or 0.0),
+            float(option.get("text_position_y_pct", 72.0) or 72.0),
+            float(option.get("text_size_pct", 100.0) or 100.0),
+        )
     return rendered
 
 
@@ -265,23 +271,44 @@ def _apply_chroma_key_bgr(frame_bgr: object, color: str, tolerance: float) -> ob
     return output
 
 
-def _draw_text_overlay_bgr(frame_bgr: object, text: str) -> object:
+def _draw_text_overlay_bgr(
+    frame_bgr: object,
+    text: str,
+    pos_x_pct: float = 0.0,
+    pos_y_pct: float = 72.0,
+    size_pct: float = 100.0,
+) -> object:
     frame = frame_bgr.copy()
     height, width = frame.shape[:2]
-    box_h = max(36, height // 10)
-    y1 = max(0, height - box_h - 18)
-    cv2.rectangle(frame, (0, y1), (width, y1 + box_h), (0, 0, 0), thickness=-1)
+    x, y = _text_anchor(width, height, pos_x_pct, pos_y_pct)
+    font_scale = max(0.35, min(2.2, width / 1280.0 * (float(size_pct) / 100.0)))
+    box_h = max(24, int(34 * font_scale))
+    box_w = min(width - 1, max(90, int(len(text[:80]) * box_h * 0.55)))
+    pad = max(4, int(8 * font_scale))
+    cv2.rectangle(
+        frame,
+        (max(0, x - pad), max(0, y - pad)),
+        (min(width - 1, x + box_w + pad), min(height - 1, y + box_h + pad)),
+        (0, 0, 0),
+        thickness=-1,
+    )
     cv2.putText(
         frame,
         text[:80],
-        (max(12, width // 30), y1 + max(24, box_h // 2)),
+        (x, y + max(16, box_h - pad)),
         cv2.FONT_HERSHEY_SIMPLEX,
-        max(0.5, min(1.3, width / 1280.0)),
+        font_scale,
         (255, 255, 255),
         2,
         cv2.LINE_AA,
     )
     return frame
+
+
+def _text_anchor(width: int, height: int, pos_x_pct: float, pos_y_pct: float) -> tuple[int, int]:
+    x_ratio = (max(-100.0, min(100.0, float(pos_x_pct))) + 100.0) / 200.0
+    y_ratio = max(0.0, min(100.0, float(pos_y_pct))) / 100.0
+    return (int(round(max(0, width - 1) * x_ratio)), int(round(max(0, height - 1) * y_ratio)))
 
 
 def _normalize_hex_color(value: str) -> str:

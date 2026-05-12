@@ -246,6 +246,7 @@ Principais pontos já estabilizados:
 - Inserção de mídia na timeline passou a substituir um trecho no playhead, preservando bordas antes/depois e permitindo reutilizar a mesma mídia várias vezes.
 - Drag-and-drop na timeline agora tenta inserir vídeos como clipes no ponto solto, enquanto drop no preview continua carregando/importando mídia.
 - Preview exibe moldura/handle no clipe selecionado ativo; arrastar dentro move e arrastar o canto ajusta escala.
+- Trechos removidos ficam pretos no preview, a inserção deixa claro que substitui um trecho, e texto no clipe ganhou posição/tamanho editáveis com handle no preview.
 - Projetos passam a salvar `timeline_manifest`, uma estrutura inspirada em OTIO/MLT com mídia externa, tracks, clips, ranges compactados e efeitos por escopo.
 - Inspetor do clipe ganhou base de chroma key por clipe, com cor/tolerância e preview substituindo o fundo cromado por marcação neutra.
 - Timeline ganhou botões de zoom `+`/`-` além do slider, e o painel lateral mostra um status rápido de mídias, clipes, seleção e zoom.
