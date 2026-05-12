@@ -1,6 +1,7 @@
 import unittest
 import tempfile
 import time
+import queue
 from pathlib import Path
 
 from PIL import Image
@@ -27,6 +28,7 @@ from src.ui.app import (
     _compact_clip_ranges,
     _compact_display_to_source_time,
     _compact_source_to_display_time,
+    _drain_runtime_queue,
     _fit_preview_image,
     _first_video_path_from_drop,
     _merge_media_paths,
@@ -64,6 +66,14 @@ from src.core.timeline_model import TimelineClip, build_timeline_model
 
 
 class PreviewUiTests(unittest.TestCase):
+    def test_drain_runtime_queue_removes_stale_project_callbacks(self) -> None:
+        runtime_queue = queue.Queue()
+        runtime_queue.put(("__PREVIEW__", object()))
+        runtime_queue.put(("__TIMELINE_READY__", object()))
+
+        self.assertEqual(_drain_runtime_queue(runtime_queue), 2)
+        self.assertTrue(runtime_queue.empty())
+
     def test_register_drop_target_prefers_widget_dnd_methods(self) -> None:
         calls = []
 
