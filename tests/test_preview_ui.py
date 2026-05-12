@@ -43,6 +43,7 @@ from src.ui.app import (
     _project_trash_dir,
     _read_project_metadata,
     _removed_ranges_from_segments,
+    _register_drop_target,
     _restore_project_from_trash,
     _safe_project_slug,
     _preview_base_image_for_timeline,
@@ -63,6 +64,22 @@ from src.core.timeline_model import TimelineClip, build_timeline_model
 
 
 class PreviewUiTests(unittest.TestCase):
+    def test_register_drop_target_prefers_widget_dnd_methods(self) -> None:
+        calls = []
+
+        class Widget:
+            def drop_target_register(self, target: str) -> None:
+                calls.append(("register", target))
+
+            def dnd_bind(self, event: str, callback) -> None:
+                calls.append(("bind", event, callback))
+
+        callback = lambda _event: None
+
+        self.assertTrue(_register_drop_target(Widget(), callback))
+        self.assertEqual(calls[0][0], "register")
+        self.assertEqual(calls[1], ("bind", "<<Drop>>", callback))
+
     def test_project_name_from_cortacerto_file(self) -> None:
         self.assertEqual(_project_name_from_path("C:/videos/meu-corte.ccp"), "meu-corte")
         self.assertEqual(_project_name_from_path("C:/videos/legado.cortacerto.json"), "legado")

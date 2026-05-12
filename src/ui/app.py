@@ -20,6 +20,12 @@ import numpy as np
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageDraw, ImageTk
 
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+except Exception:
+    DND_FILES = "DND_Files"
+    TkinterDnD = None
+
 from ..config import ProcessingConfig, Platform, SilenceStyle, PRESETS
 from ..core.audio_waveform import extract_waveform
 from ..core.ai_assistant import AiSuggestionRequest, suggest_metadata
@@ -58,9 +64,38 @@ PROJECT_TRASH_DAYS = 30
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
 
+if TkinterDnD is not None:
+    class _DnDCTk(ctk.CTk, TkinterDnD.DnDWrapper):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.TkdndVersion = TkinterDnD._require(self)
+else:
+    _DnDCTk = None
+
+
+def _create_root_window() -> ctk.CTk:
+    if _DnDCTk is not None:
+        return _DnDCTk()
+    return ctk.CTk()
+
+
+def _register_drop_target(widget: tk.Misc, callback) -> bool:
+    try:
+        if hasattr(widget, "drop_target_register") and hasattr(widget, "dnd_bind"):
+            widget.drop_target_register(DND_FILES)
+            widget.dnd_bind("<<Drop>>", callback)
+            return True
+        widget.tk.call("package", "require", "tkdnd")
+        widget.tk.call("tkdnd::drop_target", "register", widget, "DND_Files")
+        widget.bind("<<Drop>>", callback)
+        return True
+    except Exception:
+        return False
+
+
 class CortaCertoApp:
     def __init__(self) -> None:
-        self.root = ctk.CTk()
+        self.root = _create_root_window()
         self.root.title("CortaCerto")
         self.root.geometry("1280x780")
         self.root.minsize(1000, 660)
@@ -399,7 +434,7 @@ class CortaCertoApp:
         self._build_toolbar()
         self._build_body()
         self._bind_shortcuts()
-        self._setup_drop_targets()
+        self._setup_drop_targets_reliable()
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<space>", self._shortcut_toggle_play)
@@ -449,6 +484,16 @@ class CortaCertoApp:
             self._tl_canvas.bind("<<Drop>>", self._on_timeline_drop_files)
             self._tb_status.configure(text="Arraste um vídeo para o preview ou use Abrir vídeo.")
         except Exception:
+            self._tb_status.configure(text="Use Abrir vídeo para importar mídia.")
+
+    def _setup_drop_targets_reliable(self) -> None:
+        enabled = False
+        for widget in (self.root, self._preview_canvas):
+            enabled = _register_drop_target(widget, self._on_drop_files) or enabled
+        enabled = _register_drop_target(self._tl_canvas, self._on_timeline_drop_files) or enabled
+        if enabled:
+            self._tb_status.configure(text="Arraste vídeos para o preview ou direto para a timeline.")
+        else:
             self._tb_status.configure(text="Use Abrir vídeo para importar mídia.")
 
     def _on_drop_files(self, event: tk.Event) -> str:

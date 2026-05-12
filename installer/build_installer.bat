@@ -72,7 +72,9 @@ echo [6/7] Gerando executavel com PyInstaller...
     --add-data "corta_certo_icon.png;." ^
     --hidden-import "PIL._tkinter_finder" ^
     --hidden-import "customtkinter" ^
+    --hidden-import "tkinterdnd2" ^
     --collect-all customtkinter ^
+    --collect-all tkinterdnd2 ^
     main.py
 
 if errorlevel 1 (

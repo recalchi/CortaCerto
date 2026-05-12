@@ -254,7 +254,7 @@ Principais pontos já estabilizados:
 - Tela inicial tem importação simples de mídia e lixeira com limpeza automática de itens acima de 30 dias.
 - Projetos podem ser movidos para a lixeira pela toolbar da edição sem apagar o vídeo original.
 - Projetos na lixeira podem ser restaurados pela tela inicial para uma pasta escolhida, sem sobrescrever projetos existentes.
-- Preview aceita drag-and-drop de um ou mais arquivos de vídeo quando o backend TkDnD estiver disponível, com fallback pelo botão Abrir vídeo.
+- Drag-and-drop usa `tkinterdnd2` quando instalado: soltar no preview carrega/importa mídia e soltar na timeline insere/substitui no ponto do mouse; se indisponível, o app mantém fallback por botões.
 - Runner da sprint exibe inventário de testes para acompanhar cobertura funcional sem gastar tempo em checks manuais.
 - Primeiro frame volta a aparecer após carregar vídeo.
 - Carregamento de vídeo pede primeiro um frame rápido sem efeitos, depois atualiza o preview completo.
@@ -398,6 +398,6 @@ ffmpeg -i entrada.MOV -c copy saida.mp4
 - [x] Segmentação multi-backend (GrabCut / MediaPipe / rembg)
 - [x] ProcessManager — limpeza garantida de processos ffmpeg
 - [ ] Segmentação por frame com optical flow anti-flickering
-- [ ] Timeline drag-and-drop (Electron + React + PixiJS)
+- [x] Timeline drag-and-drop básico no editor desktop
 - [ ] Preview em tempo real (WebCodecs)
 - [ ] Multi-track — FastAPI backend + Yjs undo/redo
