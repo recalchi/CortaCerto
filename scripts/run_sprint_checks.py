@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -30,6 +31,12 @@ TEXT_ENCODING_CHECK_GLOBS = [
 
 MOJIBAKE_MARKERS = ["\u00c3", "\u00c2", "\ufffd"]
 
+SECRET_PATTERNS = [
+    re.compile(r"sk-proj-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"OPENAI_API_KEY\s*=\s*[\"']?sk-", re.IGNORECASE),
+]
+
 
 def safe_console(text: str) -> str:
     return text.encode("ascii", errors="backslashreplace").decode("ascii")
@@ -42,10 +49,12 @@ CHECKS: list[tuple[str, list[str]]] = [
             "-m",
             "py_compile",
             "main.py",
+            "src/api_settings.py",
             "src/bootstrap.py",
             "src/pipeline.py",
             "src/ui/app.py",
             "tests/test_bootstrap.py",
+            "tests/test_api_settings.py",
             "tests/test_effect_renderer.py",
             "tests/test_export_smoke.py",
             "tests/test_editor_consistency.py",
@@ -125,6 +134,23 @@ def check_test_inventory(print_fn=print) -> int:
     return 0
 
 
+def check_secret_leaks(print_fn=print) -> int:
+    failures: list[str] = []
+    for path in iter_text_files():
+        if path.name == ".env" or path.suffix == ".env":
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if any(pattern.search(text) for pattern in SECRET_PATTERNS):
+            failures.append(str(path))
+    if not failures:
+        print_fn("\n[OK] Nenhum segredo conhecido em arquivos rastreáveis.")
+        return 0
+    print_fn("\n[ERRO] Possível segredo encontrado fora de .env:")
+    for failure in failures:
+        print_fn(f"  - {failure}")
+    return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Executa a bateria curta da sprint CortaCerto.")
     parser.add_argument(
@@ -174,6 +200,10 @@ def main() -> int:
         return code
 
     code = check_text_encoding()
+    if code != 0:
+        return code
+
+    code = check_secret_leaks()
     if code != 0:
         return code
 
