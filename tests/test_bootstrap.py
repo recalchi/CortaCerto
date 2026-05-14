@@ -45,6 +45,18 @@ class BootstrapTests(unittest.TestCase):
         with mock.patch("main.ensure_ffmpeg", return_value="C:/ffmpeg/bin/ffmpeg.exe"):
             self.assertEqual(main.main(["--check-startup"]), 0)
 
+    def test_main_handles_keyboard_interrupt_without_traceback(self) -> None:
+        class App:
+            def run(self) -> None:
+                raise KeyboardInterrupt()
+
+        with mock.patch("main.ensure_ffmpeg", return_value="C:/ffmpeg/bin/ffmpeg.exe"), \
+             mock.patch("src.ui.app.CortaCertoApp", return_value=App()), \
+             mock.patch("builtins.print") as printed:
+            self.assertEqual(main.main([]), 130)
+
+        printed.assert_called_with("[STARTUP] CortaCerto encerrado pelo terminal.")
+
 
 if __name__ == "__main__":
     unittest.main()

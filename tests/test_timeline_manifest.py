@@ -13,6 +13,7 @@ class TimelineManifestTests(unittest.TestCase):
                 [
                     TimelineClip(1.0, 3.0, "speech", "Intro"),
                     TimelineClip(6.0, 9.0, "speech", "B-roll", source_path="C:/media/broll.mp4"),
+                    TimelineClip(9.0, 10.0, "image", "Capa", source_path="C:/media/capa.png"),
                 ],
             ),
             audio_track=TimelineTrack("Audio"),
@@ -24,13 +25,15 @@ class TimelineManifestTests(unittest.TestCase):
         manifest = build_timeline_manifest(model, "Canal", "C:/media/main.mp4")
 
         self.assertEqual(manifest["schema"], "cortacerto.timeline.v1")
-        self.assertEqual([media["target_url"] for media in manifest["media"]], ["C:/media/main.mp4", "C:/media/broll.mp4"])
+        self.assertEqual([media["target_url"] for media in manifest["media"]], ["C:/media/main.mp4", "C:/media/broll.mp4", "C:/media/capa.png"])
+        self.assertEqual([media["kind"] for media in manifest["media"]], ["video", "video", "image"])
         video_clips = manifest["tracks"][0]["clips"]
         self.assertEqual(video_clips[0]["output_start_s"], 0.0)
         self.assertEqual(video_clips[0]["output_end_s"], 2.0)
         self.assertEqual(video_clips[1]["output_start_s"], 2.0)
         self.assertEqual(video_clips[1]["output_end_s"], 5.0)
         self.assertEqual(video_clips[1]["media_id"], "media-0002")
+        self.assertEqual(video_clips[2]["kind"], "image")
 
     def test_manifest_exports_clip_and_audio_effect_scopes(self) -> None:
         clip = TimelineClip(
@@ -45,6 +48,9 @@ class TimelineManifestTests(unittest.TestCase):
             text_position_x_pct=10.0,
             text_position_y_pct=40.0,
             text_size_pct=120.0,
+            text_color="#ffee11",
+            text_background_enabled=False,
+            text_background_color="#112233",
             chroma_enabled=True,
             chroma_color="#00ff00",
             chroma_tolerance=55.0,
@@ -70,6 +76,9 @@ class TimelineManifestTests(unittest.TestCase):
                         text_position_x_pct=10.0,
                         text_position_y_pct=40.0,
                         text_size_pct=120.0,
+                        text_color="#ffee11",
+                        text_background_enabled=False,
+                        text_background_color="#112233",
                     )
                 ],
             ),
@@ -86,9 +95,14 @@ class TimelineManifestTests(unittest.TestCase):
         self.assertEqual(video_effects[1]["position_x_pct"], 10.0)
         self.assertEqual(video_effects[1]["position_y_pct"], 40.0)
         self.assertEqual(video_effects[1]["size_pct"], 120.0)
+        self.assertEqual(video_effects[1]["color"], "#ffee11")
+        self.assertFalse(video_effects[1]["background_enabled"])
+        self.assertEqual(video_effects[1]["background_color"], "#112233")
         self.assertEqual(audio_effects, [{"type": "volume", "volume_pct": 70.0}])
         self.assertEqual(manifest["tracks"][2]["kind"], "text")
         self.assertEqual(text_effects[0]["text"], "Titulo")
+        self.assertEqual(text_effects[0]["color"], "#ffee11")
+        self.assertFalse(text_effects[0]["background_enabled"])
 
 
 if __name__ == "__main__":

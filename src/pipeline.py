@@ -79,7 +79,8 @@ def run_pipeline(
         encoder, _ = detect_video_encoder()
         prog(f"[GPU] Selected mode: encode={encoder}; efeitos OpenCV/bokeh rodam em CPU.", 0.01)
         prog(f"[EXPORT] Saídas selecionadas: {_export_output_plan(config)}.", 0.01)
-        clip_plan = _clip_option_plan(config.clip_options)
+        effective_clip_options = _clip_options_for_track_options(config.clip_options, config.track_options)
+        clip_plan = _clip_option_plan(effective_clip_options)
         if clip_plan:
             prog(f"[EXPORT] Ajustes por clipe recebidos: {clip_plan}.", 0.01)
 
@@ -134,7 +135,7 @@ def run_pipeline(
         source = video_path
         export_keep: set[str] = set()
         export_intermediate: set[str] = set()
-        clip_options = _clip_options_with_output_ranges(config.clip_options, config.manual_segments)
+        clip_options = _clip_options_with_output_ranges(effective_clip_options, config.manual_segments)
         if config.remove_silence:
             main_out = os.path.join(output_dir, f"{base}_editado.mp4")
             render_stats = cut_silence(
@@ -157,7 +158,7 @@ def run_pipeline(
             result.render_stats = render_stats
             source = main_out
             export_keep.add(main_out)
-            if config.color_grade.enabled or config.bokeh_intensity >= 0.05 or config.noise_reduction or config.music_path:
+            if config.color_grade.enabled or config.bokeh_intensity >= 0.05 or _has_audio_postprocess(config):
                 export_intermediate.add(main_out)
             prog(f"[3/6] Timeline consolidada [{render_stats.encoder_used}].", 0.50)
         else:
@@ -244,32 +245,29 @@ def run_pipeline(
                 export_keep.add(source)
                 prog("[5/6] Volume por clipe aplicado.", 0.74)
 
-        if config.noise_reduction or config.music_path:
+        audio_filters = _build_audio_postprocess_filters(config)
+        if audio_filters or config.music_path:
             with ProcessManager(cancel) as pm:
-                af_parts: list[str] = []
-                if config.noise_reduction:
-                    af_parts.append("afftdn=nf=-25")
-                af_parts.append("loudnorm=I=-16:TP=-1.5:LRA=11")
-
                 audio_out = os.path.join(output_dir, f"{base}_audio.mp4")
                 export_intermediate.add(audio_out)
-                prog("[5/6] Normalizando áudio...", 0.74)
-                pm.run_checked(
-                    [
-                        ffmpeg(), "-y",
-                        "-i", source,
-                        "-c:v", "copy",
-                        "-af", ",".join(af_parts),
-                        "-c:a", "aac",
-                        "-b:a", "192k",
-                        audio_out,
-                    ],
-                    context="audio",
-                    timeout_s=max(60.0, result.final_duration_s * 5.0),
-                )
-                source = audio_out
-                export_keep.add(audio_out)
-                prog("[5/6] Áudio normalizado com loudnorm.", 0.82)
+                if audio_filters:
+                    prog(f"[5/6] Aplicando audio: {_audio_postprocess_label(config)}.", 0.74)
+                    pm.run_checked(
+                        [
+                            ffmpeg(), "-y",
+                            "-i", source,
+                            "-c:v", "copy",
+                            "-af", ",".join(audio_filters),
+                            "-c:a", "aac",
+                            "-b:a", "192k",
+                            audio_out,
+                        ],
+                        context="audio",
+                        timeout_s=max(60.0, result.final_duration_s * 5.0),
+                    )
+                    source = audio_out
+                    export_keep.add(audio_out)
+                    prog("[5/6] Tratamento de audio aplicado.", 0.82)
 
                 if config.music_path and os.path.exists(config.music_path):
                     music_out = os.path.join(output_dir, f"{base}_master.mp4")
@@ -406,12 +404,43 @@ def _export_output_plan(config: ProcessingConfig) -> str:
     return ", ".join(outputs)
 
 
+def _build_audio_postprocess_filters(config: ProcessingConfig) -> list[str]:
+    filters: list[str] = []
+    if config.noise_reduction:
+        filters.append("afftdn=nf=-18")
+    if getattr(config, "audio_voice_filter", False):
+        filters.extend(["highpass=f=80", "lowpass=f=12000"])
+    if getattr(config, "audio_compressor", False):
+        filters.append("acompressor=threshold=-18dB:ratio=2.5:attack=8:release=120")
+    if getattr(config, "audio_normalization", True):
+        filters.append("loudnorm=I=-16:TP=-1.5:LRA=11")
+    return filters
+
+
+def _has_audio_postprocess(config: ProcessingConfig) -> bool:
+    return bool(_build_audio_postprocess_filters(config) or config.music_path)
+
+
+def _audio_postprocess_label(config: ProcessingConfig) -> str:
+    parts: list[str] = []
+    if config.noise_reduction:
+        parts.append("reducao de ruido leve")
+    if getattr(config, "audio_voice_filter", False):
+        parts.append("filtro de voz")
+    if getattr(config, "audio_compressor", False):
+        parts.append("compressao leve")
+    if getattr(config, "audio_normalization", True):
+        parts.append("nivelamento loudnorm")
+    return ", ".join(parts) or "sem filtros"
+
+
 def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
     adjusted = 0
     text = 0
     audio = 0
     transitions = 0
     chroma = 0
+    overlays = 0
     for option in clip_options:
         try:
             scale_pct = float(option.get("scale_pct", 100.0))
@@ -421,6 +450,8 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
         transition = str(option.get("transition") or "Corte")
         text_overlay = str(option.get("text_overlay") or "").strip()
         chroma_enabled = bool(option.get("chroma_enabled", False))
+        if _is_overlay_clip_option(option):
+            overlays += 1
         if abs(scale_pct - 100.0) > 0.01:
             adjusted += 1
         if abs(volume_pct - 100.0) > 0.01:
@@ -442,7 +473,45 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
         parts.append(f"texto em {text} clipe(s)")
     if chroma:
         parts.append(f"chroma em {chroma} clipe(s)")
+    if overlays:
+        parts.append(f"{overlays} overlay(s) visual(is)")
     return ", ".join(parts)
+
+
+def _clip_options_for_track_options(
+    clip_options: list[dict[str, object]],
+    track_options: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    if not clip_options:
+        return []
+    options = _normalized_track_options(track_options)
+    visual_visible = options["visual_visible"]
+    text_visible = options["text_visible"]
+    audio_muted = options["audio_muted"]
+    result: list[dict[str, object]] = []
+    for option in clip_options:
+        prepared = dict(option)
+        if not visual_visible:
+            prepared["source_path"] = ""
+            prepared["scale_pct"] = 100.0
+            prepared["position_x_pct"] = 0.0
+            prepared["position_y_pct"] = 0.0
+            prepared["chroma_enabled"] = False
+        if not text_visible:
+            prepared["text_overlay"] = ""
+        if audio_muted:
+            prepared["volume_pct"] = 0.0
+        result.append(prepared)
+    return result
+
+
+def _normalized_track_options(track_options: dict[str, object] | None) -> dict[str, bool]:
+    raw = track_options if isinstance(track_options, dict) else {}
+    return {
+        "visual_visible": raw.get("visual_visible", True) is not False,
+        "text_visible": raw.get("text_visible", True) is not False,
+        "audio_muted": bool(raw.get("audio_muted", False)),
+    }
 
 
 def _clip_options_with_output_ranges(
@@ -457,6 +526,13 @@ def _clip_options_with_output_ranges(
         prepared = dict(option)
         start_s = float(prepared.get("start_s", 0.0) or 0.0)
         end_s = float(prepared.get("end_s", start_s) or start_s)
+        if manual_segments and _is_overlay_clip_option(prepared):
+            for output_start, output_end in _project_source_range_to_output_ranges(start_s, end_s, manual_segments):
+                overlay_prepared = dict(prepared)
+                overlay_prepared["output_start_s"] = output_start
+                overlay_prepared["output_end_s"] = output_end
+                options.append(overlay_prepared)
+            continue
         if manual_segments and idx < len(manual_segments):
             seg_start, seg_end = manual_segments[idx]
             duration = max(0.0, float(seg_end) - float(seg_start))
@@ -468,6 +544,32 @@ def _clip_options_with_output_ranges(
             prepared["output_end_s"] = end_s
         options.append(prepared)
     return options
+
+
+def _is_overlay_clip_option(option: dict[str, object]) -> bool:
+    return str(option.get("layer") or "").strip().lower() == "overlay"
+
+
+def _project_source_range_to_output_ranges(
+    start_s: float,
+    end_s: float,
+    manual_segments: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    ranges: list[tuple[float, float]] = []
+    cursor = 0.0
+    for seg_start, seg_end in manual_segments:
+        seg_start = float(seg_start)
+        seg_end = float(seg_end)
+        duration = max(0.0, seg_end - seg_start)
+        overlap_start = max(start_s, seg_start)
+        overlap_end = min(end_s, seg_end)
+        if overlap_end > overlap_start:
+            ranges.append((
+                cursor + (overlap_start - seg_start),
+                cursor + (overlap_end - seg_start),
+            ))
+        cursor += duration
+    return ranges
 
 
 def _has_clip_source_replacements(clip_options: list[dict[str, object]]) -> bool:

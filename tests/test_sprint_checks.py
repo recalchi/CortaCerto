@@ -4,10 +4,12 @@ from pathlib import Path
 from unittest import mock
 
 from scripts.run_sprint_checks import (
+    build_check_plan,
     check_legacy_root_files,
     check_secret_leaks,
     check_test_inventory,
     check_text_encoding,
+    format_check_plan,
     safe_console,
 )
 
@@ -73,6 +75,20 @@ class SprintChecksTests(unittest.TestCase):
 
             with mock.patch("scripts.run_sprint_checks.iter_text_files", return_value=[env_file]):
                 self.assertEqual(check_secret_leaks(print_fn=lambda _: None), 0)
+
+    def test_check_plan_lists_execution_order(self) -> None:
+        plan = build_check_plan(include_startup=True, include_export_smoke=True)
+        titles = [title for title, _cmd in plan]
+
+        self.assertEqual(titles[0], "Compilacao dos modulos principais")
+        self.assertEqual(titles[1], "Testes unitarios e invariantes do editor")
+        self.assertEqual(titles[2], "Startup real com FFmpeg")
+        self.assertEqual(titles[3], "Export real sintetico")
+
+        lines = format_check_plan(plan, strict_legacy=True)
+        self.assertIn("1. Compilacao dos modulos principais", lines)
+        self.assertIn("5. Checagem de arquivos legados conhecidos (strict)", lines)
+        self.assertIn("8. Inventario de testes declarados", lines)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,11 @@ def main(argv: list[str] | None = None) -> int:
 
     from src.ui.app import CortaCertoApp
     app = CortaCertoApp()
-    app.run()
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        print("[STARTUP] CortaCerto encerrado pelo terminal.")
+        return 130
     return 0
 
 
