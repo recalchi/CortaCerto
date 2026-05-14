@@ -527,8 +527,16 @@ class ProjectCard(tk.Frame):
 
     def _draw_thumb(self, event: Optional[tk.Event] = None) -> None:
         """Draw thumbnail gradient + overlays on canvas."""
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
         c = self._canvas
-        c.delete("all")
+        try:
+            c.delete("all")
+        except Exception:
+            return
         w = c.winfo_width()
         h = self.THUMB_H
         if w < 4:
@@ -606,7 +614,11 @@ class ProjectCard(tk.Frame):
             w.bind("<Button-1>", on_click)
 
     def refresh_thumb(self) -> None:
-        self._draw_thumb()
+        try:
+            if self.winfo_exists():
+                self._draw_thumb()
+        except Exception:
+            pass
 
 
 def _all_widgets(w: tk.Widget) -> list[tk.Widget]:
@@ -968,7 +980,6 @@ class ProjectManagerScreen(tk.Frame):
         self._scroll_canvas.yview_moveto(0)
 
     def _render_home(self) -> None:
-        pad = {"padx": 28, "pady": 0}
         inner = self._inner
 
         # Hero
@@ -987,7 +998,7 @@ class ProjectManagerScreen(tk.Frame):
         if not filtered:
             empty = tk.Frame(inner, bg=BG0, highlightthickness=1,
                              highlightbackground=BORD_S)
-            empty.pack(fill="x", **pad, pady=(0, 40))
+            empty.pack(fill="x", padx=28, pady=(0, 40))
             tk.Label(empty, text="○", bg=BG0, fg=TXT4,
                      font=("Segoe UI", 28)).pack(pady=(32, 4))
             q = self._search_var.get()
@@ -1186,8 +1197,10 @@ class ProjectManagerScreen(tk.Frame):
                       padx=(0, 10) if col < cols - 1 else 0,
                       pady=(0, 12))
             self._card_refs.append(card)
-        # Draw thumbs after layout
-        grid.after(50, lambda: [c.refresh_thumb() for c in self._card_refs])
+        # Capture refs at schedule-time so a subsequent _clear_inner() doesn't
+        # cause the callback to call refresh_thumb() on destroyed widgets.
+        refs_snapshot = list(self._card_refs)
+        grid.after(50, lambda refs=refs_snapshot: [c.refresh_thumb() for c in refs])
 
     def _reflow_grid(self, grid: tk.Frame, projects: list[ProjectEntry]) -> None:
         w = grid.winfo_width()
