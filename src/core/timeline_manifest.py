@@ -51,9 +51,17 @@ def _media_references(primary_media: str, clips: list[TimelineClip]) -> list[dic
             "id": _media_id(idx),
             "target_url": path,
             "name": Path(path).name,
+            "kind": _media_kind(path),
         }
         for idx, path in enumerate(paths)
     ]
+
+
+def _media_kind(path: str) -> str:
+    suffix = Path(path).suffix.lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
+        return "image"
+    return "video"
 
 
 def _manifest_clips(clips: list[TimelineClip], primary_media: str) -> list[dict[str, Any]]:
@@ -65,6 +73,7 @@ def _manifest_clips(clips: list[TimelineClip], primary_media: str) -> list[dict[
             {
                 "id": f"clip-{idx:04d}",
                 "name": clip.label or f"Clip {idx}",
+                "kind": str(getattr(clip, "clip_type", "") or "speech"),
                 "media_id": _media_id_for_path(clip.source_path or primary_media, primary_media, clips),
                 "source_start_s": float(clip.start_s),
                 "source_end_s": float(clip.end_s),
@@ -114,6 +123,9 @@ def _manifest_text_clips(clips: list[TimelineClip]) -> list[dict[str, Any]]:
                         "position_x_pct": float(getattr(clip, "text_position_x_pct", 0.0)),
                         "position_y_pct": float(getattr(clip, "text_position_y_pct", 72.0)),
                         "size_pct": float(getattr(clip, "text_size_pct", 100.0)),
+                        "color": str(getattr(clip, "text_color", "#ffffff") or "#ffffff"),
+                        "background_enabled": bool(getattr(clip, "text_background_enabled", True)),
+                        "background_color": str(getattr(clip, "text_background_color", "#000000") or "#000000"),
                     }
                 ],
             }
@@ -142,6 +154,9 @@ def _clip_effects(clip: TimelineClip) -> list[dict[str, Any]]:
                 "position_x_pct": float(getattr(clip, "text_position_x_pct", 0.0)),
                 "position_y_pct": float(getattr(clip, "text_position_y_pct", 72.0)),
                 "size_pct": float(getattr(clip, "text_size_pct", 100.0)),
+                "color": str(getattr(clip, "text_color", "#ffffff") or "#ffffff"),
+                "background_enabled": bool(getattr(clip, "text_background_enabled", True)),
+                "background_color": str(getattr(clip, "text_background_color", "#000000") or "#000000"),
             }
         )
     if bool(clip.chroma_enabled):
@@ -152,6 +167,9 @@ def _clip_effects(clip: TimelineClip) -> list[dict[str, Any]]:
                 "tolerance": float(clip.chroma_tolerance),
             }
         )
+    opacity_pct = float(getattr(clip, "opacity_pct", 100.0))
+    if abs(opacity_pct - 100.0) > 0.01:
+        effects.append({"type": "opacity", "opacity_pct": opacity_pct})
     if clip.transition and clip.transition != "Corte":
         effects.append({"type": "transition", "name": clip.transition})
     return effects

@@ -19,11 +19,15 @@ class TimelineClip:
     text_position_x_pct: float = 0.0
     text_position_y_pct: float = 72.0
     text_size_pct: float = 100.0
+    text_color: str = "#ffffff"
+    text_background_enabled: bool = True
+    text_background_color: str = "#000000"
     chroma_enabled: bool = False
     chroma_color: str = "#00ff00"
     chroma_tolerance: float = 45.0
     position_x_pct: float = 0.0
     position_y_pct: float = 0.0
+    opacity_pct: float = 100.0
 
 
 @dataclass
@@ -41,6 +45,7 @@ class TimelineModel:
     waveform: list[float]
     saved_time_s: float
     text_track: TimelineTrack = field(default_factory=lambda: TimelineTrack(name="Texto"))
+    overlay_track: TimelineTrack = field(default_factory=lambda: TimelineTrack(name="Overlay"))
 
 
 def build_timeline_model(
@@ -75,4 +80,5 @@ def build_timeline_model(
         waveform=waveform_values,
         saved_time_s=saved,
         text_track=TimelineTrack(name="Texto"),
+        overlay_track=TimelineTrack(name="Overlay"),
     )

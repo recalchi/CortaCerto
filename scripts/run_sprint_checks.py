@@ -52,18 +52,24 @@ CHECKS: list[tuple[str, list[str]]] = [
             "src/api_settings.py",
             "src/bootstrap.py",
             "src/core/ai_assistant.py",
+            "src/core/effect_renderer.py",
+            "src/core/error_log.py",
+            "src/core/timeline_manifest.py",
             "src/pipeline.py",
             "src/ui/app.py",
             "tests/test_bootstrap.py",
             "tests/test_api_settings.py",
             "tests/test_ai_assistant.py",
+            "tests/test_architecture.py",
             "tests/test_effect_renderer.py",
             "tests/test_export_smoke.py",
             "tests/test_editor_consistency.py",
+            "tests/test_error_log.py",
             "tests/test_ffmpeg_env.py",
             "tests/test_pipeline_cleanup.py",
             "tests/test_preview_ui.py",
             "tests/test_sprint_checks.py",
+            "tests/test_timeline_manifest.py",
         ],
     ),
     (
@@ -71,6 +77,47 @@ CHECKS: list[tuple[str, list[str]]] = [
         [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
     ),
 ]
+
+
+def build_check_plan(include_startup: bool = False, include_export_smoke: bool = False) -> list[tuple[str, list[str]]]:
+    checks = list(CHECKS)
+    if include_startup:
+        checks.append(
+            (
+                "Startup real com FFmpeg",
+                [sys.executable, "main.py", "--check-startup"],
+            )
+        )
+    if include_export_smoke:
+        checks.append(
+            (
+                "Export real sintetico",
+                [
+                    sys.executable,
+                    "-c",
+                    "import os, unittest; os.environ['CORTACERTO_EXPORT_SMOKE']='1'; unittest.main(module='tests.test_export_smoke')",
+                ],
+            )
+        )
+    return checks
+
+
+def format_check_plan(checks: list[tuple[str, list[str]]], *, strict_legacy: bool = False) -> list[str]:
+    lines = ["Plano de automacoes da sprint:"]
+    for idx, (title, cmd) in enumerate(checks, start=1):
+        lines.append(f"{idx}. {title}")
+        lines.append(f"   {' '.join(cmd)}")
+    offset = len(checks)
+    lines.append(f"{offset + 1}. Checagem de arquivos legados conhecidos" + (" (strict)" if strict_legacy else ""))
+    lines.append(f"{offset + 2}. Checagem de encoding dos textos ativos")
+    lines.append(f"{offset + 3}. Checagem de segredos fora de .env")
+    lines.append(f"{offset + 4}. Inventario de testes declarados")
+    return lines
+
+
+def print_check_plan(checks: list[tuple[str, list[str]]], *, strict_legacy: bool = False, print_fn=print) -> None:
+    for line in format_check_plan(checks, strict_legacy=strict_legacy):
+        print_fn(line)
 
 
 def run_check(title: str, cmd: list[str]) -> int:
@@ -170,27 +217,17 @@ def main() -> int:
         action="store_true",
         help="Falha se arquivos legados conhecidos ainda existirem na raiz.",
     )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="Lista a ordem das automacoes sem executar.",
+    )
     args = parser.parse_args()
 
-    checks = list(CHECKS)
-    if args.include_startup:
-        checks.append(
-            (
-                "Startup real com FFmpeg",
-                [sys.executable, "main.py", "--check-startup"],
-            )
-        )
-    if args.include_export_smoke:
-        checks.append(
-            (
-                "Export real sintetico",
-                [
-                    sys.executable,
-                    "-c",
-                    "import os, unittest; os.environ['CORTACERTO_EXPORT_SMOKE']='1'; unittest.main(module='tests.test_export_smoke')",
-                ],
-            )
-        )
+    checks = build_check_plan(args.include_startup, args.include_export_smoke)
+    if args.list:
+        print_check_plan(checks, strict_legacy=args.strict_legacy)
+        return 0
 
     for title, cmd in checks:
         code = run_check(title, cmd)

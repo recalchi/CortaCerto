@@ -14,6 +14,8 @@ from .process_manager import CancelledError, ProcessManager
 from .subject_tracking import SubjectTracker
 from .video_effects import apply_video_effects_bgr
 
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
 
 def render_clip_source_pass(
     input_video: str,
@@ -25,6 +27,8 @@ def render_clip_source_pass(
     replacements = [option for option in clip_options if _clip_option_has_source_replacement(option)]
     if not replacements:
         return input_video
+    base_replacements = [option for option in replacements if not _clip_option_is_overlay(option)]
+    overlays = [option for option in replacements if _clip_option_is_overlay(option)]
 
     cancel = cancel or threading.Event()
     cap = cv2.VideoCapture(input_video)
@@ -82,12 +86,16 @@ def render_clip_source_pass(
             if not ok or frame_bgr is None:
                 break
             time_s = frame_index / fps
-            option = _clip_option_for_output_time(replacements, time_s)
+            option = _clip_option_for_output_time(base_replacements, time_s)
             if option is not None:
                 replacement = _read_replacement_frame(option, time_s, source_caps, source_meta, width, height)
                 if replacement is not None:
                     frame_bgr = replacement
                 frame_bgr = _apply_clip_frame_options_bgr(frame_bgr, option)
+            for overlay_option in _clip_overlay_options_for_output_time(overlays, time_s):
+                overlay_frame = _read_replacement_frame(overlay_option, time_s, source_caps, source_meta, width, height)
+                if overlay_frame is not None:
+                    frame_bgr = _compose_overlay_frame_bgr(frame_bgr, overlay_frame, overlay_option)
             if proc.stdin is None:
                 raise RuntimeError("Pipe do encoder indisponível.")
             proc.stdin.write(frame_bgr.tobytes())
@@ -150,6 +158,20 @@ def _clip_option_for_output_time(clip_options: list[dict[str, object]], time_s: 
     return None
 
 
+def _clip_overlay_options_for_output_time(clip_options: list[dict[str, object]], time_s: float) -> list[dict[str, object]]:
+    active: list[dict[str, object]] = []
+    for option in clip_options:
+        start_s = float(option.get("output_start_s", option.get("start_s", 0.0)) or 0.0)
+        end_s = float(option.get("output_end_s", option.get("end_s", 0.0)) or 0.0)
+        if start_s <= time_s < end_s:
+            active.append(option)
+    return active
+
+
+def _clip_option_is_overlay(option: dict[str, object]) -> bool:
+    return str(option.get("layer") or "").strip().lower() == "overlay"
+
+
 def _clip_option_has_source_replacement(option: dict[str, object]) -> bool:
     if not option.get("source_path"):
         return False
@@ -169,6 +191,11 @@ def _read_replacement_frame(
     path = str(option.get("source_path") or "")
     if not path:
         return None
+    if _is_image_path(path):
+        frame_bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+        if frame_bgr is None:
+            return None
+        return _fit_image_frame_bgr(frame_bgr, width, height)
     cap = source_caps.get(path)
     if cap is None:
         cap = cv2.VideoCapture(path)
@@ -187,6 +214,126 @@ def _read_replacement_frame(
     if not ok or frame_bgr is None:
         return None
     return cv2.resize(frame_bgr, (width, height), interpolation=cv2.INTER_AREA)
+
+
+def _is_image_path(path: str) -> bool:
+    from pathlib import Path
+
+    return Path(str(path or "")).suffix.lower() in IMAGE_EXTENSIONS
+
+
+def _fit_image_frame_bgr(frame_bgr: object, width: int, height: int) -> object:
+    src_h, src_w = frame_bgr.shape[:2]
+    if src_w <= 0 or src_h <= 0 or width <= 0 or height <= 0:
+        return frame_bgr
+    scale = min(width / src_w, height / src_h)
+    new_w = max(1, int(round(src_w * scale)))
+    new_h = max(1, int(round(src_h * scale)))
+    resized = cv2.resize(frame_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    canvas = np.zeros((height, width, 3), dtype=resized.dtype)
+    x = (width - new_w) // 2
+    y = (height - new_h) // 2
+    canvas[y:y + new_h, x:x + new_w] = resized
+    return canvas
+
+
+def _compose_overlay_frame_bgr(base_bgr: object, overlay_bgr: object, option: dict[str, object]) -> object:
+    height, width = base_bgr.shape[:2]
+    overlay = _fit_image_frame_bgr(overlay_bgr, width, height)
+    scale_pct = max(25.0, min(300.0, float(option.get("scale_pct", 100.0) or 100.0)))
+    pos_x_pct = float(option.get("position_x_pct", 0.0) or 0.0)
+    pos_y_pct = float(option.get("position_y_pct", 0.0) or 0.0)
+
+    if scale_pct >= 100.0:
+        rendered = _apply_overlay_chroma_bgr(overlay, option, base_bgr)
+        rendered = _scale_frame_bgr_positioned(rendered, scale_pct, pos_x_pct, pos_y_pct)
+        rendered = _draw_overlay_text_if_needed_bgr(rendered, option)
+        return _blend_overlay_bgr(base_bgr, rendered, _option_opacity_factor(option))
+
+    left, top, right, bottom = _scaled_overlay_bounds(width, height, scale_pct, pos_x_pct, pos_y_pct)
+    if right <= left or bottom <= top:
+        return base_bgr
+    out = base_bgr.copy()
+    scaled = cv2.resize(overlay, (right - left, bottom - top), interpolation=cv2.INTER_AREA)
+    background = out[top:bottom, left:right]
+    scaled = _apply_overlay_chroma_bgr(scaled, option, background)
+    scaled = _draw_overlay_text_if_needed_bgr(scaled, option)
+    scaled = _blend_overlay_bgr(background, scaled, _option_opacity_factor(option))
+    out[top:bottom, left:right] = scaled
+    return out
+
+
+def _option_opacity_factor(option: dict[str, object]) -> float:
+    try:
+        opacity_pct = float(option.get("opacity_pct", 100.0) or 100.0)
+    except (TypeError, ValueError):
+        opacity_pct = 100.0
+    return max(0.0, min(100.0, opacity_pct)) / 100.0
+
+
+def _blend_overlay_bgr(base_bgr: object, overlay_bgr: object, opacity: float) -> object:
+    opacity = max(0.0, min(1.0, float(opacity)))
+    if opacity <= 0.0:
+        return base_bgr
+    if opacity >= 1.0:
+        return overlay_bgr
+    if base_bgr.shape[:2] != overlay_bgr.shape[:2]:
+        overlay_bgr = cv2.resize(overlay_bgr, (base_bgr.shape[1], base_bgr.shape[0]), interpolation=cv2.INTER_AREA)
+    return cv2.addWeighted(overlay_bgr, opacity, base_bgr, 1.0 - opacity, 0.0)
+
+
+def _scaled_overlay_bounds(
+    width: int,
+    height: int,
+    scale_pct: float,
+    pos_x_pct: float,
+    pos_y_pct: float,
+) -> tuple[int, int, int, int]:
+    scale = max(0.25, min(0.9999, scale_pct / 100.0))
+    visual_w = max(1, int(round(width * scale)))
+    visual_h = max(1, int(round(height * scale)))
+    free_x = max(0, width - visual_w)
+    free_y = max(0, height - visual_h)
+    pos_x = max(-100.0, min(100.0, pos_x_pct)) / 100.0
+    pos_y = max(-100.0, min(100.0, pos_y_pct)) / 100.0
+    left = int(round(free_x / 2 + pos_x * free_x / 2))
+    top = int(round(free_y / 2 + pos_y * free_y / 2))
+    left = max(0, min(width, left))
+    top = max(0, min(height, top))
+    return left, top, min(width, left + visual_w), min(height, top + visual_h)
+
+
+def _apply_overlay_chroma_bgr(frame_bgr: object, option: dict[str, object], background_bgr: object) -> object:
+    if not bool(option.get("chroma_enabled", False)):
+        return frame_bgr
+    target = np.array(_hex_to_bgr(str(option.get("chroma_color") or "#00ff00")), dtype=np.int16)
+    arr = np.array(frame_bgr, dtype=np.int16)
+    diff = np.linalg.norm(arr - target, axis=2)
+    mask = diff <= max(1.0, float(option.get("chroma_tolerance", 45.0) or 45.0))
+    if not mask.any():
+        return frame_bgr
+    out = arr.astype(np.uint8)
+    bg = np.array(background_bgr, dtype=np.uint8)
+    if bg.shape[:2] != out.shape[:2]:
+        bg = cv2.resize(bg, (out.shape[1], out.shape[0]), interpolation=cv2.INTER_AREA)
+    out[mask] = bg[mask]
+    return out
+
+
+def _draw_overlay_text_if_needed_bgr(frame_bgr: object, option: dict[str, object]) -> object:
+    text = str(option.get("text_overlay") or "").strip()
+    if not text:
+        return frame_bgr
+    return _draw_text_overlay_bgr(
+        frame_bgr,
+        text,
+        float(option.get("text_position_x_pct", 0.0) or 0.0),
+        float(option.get("text_position_y_pct", 72.0) or 72.0),
+        float(option.get("text_size_pct", 100.0) or 100.0),
+        str(option.get("text_color") or "#ffffff"),
+        bool(option.get("text_background_enabled", True)),
+        str(option.get("text_background_color") or "#000000"),
+    )
 
 
 def _apply_clip_frame_options_bgr(frame_bgr: object, option: dict[str, object]) -> object:
@@ -211,6 +358,9 @@ def _apply_clip_frame_options_bgr(frame_bgr: object, option: dict[str, object]) 
             float(option.get("text_position_x_pct", 0.0) or 0.0),
             float(option.get("text_position_y_pct", 72.0) or 72.0),
             float(option.get("text_size_pct", 100.0) or 100.0),
+            str(option.get("text_color") or "#ffffff"),
+            bool(option.get("text_background_enabled", True)),
+            str(option.get("text_background_color") or "#000000"),
         )
     return rendered
 
@@ -277,32 +427,50 @@ def _draw_text_overlay_bgr(
     pos_x_pct: float = 0.0,
     pos_y_pct: float = 72.0,
     size_pct: float = 100.0,
+    text_color: str = "#ffffff",
+    background_enabled: bool = True,
+    background_color: str = "#000000",
 ) -> object:
     frame = frame_bgr.copy()
     height, width = frame.shape[:2]
     x, y = _text_anchor(width, height, pos_x_pct, pos_y_pct)
     font_scale = max(0.35, min(2.2, width / 1280.0 * (float(size_pct) / 100.0)))
     box_h = max(24, int(34 * font_scale))
-    box_w = min(width - 1, max(90, int(len(text[:80]) * box_h * 0.55)))
+    lines = _text_overlay_lines(text)
+    box_w = min(width - 1, max(90, int(max(len(line) for line in lines) * box_h * 0.55)))
+    total_h = box_h * len(lines)
     pad = max(4, int(8 * font_scale))
-    cv2.rectangle(
-        frame,
-        (max(0, x - pad), max(0, y - pad)),
-        (min(width - 1, x + box_w + pad), min(height - 1, y + box_h + pad)),
-        (0, 0, 0),
-        thickness=-1,
-    )
-    cv2.putText(
-        frame,
-        text[:80],
-        (x, y + max(16, box_h - pad)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale,
-        (255, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
+    if background_enabled:
+        bg_rgb = _hex_to_rgb(_normalize_hex_color(background_color, "#000000"))
+        bg_bgr = (bg_rgb[2], bg_rgb[1], bg_rgb[0])
+        cv2.rectangle(
+            frame,
+            (max(0, x - pad), max(0, y - pad)),
+            (min(width - 1, x + box_w + pad), min(height - 1, y + total_h + pad)),
+            bg_bgr,
+            thickness=-1,
+        )
+    fg_rgb = _hex_to_rgb(_normalize_hex_color(text_color, "#ffffff"))
+    fg_bgr = (fg_rgb[2], fg_rgb[1], fg_rgb[0])
+    for idx, line in enumerate(lines):
+        cv2.putText(
+            frame,
+            line,
+            (x, y + idx * box_h + max(16, box_h - pad)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            fg_bgr,
+            2,
+            cv2.LINE_AA,
+        )
     return frame
+
+
+def _text_overlay_lines(text: str, max_lines: int = 4, max_chars: int = 80) -> list[str]:
+    lines = [line.strip() for line in str(text or "").replace("\r\n", "\n").split("\n") if line.strip()]
+    if not lines:
+        return [""]
+    return [line[:max_chars] for line in lines[:max_lines]]
 
 
 def _text_anchor(width: int, height: int, pos_x_pct: float, pos_y_pct: float) -> tuple[int, int]:
@@ -311,7 +479,7 @@ def _text_anchor(width: int, height: int, pos_x_pct: float, pos_y_pct: float) ->
     return (int(round(max(0, width - 1) * x_ratio)), int(round(max(0, height - 1) * y_ratio)))
 
 
-def _normalize_hex_color(value: str) -> str:
+def _normalize_hex_color(value: str, default: str = "#00ff00") -> str:
     text = str(value or "").strip()
     if not text.startswith("#"):
         text = f"#{text}"
@@ -321,12 +489,17 @@ def _normalize_hex_color(value: str) -> str:
             return text.lower()
         except ValueError:
             pass
-    return "#00ff00"
+    return default
 
 
 def _hex_to_rgb(value: str) -> tuple[int, int, int]:
     color = _normalize_hex_color(value)
     return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+
+
+def _hex_to_bgr(value: str) -> tuple[int, int, int]:
+    red, green, blue = _hex_to_rgb(_normalize_hex_color(value))
+    return blue, green, red
 
 
 def render_effects_pass(

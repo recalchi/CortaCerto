@@ -94,9 +94,29 @@ CortaCerto/
 
 ---
 
+## Arquitetura em 2 minutos
+
+O CortaCerto abre por `main.py`, que valida dependencias de startup antes de importar a interface. A UI fica em `src/ui/app.py`: ela monta telas, recebe eventos do usuario, coordena preview/timeline e chama servicos.
+
+As regras e servicos reaproveitaveis ficam em `src/core/`: timeline, preview, audio, cor, thumbnails, segmentacao, logs e gerenciamento de processos. O export final passa por `src/pipeline.py`, que orquestra ffmpeg/OpenCV usando configuracoes de `src/config.py` e caminhos/encoders de `src/ffmpeg_env.py`.
+
+Fluxo mental rapido: `main.py` -> `CortaCertoApp` -> `core` para regras/servicos -> `pipeline` para export -> `scripts/run_sprint_checks.py` para validar tudo. A direcao desejada das dependencias e UI chamando core/pipeline; core nao deve importar UI.
+
+## Documentacao de desenvolvimento
+
+A documentacao secundaria fica em `docs/`:
+
+- [Indice da documentacao](docs/INDICE_DOCUMENTACAO.md)
+- [Contexto geral](docs/CONTEXTO_GERAL.md)
+- [Plano de desenvolvimento do editor](docs/PLANO_DESENVOLVIMENTO_EDITOR.md)
+- [Checks de desenvolvimento e testes](docs/CHECKS_DEV.md)
+- [Handoff tecnico](docs/AGENT_HANDOFF.md)
+
 ## Como usar
 
 ### Validar a sprint
+
+Os comandos, checklist manual e resultados recentes ficam centralizados em [docs/CHECKS_DEV.md](docs/CHECKS_DEV.md).
 
 Antes de testar manualmente, rode:
 
@@ -105,6 +125,12 @@ python scripts\run_sprint_checks.py
 ```
 
 Esse é o comando oficial da sprint. Ele usa `unittest discover -s tests` para ignorar scripts legados da raiz que não fazem parte da suíte atual.
+
+Para ver a ordem exata das automacoes sem executar:
+
+```bat
+python scripts\run_sprint_checks.py --list
+```
 
 Para incluir a validação real de FFmpeg/startup:
 
@@ -123,6 +149,12 @@ Ela também verifica padrões comuns de texto com encoding quebrado nos arquivos
 
 Protótipos antigos baseados em MoviePy/pydub foram preservados em `legacy/old_moviepy_prototype/`. Eles não são entrada do app atual.
 
+
+### Registro automatico de erros
+
+Durante o uso, o app registra falhas em `errors.jsonl` dentro da pasta local do CortaCerto (`%LOCALAPPDATA%\CortaCerto\logs\` no Windows, quando disponivel). Para testes ou diagnostico controlado, defina `CORTACERTO_ERROR_LOG_DIR` apontando para outra pasta antes de abrir o app.
+
+Cada evento guarda timestamp, origem, tipo, mensagem, traceback e um contexto resumido da tela/projeto. Chaves sensiveis como API keys, tokens, senhas e `.env` sao mascaradas automaticamente. Esse log serve para transformar erros de usabilidade em casos reproduziveis e novos testes automaticos.
 
 ### Fluxo básico
 
@@ -250,7 +282,7 @@ Principais pontos já estabilizados:
 - Troca/abertura de projeto limpa runtime anterior antes de carregar o novo, evitando preview/timeline/mídias antigas em pré-load.
 - Zoom da timeline agora usa janela temporal flexível com margem ao redor do playhead, permitindo aproximar mais sem perder contexto.
 - Texto aplicado ao vídeo passa a ser salvo também em `text_options` e desenhado em uma track própria na timeline, mantendo espelho no clipe para export compatível.
-- Inserir/substituir ganhou duração configurável no painel de mídias; o mesmo valor vale para botão e drag-and-drop na timeline.
+- Inserir na timeline ganhou duração configurável no painel de mídias; o mesmo valor vale para botão e drag-and-drop na timeline.
 - Itens da track TEXTO podem ser selecionados independentemente na timeline, editados no inspector e removidos com Delete.
 - Projetos passam a salvar `timeline_manifest`, uma estrutura inspirada em OTIO/MLT com mídia externa, tracks, clips, ranges compactados e efeitos por escopo.
 - Inspetor do clipe ganhou base de chroma key por clipe, com cor/tolerância e preview substituindo o fundo cromado por marcação neutra.
@@ -261,6 +293,15 @@ Principais pontos já estabilizados:
 - Projetos na lixeira podem ser restaurados pela tela inicial para uma pasta escolhida, sem sobrescrever projetos existentes.
 - Drag-and-drop usa `tkinterdnd2` quando instalado: soltar no preview carrega/importa mídia e soltar na timeline insere/substitui no ponto do mouse; se indisponível, o app mantém fallback por botões.
 - Runner da sprint exibe inventário de testes para acompanhar cobertura funcional sem gastar tempo em checks manuais.
+- App registra erros de uso em JSONL com contexto resumido e mascaramento de dados sensiveis; o runner inclui testes para esse autoregistro.
+- Texto da track TEXTO aparece no preview, pode ser selecionado por clique direto e continua sincronizado com o overlay legado usado pelo export atual.
+- Mídias do projeto aceitam imagens (`jpg`, `png`, `webp`, `bmp`) além de vídeos; imagens podem ser inseridas/substituídas na timeline como clipes visuais estáticos.
+- Clipes inseridos a partir de imagens usam tipo `image`, clipes de vídeos externos usam tipo `media`, e a timeline diferencia visualmente esses blocos.
+- A caixa de mídias permite arrastar um item e soltar direto na timeline para inserir no ponto desejado.
+- A timeline ganhou mais altura, zoom até 8x, botão `Ver tudo` e uma área maior para pegar as pontas dos clipes.
+- O painel do clipe permite criar `Novo texto` no playhead, selecionando automaticamente o item de texto para edição.
+- Textos agora têm fundo configurável no inspector: é possível desligar o retângulo de fundo ou trocar a cor hexadecimal.
+- Preview e export aplicam imagens de clipe com letterbox no tamanho do vídeo, preservando proporção e mantendo os controles de escala/posição/texto/chroma por clipe.
 - Primeiro frame volta a aparecer após carregar vídeo.
 - Carregamento de vídeo pede primeiro um frame rápido sem efeitos, depois atualiza o preview completo.
 - Resize do preview tem teste unitário para evitar regressão como `Image`/`ImageTk` quebrado.
@@ -286,7 +327,7 @@ Principais pontos já estabilizados:
 - Split/delete/undo param o playback e reancoram o playhead em um trecho mantido para evitar timeline parada com preview avançando.
 - Testes de invariantes do editor validam que playback, timeline compacta e cursor não apontam para lacunas removidas.
 - Timeline mostra ação de desfazer na barra e informa o tempo exato quando um clipe é dividido.
-- Atalhos: `Espaço` play/pause, `B` divide no playhead, `Delete`/`Backspace` exclui, `Ctrl+Z` desfaz ação da timeline; campos de texto não capturam esses comandos.
+- Atalhos: `Espaço` play/pause, `B` divide no playhead, `Delete`/`Backspace` exclui, `Ctrl+Z` desfaz, `Ctrl+Y` refaz, setas navegam quadro a quadro, `Shift+setas` pulam 1s, `Home`/`End` vao ao inicio/fim, `Ctrl+=`/`Ctrl++`/`Ctrl+-` ajustam zoom da timeline e `Ctrl+0` mostra tudo; campos de texto não capturam esses comandos.
 - Controle de silêncio ganhou ajuste de fala mínima para evitar microclipes e cortes nervosos.
 - Corte automático de silêncio inicia desligado; a timeline pode ser analisada para sugestão, mas o export só aplica corte se o usuário ativar ou editar manualmente os clipes.
 - Sliders de color grade e bokeh solicitam novo frame sem bloquear a UI.
@@ -352,7 +393,7 @@ O backend aparece na sidebar:
 
 Normalização **EBU R128** automática (`loudnorm I=-16 TP=-1.5 LRA=11`) — padrão do YouTube e Netflix. Garante volume consistente sem clipping em qualquer microfone.
 
-Redução de ruído com `afftdn` (FFT noise gate -25 dBFS) ativada por padrão.
+Tratamento de áudio separado por opção: loudnorm EBU R128 pode ficar ativo sozinho, redução de ruído usa `afftdn=nf=-18` e vem desligada por padrão para evitar artefatos, com filtro de voz e compressão leve opcionais.
 
 ---
 

@@ -5,10 +5,14 @@ from unittest import mock
 
 from src.config import ProcessingConfig
 from src.pipeline import (
+    _audio_postprocess_label,
+    _build_audio_postprocess_filters,
     _build_clip_volume_filter,
+    _clip_options_for_track_options,
     _clip_options_with_output_ranges,
     _clip_volume_adjustments,
     _has_clip_audio_adjustments,
+    _has_audio_postprocess,
     _has_clip_source_replacements,
     _clip_option_plan,
     _cleanup_intermediate_exports,
@@ -32,9 +36,35 @@ class PipelineCleanupTests(unittest.TestCase):
 
         self.assertEqual(_export_output_plan(config), "vídeo final, versão vertical, 5 thumbnails")
 
+    def test_audio_postprocess_filters_are_independent_controls(self) -> None:
+        clean = ProcessingConfig(audio_normalization=False)
+        self.assertEqual(_build_audio_postprocess_filters(clean), [])
+        self.assertFalse(_has_audio_postprocess(clean))
+
+        config = ProcessingConfig(
+            noise_reduction=True,
+            audio_normalization=True,
+            audio_voice_filter=True,
+            audio_compressor=True,
+        )
+
+        self.assertEqual(
+            _build_audio_postprocess_filters(config),
+            [
+                "afftdn=nf=-18",
+                "highpass=f=80",
+                "lowpass=f=12000",
+                "acompressor=threshold=-18dB:ratio=2.5:attack=8:release=120",
+                "loudnorm=I=-16:TP=-1.5:LRA=11",
+            ],
+        )
+        self.assertTrue(_has_audio_postprocess(config))
+        self.assertIn("reducao de ruido leve", _audio_postprocess_label(config))
+
     def test_clip_option_plan_summarizes_editor_adjustments(self) -> None:
         plan = _clip_option_plan([
             {"scale_pct": 125.0, "volume_pct": 80.0, "transition": "Fade", "text_overlay": "Intro", "chroma_enabled": True},
+            {"layer": "overlay", "source_path": "logo.png", "scale_pct": 100.0, "volume_pct": 100.0, "transition": "Corte"},
             {"scale_pct": 100.0, "volume_pct": 100.0, "transition": "Corte", "text_overlay": ""},
         ])
 
@@ -42,6 +72,31 @@ class PipelineCleanupTests(unittest.TestCase):
         self.assertIn("volume em 1 clipe(s)", plan)
         self.assertIn("texto em 1 clipe(s)", plan)
         self.assertIn("chroma em 1 clipe(s)", plan)
+        self.assertIn("1 overlay(s) visual(is)", plan)
+
+    def test_clip_options_for_track_options_applies_export_layer_state(self) -> None:
+        options = _clip_options_for_track_options(
+            [
+                {
+                    "source_path": "broll.mp4",
+                    "scale_pct": 125.0,
+                    "position_x_pct": 20.0,
+                    "position_y_pct": -10.0,
+                    "volume_pct": 80.0,
+                    "text_overlay": "Intro",
+                    "chroma_enabled": True,
+                }
+            ],
+            {"visual_visible": False, "text_visible": False, "audio_muted": True},
+        )
+
+        self.assertEqual(options[0]["source_path"], "")
+        self.assertEqual(options[0]["scale_pct"], 100.0)
+        self.assertEqual(options[0]["position_x_pct"], 0.0)
+        self.assertEqual(options[0]["position_y_pct"], 0.0)
+        self.assertEqual(options[0]["volume_pct"], 0.0)
+        self.assertEqual(options[0]["text_overlay"], "")
+        self.assertFalse(options[0]["chroma_enabled"])
 
     def test_clip_options_with_output_ranges_compacts_manual_timeline(self) -> None:
         options = _clip_options_with_output_ranges(
@@ -57,6 +112,23 @@ class PipelineCleanupTests(unittest.TestCase):
         self.assertEqual(options[1]["output_start_s"], 2.0)
         self.assertEqual(options[1]["output_end_s"], 5.0)
         self.assertTrue(_has_clip_source_replacements(options))
+
+    def test_overlay_clip_options_project_across_manual_timeline_gaps(self) -> None:
+        options = _clip_options_with_output_ranges(
+            [
+                {"start_s": 0.0, "end_s": 3.0, "source_path": ""},
+                {"start_s": 4.0, "end_s": 8.0, "source_path": ""},
+                {"layer": "overlay", "start_s": 2.0, "end_s": 5.0, "source_path": "logo.png"},
+            ],
+            [(0.0, 3.0), (4.0, 8.0)],
+        )
+
+        overlay_ranges = [
+            (item["output_start_s"], item["output_end_s"])
+            for item in options
+            if item.get("layer") == "overlay"
+        ]
+        self.assertEqual(overlay_ranges, [(2.0, 3.0), (3.0, 4.0)])
 
     def test_has_clip_source_replacements_ignores_empty_or_invalid_ranges(self) -> None:
         self.assertFalse(_has_clip_source_replacements([
@@ -81,6 +153,17 @@ class PipelineCleanupTests(unittest.TestCase):
     def test_clip_volume_filter_returns_anull_without_adjustments(self) -> None:
         self.assertFalse(_has_clip_audio_adjustments([{"volume_pct": 100.0, "output_start_s": 0.0, "output_end_s": 1.0}]))
         self.assertEqual(_build_clip_volume_filter([]), "anull")
+
+    def test_muted_track_options_create_zero_volume_adjustment(self) -> None:
+        options = _clip_options_with_output_ranges(
+            _clip_options_for_track_options(
+                [{"volume_pct": 100.0, "start_s": 0.0, "end_s": 2.0}],
+                {"audio_muted": True},
+            ),
+            None,
+        )
+
+        self.assertEqual(_clip_volume_adjustments(options), [(0.0, 2.0, 0.0)])
 
     def test_cleanup_intermediate_exports_removes_existing_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,6 +215,7 @@ class PipelineCleanupTests(unittest.TestCase):
             generate_thumbnail=False,
             generate_vertical=False,
             noise_reduction=False,
+            audio_normalization=False,
         )
         config.color_grade.enabled = False
 
@@ -155,6 +239,7 @@ class PipelineCleanupTests(unittest.TestCase):
             generate_thumbnail=False,
             generate_vertical=False,
             noise_reduction=False,
+            audio_normalization=False,
             manual_segments=[(1.0, 3.0)],
         )
         config.color_grade.enabled = False

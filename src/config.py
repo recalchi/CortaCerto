@@ -59,6 +59,7 @@ class ProcessingConfig:
     generate_vertical:  bool = False
     manual_segments:    list[tuple[float, float]] | None = None
     clip_options:       list[dict[str, object]] = field(default_factory=list)
+    track_options:      dict[str, object] = field(default_factory=dict)
 
     # Render quality (used for CPU fallback; GPU auto-selects optimal settings)
     video_crf:    int = 18
@@ -71,8 +72,11 @@ class ProcessingConfig:
     apply_zoom_effects: bool = True
     apply_transitions:  bool = True
 
-    # Audio enhancement (loudnorm handles gain automatically — no manual boost)
-    noise_reduction: bool  = True
+    # Audio enhancement
+    noise_reduction: bool = False
+    audio_normalization: bool = True
+    audio_voice_filter: bool = False
+    audio_compressor: bool = False
 
     # Background blur / depth-of-field (0.0 = off, 0.3 = subtle, 1.0 = heavy)
     bokeh_intensity: float = 0.0

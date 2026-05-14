@@ -8,12 +8,18 @@ from src.ui.app import (
     _compact_clip_ranges,
     _compact_display_to_source_time,
     _compact_source_to_display_time,
+    _duplicate_clip_bounds,
+    _is_movable_media_clip,
     _playback_target_frame,
     _timeline_time_to_x,
     _timeline_track_bounds,
     _timeline_x_to_time,
     _timeline_handle_edge_at,
     _timeline_handle_y_in_range,
+    _timeline_lane_layout,
+    _timeline_y_in_lane,
+    _move_clip_bounds,
+    _nudge_clip_bounds,
     _trim_bounds_changed,
     _trim_clip_bounds,
     _trim_edge_label,
@@ -87,6 +93,42 @@ class EditorConsistencyTests(unittest.TestCase):
         start, end = _trim_clip_bounds(self.clips, 1, "end", 5.01, self.duration_s, 0.15)
         self.assertEqual((start, end), (5.0, 5.15))
 
+    def test_text_trim_can_overlap_other_text_clips(self) -> None:
+        text_clips = [
+            TimelineClip(1.0, 4.0, "text", "Texto 1"),
+            TimelineClip(3.0, 5.0, "text", "Texto 2"),
+        ]
+
+        start, end = _trim_clip_bounds(
+            text_clips,
+            1,
+            "start",
+            2.0,
+            self.duration_s,
+            0.15,
+            clamp_to_neighbors=False,
+        )
+
+        self.assertEqual((start, end), (2.0, 5.0))
+
+    def test_move_clip_bounds_preserves_duration_and_clamps_to_timeline(self) -> None:
+        self.assertEqual(_move_clip_bounds(2.0, 5.0, 6.0, self.duration_s), (6.0, 9.0))
+        self.assertEqual(_move_clip_bounds(2.0, 5.0, -4.0, self.duration_s), (0.0, 3.0))
+        self.assertEqual(_move_clip_bounds(2.0, 5.0, 11.0, self.duration_s), (9.0, 12.0))
+
+    def test_nudge_clip_bounds_moves_relative_to_current_position(self) -> None:
+        self.assertEqual(_nudge_clip_bounds(2.0, 5.0, 0.5, self.duration_s), (2.5, 5.5))
+        self.assertEqual(_nudge_clip_bounds(2.0, 5.0, -9.0, self.duration_s), (0.0, 3.0))
+
+    def test_duplicate_clip_bounds_prefers_after_then_before_when_near_end(self) -> None:
+        self.assertEqual(_duplicate_clip_bounds(2.0, 5.0, self.duration_s), (5.0, 8.0))
+        self.assertEqual(_duplicate_clip_bounds(9.0, 11.0, self.duration_s), (7.0, 9.0))
+
+    def test_only_external_media_clips_are_movable_on_video_track(self) -> None:
+        self.assertFalse(_is_movable_media_clip(TimelineClip(0.0, 1.0, "speech", "Fala")))
+        self.assertTrue(_is_movable_media_clip(TimelineClip(0.0, 1.0, "image", "Logo", source_path="C:/m/logo.png")))
+        self.assertTrue(_is_movable_media_clip(TimelineClip(0.0, 1.0, "media", "Broll", source_path="C:/m/broll.mp4")))
+
     def test_timeline_handle_detection_prefers_visible_edges(self) -> None:
         self.assertEqual(_timeline_handle_edge_at(102, 100, 200, 8), "start")
         self.assertEqual(_timeline_handle_edge_at(196, 100, 200, 8), "end")
@@ -97,6 +139,20 @@ class EditorConsistencyTests(unittest.TestCase):
         self.assertTrue(_timeline_handle_y_in_range(82, 20, 48, 64, 104))
         self.assertFalse(_timeline_handle_y_in_range(56, 20, 48, 70, 104))
         self.assertFalse(_timeline_handle_y_in_range(116, 20, 48, 64, 104))
+
+    def test_timeline_lane_layout_keeps_overlay_video_audio_separate(self) -> None:
+        lanes = _timeline_lane_layout(190)
+        text_y1, text_y2 = lanes["text"]
+        overlay_y1, overlay_y2 = lanes["overlay"]
+        video_y1, video_y2 = lanes["video"]
+        audio_y1, audio_y2 = lanes["audio"]
+
+        self.assertLess(text_y2, overlay_y1)
+        self.assertLess(overlay_y2, video_y1)
+        self.assertLess(video_y2, audio_y1)
+        self.assertTrue(_timeline_y_in_lane((text_y1 + text_y2) // 2, text_y1, text_y2))
+        self.assertTrue(_timeline_y_in_lane((overlay_y1 + overlay_y2) // 2, overlay_y1, overlay_y2))
+        self.assertFalse(_timeline_y_in_lane((audio_y1 + audio_y2) // 2, video_y1, video_y2))
 
     def test_active_timeline_handle_prefers_drag_then_hover_then_selection(self) -> None:
         self.assertEqual(_active_timeline_handle_edge(1, 1, None, None), "both")
