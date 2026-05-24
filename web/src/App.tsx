@@ -216,25 +216,29 @@ function useLayoutSizes() {
   return [sizes, setSizes] as const
 }
 
-function beginResize(e: React.MouseEvent<HTMLDivElement>, onDrag: (dx: number, dy: number) => void) {
+function beginResize(e: React.PointerEvent<HTMLDivElement>, onDrag: (dx: number, dy: number) => void) {
   e.preventDefault()
+  e.stopPropagation()
   const startX = e.clientX
   const startY = e.clientY
   const previousCursor = document.body.style.cursor
   const previousSelect = document.body.style.userSelect
 
-  const onMove = (ev: MouseEvent) => onDrag(ev.clientX - startX, ev.clientY - startY)
+  const onMove = (ev: PointerEvent) => onDrag(ev.clientX - startX, ev.clientY - startY)
   const onUp = () => {
     document.body.style.cursor = previousCursor
     document.body.style.userSelect = previousSelect
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
   }
 
   document.body.style.cursor = e.currentTarget.dataset.axis === 'y' ? 'row-resize' : 'col-resize'
   document.body.style.userSelect = 'none'
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
+  e.currentTarget.setPointerCapture?.(e.pointerId)
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
 }
 
 function ResizeHandle({
@@ -250,11 +254,21 @@ function ResizeHandle({
   return (
     <div
       data-axis={axis}
-      onMouseDown={(e) => beginResize(e, onDrag)}
-      className={`group flex items-center justify-center flex-shrink-0 ${isY ? 'h-2 cursor-row-resize' : 'w-2 cursor-col-resize'} ${className}`}
+      data-layout-resize-handle="true"
+      onPointerDown={(e) => beginResize(e, onDrag)}
+      className={`group relative z-30 flex items-center justify-center flex-shrink-0 touch-none select-none ${
+        isY ? 'h-4 -my-2 cursor-row-resize' : 'w-4 -mx-2 cursor-col-resize'
+      } ${className}`}
       title={isY ? 'Arraste para ajustar a altura da timeline' : 'Arraste para ajustar a largura do painel'}
     >
-      <div className={`${isY ? 'h-px w-full' : 'h-full w-px'} bg-border group-hover:bg-accent transition-colors`} />
+      <div
+        className={`absolute ${isY ? 'inset-x-0 top-1/2 h-px' : 'inset-y-0 left-1/2 w-px'} bg-border group-hover:bg-accent transition-colors`}
+      />
+      <div
+        className={`rounded-full bg-border/70 opacity-0 group-hover:opacity-100 group-hover:bg-accent transition-all ${
+          isY ? 'h-1 w-12' : 'h-12 w-1'
+        }`}
+      />
     </div>
   )
 }
@@ -543,7 +557,6 @@ function CapCutWorkspace({ project }: { project: ProjectState | null }) {
         </div>
         <ResizeHandle
           axis="x"
-          className="mx-1"
           onDrag={(dx) => setSizes((current) => ({
             ...current,
             capcutLeft: clamp(sizes.capcutLeft + dx, 260, 560),
@@ -554,7 +567,6 @@ function CapCutWorkspace({ project }: { project: ProjectState | null }) {
         </div>
         <ResizeHandle
           axis="x"
-          className="mx-1"
           onDrag={(dx) => setSizes((current) => ({
             ...current,
             capcutInspector: clamp(sizes.capcutInspector - dx, 260, 560),
