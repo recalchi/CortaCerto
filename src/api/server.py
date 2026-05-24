@@ -30,7 +30,14 @@ if os.path.isdir(_DIST_DIR):
     @app.get("/")
     async def _root():
         from fastapi.responses import FileResponse
-        return FileResponse(os.path.join(_DIST_DIR, "index.html"))
+        return FileResponse(
+            os.path.join(_DIST_DIR, "index.html"),
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     # Mount assets AFTER API routes so /api/... routes take priority
     app.mount("/assets", _SF(directory=os.path.join(_DIST_DIR, "assets")), name="assets")
@@ -42,6 +49,16 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
 )
+
+
+@app.middleware("http")
+async def _no_cache_web_assets(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 # -- In-memory project state ---------------------------------------------------
 _current_project: dict | None = None

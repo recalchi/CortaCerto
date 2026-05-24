@@ -22,7 +22,9 @@ Atualizado em: 2026-05-21
 - [ ] Definir preset de layout ao abrir: layout CapCut.
 - [ ] Confirmar layout CapCut com midias, preview e propriedades no topo.
 - [ ] Confirmar timeline ocupando a largura de ponta a ponta embaixo.
-- [ ] Arrastar a borda real entre midias, preview e propriedades para redimensionar.
+- [ ] Arrastar a borda real do painel de midias para redimensionar.
+- [ ] Arrastar a borda real do painel de preview para redimensionar campos vizinhos.
+- [ ] Arrastar a borda real do painel de propriedades para redimensionar.
 - [ ] Arrastar a borda real acima da timeline para ajustar a altura da timeline.
 - [ ] Fechar e reabrir o editor e confirmar que o tamanho dos paineis foi mantido.
 - [ ] Alternar de volta para layout padrao.

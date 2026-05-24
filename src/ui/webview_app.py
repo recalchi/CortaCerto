@@ -4,9 +4,11 @@ import sys
 import os
 import shutil
 import signal
+import subprocess
 import tempfile
 import time
 import urllib.request
+from pathlib import Path
 
 
 def _webview_user_data_dir() -> str:
@@ -68,6 +70,58 @@ def _force_exit(*_):
     os._exit(0)
 
 
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _latest_mtime(paths: list[Path]) -> float:
+    latest = 0.0
+    for path in paths:
+        if not path.exists():
+            continue
+        if path.is_file():
+            latest = max(latest, path.stat().st_mtime)
+            continue
+        for child in path.rglob("*"):
+            if child.is_file() and "node_modules" not in child.parts and "dist" not in child.parts:
+                latest = max(latest, child.stat().st_mtime)
+    return latest
+
+
+def _ensure_web_build_current() -> None:
+    """Build React when source files are newer than web/dist."""
+    root = _project_root()
+    web_dir = root / "web"
+    dist_index = web_dir / "dist" / "index.html"
+    if not (web_dir / "package.json").exists():
+        return
+
+    source_inputs = [
+        web_dir / "src",
+        web_dir / "public",
+        web_dir / "index.html",
+        web_dir / "package.json",
+        web_dir / "package-lock.json",
+        web_dir / "vite.config.ts",
+        web_dir / "tailwind.config.js",
+        web_dir / "postcss.config.js",
+        web_dir / "tsconfig.json",
+        web_dir / "tsconfig.app.json",
+        web_dir / "tsconfig.node.json",
+    ]
+    source_mtime = _latest_mtime(source_inputs)
+    dist_mtime = dist_index.stat().st_mtime if dist_index.exists() else 0.0
+    if dist_mtime >= source_mtime:
+        return
+
+    npm = "npm.cmd" if os.name == "nt" else "npm"
+    print("[CortaCerto] Build web desatualizado; executando npm run build...")
+    try:
+        subprocess.run([npm, "run", "build"], cwd=str(web_dir), check=True)
+    except Exception as exc:
+        print(f"[CortaCerto] AVISO: nao foi possivel atualizar web/dist automaticamente: {exc}")
+
+
 def launch(dev_mode: bool = False):
     """Start the FastAPI server and open pywebview pointing to the React app."""
     # Register SIGINT (Ctrl+C) handler so the terminal can kill the process cleanly
@@ -76,6 +130,9 @@ def launch(dev_mode: bool = False):
         signal.signal(signal.SIGTERM, _force_exit)
     except (AttributeError, OSError):
         pass   # SIGTERM not available on all platforms
+
+    if not dev_mode:
+        _ensure_web_build_current()
 
     from src.api.server import run_server
 
@@ -107,7 +164,7 @@ def launch(dev_mode: bool = False):
     else:
         # Production: serve from the API server (avoids file:// CORS issues)
         # Always 127.0.0.1 — never "localhost" to avoid IPv6 resolution issues
-        url = "http://127.0.0.1:7472"
+        url = f"http://127.0.0.1:7472/?v={int(time.time())}"
 
     window = webview.create_window(
         "CortaCerto",
