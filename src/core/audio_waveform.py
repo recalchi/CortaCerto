@@ -24,19 +24,25 @@ def extract_waveform(
     if duration_s <= 0 or bins <= 0:
         return WaveformData(duration_s=duration_s, samples=[], sample_rate=sample_rate)
 
+    # Compute the minimum sample rate needed to fill `bins` with ~4 samples each.
+    # For a 1-hour video this drops from 16 000 Hz → ~6 Hz, shrinking the PCM buffer
+    # from ~115 MB to a few KB and removing the "freezing on long videos" issue.
+    target_sr = max(50, int(bins * 4 / max(duration_s, 1)) + 1)
+
     cmd = [
         ffmpeg(),
         "-v", "error",
         "-i", video_path,
+        "-vn",                        # skip video decode
         "-map", "0:a:0?",
         "-ac", "1",
-        "-ar", str(sample_rate),
+        "-ar", str(target_sr),        # just enough samples for the waveform bins
         "-f", "s16le",
         "-",
     ]
-    result = subprocess.run(cmd, capture_output=True)
+    result = subprocess.run(cmd, capture_output=True, timeout=120)
     if result.returncode != 0 or not result.stdout:
-        return WaveformData(duration_s=duration_s, samples=[], sample_rate=sample_rate)
+        return WaveformData(duration_s=duration_s, samples=[], sample_rate=target_sr)
 
     pcm = np.frombuffer(result.stdout, dtype=np.int16)
     if pcm.size == 0:
@@ -51,8 +57,8 @@ def extract_waveform(
         peaks.append(float(np.abs(chunk).max()) / 32768.0)
 
     if not peaks:
-        return WaveformData(duration_s=duration_s, samples=[], sample_rate=sample_rate)
+        return WaveformData(duration_s=duration_s, samples=[], sample_rate=target_sr)
 
     max_peak = max(peaks) or 1.0
     normalized = [min(1.0, peak / max_peak) for peak in peaks]
-    return WaveformData(duration_s=duration_s, samples=normalized, sample_rate=sample_rate)
+    return WaveformData(duration_s=duration_s, samples=normalized, sample_rate=target_sr)

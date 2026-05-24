@@ -1,0 +1,328 @@
+from __future__ import annotations
+
+import json
+import mimetypes
+import os
+import re
+import time
+import urllib.parse
+import urllib.request
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from src.api_settings import load_env_file, mask_secret, update_env_file
+
+
+STOCK_ENV_NAMES = [
+    "PEXELS_API_KEY",
+    "PIXABAY_API_KEY",
+    "UNSPLASH_APP_ID",
+    "UNSPLASH_ACCESS_KEY",
+    "UNSPLASH_SECRET_KEY",
+    "FREESOUND_API_KEY",
+    "FREESOUND_CLIENT_ID",
+    "FREESOUND_CLIENT_SECRET",
+]
+
+
+@dataclass(frozen=True)
+class StockProvider:
+    id: str
+    label: str
+    media_kinds: tuple[str, ...]
+    required_env: tuple[str, ...]
+
+
+PROVIDERS: dict[str, StockProvider] = {
+    "pexels": StockProvider("pexels", "Pexels", ("video", "image"), ("PEXELS_API_KEY",)),
+    "pixabay": StockProvider("pixabay", "Pixabay", ("video", "image"), ("PIXABAY_API_KEY",)),
+    "unsplash": StockProvider("unsplash", "Unsplash", ("image",), ("UNSPLASH_ACCESS_KEY",)),
+    "freesound": StockProvider("freesound", "Freesound", ("audio",), ("FREESOUND_API_KEY",)),
+}
+
+
+def stock_cache_root() -> Path:
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return Path(base) / "CortaCerto" / "assets" / "stock"
+    return Path.home() / ".cortacerto" / "assets" / "stock"
+
+
+def stock_settings(env_file: Path = Path(".env")) -> dict[str, Any]:
+    values = load_env_file(env_file)
+    providers = []
+    for provider in PROVIDERS.values():
+        configured = all(bool(values.get(name) or os.environ.get(name)) for name in provider.required_env)
+        providers.append({
+            "id": provider.id,
+            "label": provider.label,
+            "media_kinds": list(provider.media_kinds),
+            "configured": configured,
+            "required_env": list(provider.required_env),
+        })
+    keys = {
+        name: {
+            "configured": bool(os.environ.get(name) or values.get(name)),
+            "masked": mask_secret(os.environ.get(name) or values.get(name) or ""),
+        }
+        for name in STOCK_ENV_NAMES
+    }
+    return {"providers": providers, "keys": keys, "cache_root": str(stock_cache_root())}
+
+
+def update_stock_settings(updates: dict[str, str], env_file: Path = Path(".env")) -> dict[str, Any]:
+    clean = {
+        key: str(value).strip()
+        for key, value in updates.items()
+        if key in STOCK_ENV_NAMES and str(value).strip()
+    }
+    if clean:
+        update_env_file(clean, env_file)
+    return stock_settings(env_file)
+
+
+def search_stock_assets(provider: str, query: str, media_type: str, per_page: int = 12) -> list[dict[str, Any]]:
+    provider = provider.lower().strip()
+    query = query.strip()
+    media_type = media_type.lower().strip()
+    per_page = max(1, min(int(per_page or 12), 24))
+    if provider not in PROVIDERS:
+        raise ValueError("Fonte de midia desconhecida")
+    if not query:
+        return []
+
+    if provider == "pexels":
+        return _search_pexels(query, media_type, per_page)
+    if provider == "pixabay":
+        return _search_pixabay(query, media_type, per_page)
+    if provider == "unsplash":
+        return _search_unsplash(query, media_type, per_page)
+    if provider == "freesound":
+        return _search_freesound(query, media_type, per_page)
+    return []
+
+
+def list_downloaded_assets() -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+    for metadata_path in stock_cache_root().glob("*/*/*.json"):
+        try:
+            data = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        local_path = data.get("local_path")
+        if local_path and Path(local_path).is_file():
+            assets.append(data)
+    assets.sort(key=lambda item: str(item.get("downloaded_at") or ""), reverse=True)
+    return assets
+
+
+def download_stock_asset(asset: dict[str, Any]) -> dict[str, Any]:
+    provider = str(asset.get("provider") or "").lower()
+    media_type = str(asset.get("type") or "image").lower()
+    url = str(asset.get("download_url") or asset.get("preview_url") or "")
+    if provider not in PROVIDERS:
+        raise ValueError("Fonte de midia desconhecida")
+    if media_type not in {"video", "image", "audio"}:
+        raise ValueError("Tipo de midia invalido")
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("URL de download invalida")
+
+    root = stock_cache_root() / provider / media_type
+    root.mkdir(parents=True, exist_ok=True)
+    ext = _extension_from_url(url, media_type)
+    safe_name = _safe_filename(str(asset.get("title") or asset.get("id") or uuid.uuid4().hex))
+    asset_id = _safe_filename(str(asset.get("id") or uuid.uuid4().hex))
+    local_path = root / f"{safe_name}-{asset_id}{ext}"
+
+    request = urllib.request.Request(url, headers={"User-Agent": "CortaCerto/1.0"})
+    with urllib.request.urlopen(request, timeout=45) as response:
+        local_path.write_bytes(response.read())
+
+    metadata = {
+        "id": str(asset.get("id") or asset_id),
+        "provider": provider,
+        "type": media_type,
+        "title": str(asset.get("title") or local_path.stem),
+        "author": str(asset.get("author") or ""),
+        "license": str(asset.get("license") or ""),
+        "source_url": str(asset.get("source_url") or ""),
+        "download_url": url,
+        "thumbnail_url": str(asset.get("thumbnail_url") or ""),
+        "duration_s": _optional_float(asset.get("duration_s")),
+        "width": _optional_int(asset.get("width")),
+        "height": _optional_int(asset.get("height")),
+        "local_path": str(local_path),
+        "metadata_path": str(local_path.with_suffix(local_path.suffix + ".json")),
+        "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    Path(metadata["metadata_path"]).write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    return metadata
+
+
+def _env_value(name: str) -> str:
+    return str(os.environ.get(name) or load_env_file().get(name) or "").strip()
+
+
+def _get_json(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    request = urllib.request.Request(url, headers=headers or {"User-Agent": "CortaCerto/1.0"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8", errors="replace"))
+
+
+def _search_pexels(query: str, media_type: str, per_page: int) -> list[dict[str, Any]]:
+    key = _env_value("PEXELS_API_KEY")
+    if not key:
+        raise PermissionError("Configure PEXELS_API_KEY")
+    headers = {"Authorization": key, "User-Agent": "CortaCerto/1.0"}
+    q = urllib.parse.urlencode({"query": query, "per_page": per_page, "orientation": "landscape"})
+    if media_type == "video":
+        data = _get_json(f"https://api.pexels.com/videos/search?{q}", headers)
+        return [_pexels_video(item) for item in data.get("videos", [])]
+    data = _get_json(f"https://api.pexels.com/v1/search?{q}", headers)
+    return [_pexels_photo(item) for item in data.get("photos", [])]
+
+
+def _search_pixabay(query: str, media_type: str, per_page: int) -> list[dict[str, Any]]:
+    key = _env_value("PIXABAY_API_KEY")
+    if not key:
+        raise PermissionError("Configure PIXABAY_API_KEY")
+    per_page = max(3, per_page)
+    params = {"key": key, "q": query, "per_page": per_page, "safesearch": "true"}
+    if media_type == "video":
+        data = _get_json(f"https://pixabay.com/api/videos/?{urllib.parse.urlencode(params)}")
+        return [_pixabay_video(item) for item in data.get("hits", [])]
+    params["image_type"] = "photo"
+    data = _get_json(f"https://pixabay.com/api/?{urllib.parse.urlencode(params)}")
+    return [_pixabay_image(item) for item in data.get("hits", [])]
+
+
+def _search_unsplash(query: str, media_type: str, per_page: int) -> list[dict[str, Any]]:
+    if media_type != "image":
+        return []
+    key = _env_value("UNSPLASH_ACCESS_KEY")
+    if not key:
+        raise PermissionError("Configure UNSPLASH_ACCESS_KEY")
+    params = {"query": query, "per_page": per_page, "client_id": key}
+    data = _get_json(f"https://api.unsplash.com/search/photos?{urllib.parse.urlencode(params)}")
+    return [_unsplash_photo(item) for item in data.get("results", [])]
+
+
+def _search_freesound(query: str, media_type: str, per_page: int) -> list[dict[str, Any]]:
+    if media_type != "audio":
+        return []
+    key = _env_value("FREESOUND_API_KEY")
+    if not key:
+        raise PermissionError("Configure FREESOUND_API_KEY")
+    params = {
+        "query": query,
+        "page_size": per_page,
+        "fields": "id,name,username,license,duration,previews,url",
+        "token": key,
+    }
+    data = _get_json(f"https://freesound.org/apiv2/search/text/?{urllib.parse.urlencode(params)}")
+    return [_freesound_audio(item) for item in data.get("results", [])]
+
+
+def _pexels_video(item: dict[str, Any]) -> dict[str, Any]:
+    files = sorted(item.get("video_files") or [], key=lambda f: int(f.get("width") or 0), reverse=True)
+    best = next((f for f in files if str(f.get("file_type", "")).startswith("video/")), files[0] if files else {})
+    return _asset(
+        provider="pexels", media_type="video", asset_id=item.get("id"), title="Video Pexels",
+        author=(item.get("user") or {}).get("name"), license_name="Pexels License",
+        source_url=item.get("url"), download_url=best.get("link"), thumbnail_url=item.get("image"),
+        duration_s=item.get("duration"), width=best.get("width") or item.get("width"), height=best.get("height") or item.get("height"),
+    )
+
+
+def _pexels_photo(item: dict[str, Any]) -> dict[str, Any]:
+    src = item.get("src") or {}
+    return _asset("pexels", "image", item.get("id"), item.get("alt") or "Foto Pexels",
+                  item.get("photographer"), "Pexels License", item.get("url"),
+                  src.get("large2x") or src.get("large") or src.get("original"),
+                  src.get("medium") or src.get("small"), width=item.get("width"), height=item.get("height"))
+
+
+def _pixabay_video(item: dict[str, Any]) -> dict[str, Any]:
+    videos = item.get("videos") or {}
+    best = videos.get("medium") or videos.get("small") or videos.get("tiny") or videos.get("large") or {}
+    return _asset("pixabay", "video", item.get("id"), item.get("tags") or "Video Pixabay",
+                  item.get("user"), "Pixabay Content License", item.get("pageURL"),
+                  best.get("url"), item.get("picture_id") and f"https://i.vimeocdn.com/video/{item.get('picture_id')}_640x360.jpg",
+                  duration_s=item.get("duration"), width=best.get("width"), height=best.get("height"))
+
+
+def _pixabay_image(item: dict[str, Any]) -> dict[str, Any]:
+    return _asset("pixabay", "image", item.get("id"), item.get("tags") or "Imagem Pixabay",
+                  item.get("user"), "Pixabay Content License", item.get("pageURL"),
+                  item.get("largeImageURL") or item.get("webformatURL"), item.get("previewURL"),
+                  width=item.get("imageWidth"), height=item.get("imageHeight"))
+
+
+def _unsplash_photo(item: dict[str, Any]) -> dict[str, Any]:
+    urls = item.get("urls") or {}
+    user = item.get("user") or {}
+    return _asset("unsplash", "image", item.get("id"), (item.get("alt_description") or item.get("description") or "Foto Unsplash"),
+                  user.get("name"), "Unsplash License", (item.get("links") or {}).get("html"),
+                  urls.get("full") or urls.get("regular") or urls.get("raw"), urls.get("small"),
+                  width=item.get("width"), height=item.get("height"))
+
+
+def _freesound_audio(item: dict[str, Any]) -> dict[str, Any]:
+    previews = item.get("previews") or {}
+    url = previews.get("preview-hq-mp3") or previews.get("preview-lq-mp3") or previews.get("preview-hq-ogg")
+    return _asset("freesound", "audio", item.get("id"), item.get("name") or "Som Freesound",
+                  item.get("username"), item.get("license"), item.get("url"), url, "",
+                  duration_s=item.get("duration"))
+
+
+def _asset(
+    provider: str, media_type: str, asset_id: Any, title: Any, author: Any,
+    license_name: Any, source_url: Any, download_url: Any, thumbnail_url: Any = "",
+    duration_s: Any = None, width: Any = None, height: Any = None,
+) -> dict[str, Any]:
+    return {
+        "id": str(asset_id or uuid.uuid4().hex),
+        "provider": provider,
+        "type": media_type,
+        "title": str(title or "Asset"),
+        "author": str(author or ""),
+        "license": str(license_name or ""),
+        "source_url": str(source_url or ""),
+        "download_url": str(download_url or ""),
+        "thumbnail_url": str(thumbnail_url or ""),
+        "duration_s": _optional_float(duration_s),
+        "width": _optional_int(width),
+        "height": _optional_int(height),
+    }
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None and value != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None and value != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_filename(value: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip().lower()).strip("-")
+    return safe[:80] or uuid.uuid4().hex
+
+
+def _extension_from_url(url: str, media_type: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    ext = Path(parsed.path).suffix.lower()
+    if ext and len(ext) <= 8:
+        return ext
+    guessed = mimetypes.guess_extension(mimetypes.guess_type(url)[0] or "")
+    if guessed:
+        return guessed
+    return {"video": ".mp4", "audio": ".mp3", "image": ".jpg"}.get(media_type, ".bin")

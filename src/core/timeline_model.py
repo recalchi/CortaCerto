@@ -51,6 +51,24 @@ class TimelineClip:
     opacity_pct: float = 100.0
     # ── speed ──────────────────────────────────────────────────────────────────
     speed_factor: float = 1.0
+    # ── layer z-order (higher = in front; compositing + Trás/Frente) ──────────
+    z_order: int = 0
+    # ── Etapa C: audio pan / fades ─────────────────────────────────────────────
+    pan_pct: float = 0.0        # L/R pan: -100 = full left, 0 = centre, +100 = full right
+    fade_in_s: float = 0.0      # audio/video fade-in duration in seconds
+    fade_out_s: float = 0.0     # audio/video fade-out duration in seconds
+    # ── Etapa D: transform / blend ─────────────────────────────────────────────
+    rotation_deg: float = 0.0   # clockwise rotation in degrees (-180..180)
+    blend_mode: str = "Normal"  # Normal | Screen | Multiply | Overlay | Add | Darken | Lighten
+    # ── Etapa E: per-clip crop (0..50 % from each edge) ────────────────────────
+    crop_top_pct:    float = 0.0
+    crop_bottom_pct: float = 0.0
+    crop_left_pct:   float = 0.0
+    crop_right_pct:  float = 0.0
+    # ── Etapa F: per-clip color correction ─────────────────────────────────────
+    brightness: float = 0.0   # -100..+100 additive; 0 = no change
+    contrast:   float = 0.0   # -100..+100 multiplicative around 128; 0 = no change
+    saturation: float = 0.0   # -100..+100; 0 = no change, -100 = greyscale
 
 
 @dataclass
@@ -70,10 +88,22 @@ class TimelineModel:
     text_track: TimelineTrack = field(default_factory=lambda: TimelineTrack(name="Texto"))
     overlay_track: TimelineTrack = field(default_factory=lambda: TimelineTrack(name="Overlay"))
     extra_overlay_tracks: list[TimelineTrack] = field(default_factory=list)
+    # Multi-track support (Phase 2b) — extra parallel video and audio tracks
+    # for layering content side-by-side at the same project time.
+    extra_video_tracks: list[TimelineTrack] = field(default_factory=list)
+    extra_audio_tracks: list[TimelineTrack] = field(default_factory=list)
 
     def all_overlay_tracks(self) -> list[TimelineTrack]:
         """Return the base overlay track plus any extra overlay tracks."""
         return [self.overlay_track] + list(self.extra_overlay_tracks)
+
+    def all_video_tracks(self) -> list[TimelineTrack]:
+        """Return the base video track plus any extra video tracks."""
+        return [self.video_track] + list(self.extra_video_tracks)
+
+    def all_audio_tracks(self) -> list[TimelineTrack]:
+        """Return the base audio track plus any extra audio tracks."""
+        return [self.audio_track] + list(self.extra_audio_tracks)
 
     def add_overlay_track(self, name: str = "") -> TimelineTrack:
         """Add a new overlay track and return it."""
@@ -89,19 +119,54 @@ class TimelineModel:
         self.extra_overlay_tracks.pop(index)
         return True
 
+    def add_video_track(self, name: str = "") -> TimelineTrack:
+        """Add a parallel video track. Use for side-by-side / PiP content."""
+        n = name or f"Vídeo {len(self.extra_video_tracks) + 2}"
+        track = TimelineTrack(name=n)
+        self.extra_video_tracks.append(track)
+        return track
+
+    def remove_video_track(self, index: int) -> bool:
+        """Remove extra video track at *index* (0-based). The main video_track cannot be removed."""
+        if index < 0 or index >= len(self.extra_video_tracks):
+            return False
+        self.extra_video_tracks.pop(index)
+        return True
+
+    def add_audio_track(self, name: str = "") -> TimelineTrack:
+        """Add a parallel audio track. Use for layered music / SFX over voice."""
+        n = name or f"Áudio {len(self.extra_audio_tracks) + 2}"
+        track = TimelineTrack(name=n)
+        self.extra_audio_tracks.append(track)
+        return track
+
+    def remove_audio_track(self, index: int) -> bool:
+        """Remove extra audio track at *index* (0-based). The main audio_track cannot be removed."""
+        if index < 0 or index >= len(self.extra_audio_tracks):
+            return False
+        self.extra_audio_tracks.pop(index)
+        return True
+
 
 def build_timeline_model(
     duration_s: float,
     speech_segments: list[tuple[float, float]],
     waveform: WaveformData | None = None,
+    source_path: str = "",
 ) -> TimelineModel:
+    import os as _os
     video_track = TimelineTrack(name="Video")
     audio_track = TimelineTrack(name="Audio")
 
+    base_label = _os.path.splitext(_os.path.basename(source_path))[0] if source_path else ""
+    n = len(speech_segments)
     for idx, (start_s, end_s) in enumerate(speech_segments, start=1):
-        label = f"Clip {idx}"
-        video_track.clips.append(TimelineClip(start_s, end_s, "speech", label))
-        audio_track.clips.append(TimelineClip(start_s, end_s, "speech", label))
+        if base_label:
+            label = base_label if n == 1 else f"{base_label} ({idx})"
+        else:
+            label = f"Clip {idx}"
+        video_track.clips.append(TimelineClip(start_s, end_s, "speech", label, source_path=source_path))
+        audio_track.clips.append(TimelineClip(start_s, end_s, "speech", label, source_path=source_path))
 
     removed_ranges: list[tuple[float, float]] = []
     cursor = 0.0

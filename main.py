@@ -19,6 +19,13 @@ def main(argv: list[str] | None = None) -> int:
         print("[STARTUP] CortaCerto pronto para iniciar.")
         return 0
 
+    # React/pywebview UI (--web or --web-dev for Vite dev server)
+    if "--web" in argv or "--web-dev" in argv:
+        dev_mode = "--web-dev" in argv
+        from src.ui.webview_app import launch
+        launch(dev_mode=dev_mode)
+        return 0
+
     from src.ui.app import CortaCertoApp
     app = CortaCertoApp()
     try:

@@ -287,6 +287,23 @@ def _blend(hex_color: str, alpha: float, bg: str = BG0) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+# ── Canvas rounded-rectangle helper ─────────────────────────────────────────
+
+def _round_rect(canvas: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
+                r: int = 10, **kw) -> int:
+    """Draw a smooth rounded rectangle on *canvas* using create_polygon."""
+    r = max(0, min(r, int((x2 - x1) / 2), int((y2 - y1) / 2)))
+    pts = [
+        x1 + r, y1,    x2 - r, y1,
+        x2,     y1,    x2,     y1 + r,
+        x2,     y2 - r, x2,    y2,
+        x2 - r, y2,    x1 + r, y2,
+        x1,     y2,    x1,     y2 - r,
+        x1,     y1 + r, x1,    y1,
+    ]
+    return canvas.create_polygon(pts, smooth=True, **kw)
+
+
 # ── New Project Dialog ────────────────────────────────────────────────────────
 
 class NewProjectDialog(tk.Toplevel):
@@ -472,67 +489,98 @@ class NewProjectDialog(tk.Toplevel):
 
 # ── Project card widget ───────────────────────────────────────────────────────
 
-class ProjectCard(tk.Frame):
-    """A single project card: thumbnail + waveform + metadata."""
+class ProjectCard(tk.Canvas):
+    """Project card with rounded corners drawn on a Canvas."""
 
-    THUMB_H = 130     # height of thumbnail area
-    CARD_W  = 220     # default card width
+    THUMB_H = 128
+    RADIUS  = 12
 
     def __init__(self, parent: tk.Widget, entry: ProjectEntry,
                  on_open: Callable[[ProjectEntry], None],
                  accent: str = ACCENT) -> None:
-        super().__init__(parent, bg=SURF, cursor="hand2",
-                         highlightthickness=1, highlightbackground=BORD)
+        super().__init__(parent, bg=BG0, highlightthickness=0, cursor="hand2")
         self._entry   = entry
         self._on_open = on_open
         self._accent  = accent
-        self._thumb_photo: Optional[object] = None
-        self._build()
+        self._hover   = False
+        self._leave_id: Optional[str] = None
+
+        # Inner content frame embedded in canvas
+        self._frame = tk.Frame(self, bg=SURF)
+        self._frame_id = self.create_window(1, 1, anchor="nw", window=self._frame)
+
+        self._build_content()
+        self.bind("<Configure>", self._on_canvas_resize)
+        self._frame.bind("<Configure>", self._on_frame_resize)
         self._bind_hover()
 
-    def _build(self) -> None:
+    def _build_content(self) -> None:
         e = self._entry
         # ── Thumbnail canvas ──────────────────────────────────────────────────
-        self._canvas = tk.Canvas(self, bg="#1a1820", highlightthickness=0,
-                                 height=self.THUMB_H)
-        self._canvas.pack(fill="x")
-        self._canvas.bind("<Configure>", self._draw_thumb)
+        self._thumb = tk.Canvas(self._frame, bg="#1a1820",
+                                highlightthickness=0, height=self.THUMB_H)
+        self._thumb.pack(fill="x")
+        self._thumb.bind("<Configure>", self._draw_thumb)
 
         # ── Card body ─────────────────────────────────────────────────────────
-        body = tk.Frame(self, bg=SURF, padx=12)
+        body = tk.Frame(self._frame, bg=SURF, padx=12)
         body.pack(fill="x", pady=(8, 10))
 
-        # Title
         tk.Label(body, text=e.name, bg=SURF, fg=TXT,
                  font=("Segoe UI", 11, "bold"),
                  anchor="w", wraplength=190, justify="left").pack(fill="x")
 
-        # Meta row
         meta = tk.Frame(body, bg=SURF)
         meta.pack(fill="x", pady=(4, 0))
 
-        edited = tk.Label(meta, text=f"Editado {e.edited_label()}", bg=SURF,
-                          fg=TXT3, font=("Segoe UI", 9))
-        edited.pack(side="left")
+        tk.Label(meta, text=f"Editado {e.edited_label()}", bg=SURF,
+                 fg=TXT3, font=("Segoe UI", 9)).pack(side="left")
         if e.clips_count > 0:
-            tk.Label(meta, text=" · ", bg=SURF, fg=TXT4, font=("Segoe UI", 9)).pack(side="left")
+            tk.Label(meta, text=" · ", bg=SURF, fg=TXT4,
+                     font=("Segoe UI", 9)).pack(side="left")
             tk.Label(meta, text=f"{e.clips_count} clipes", bg=SURF, fg=TXT3,
                      font=("Segoe UI", 9)).pack(side="left")
 
-        # Status badge
         st_label, st_bg, st_fg = STATUS.get(e.status, STATUS["draft"])
-        badge = tk.Label(meta, text=st_label, bg=st_bg, fg=st_fg,
-                         font=("Segoe UI", 8), padx=6, pady=2)
-        badge.pack(side="right")
+        tk.Label(meta, text=st_label, bg=st_bg, fg=st_fg,
+                 font=("Segoe UI", 8), padx=6, pady=2).pack(side="right")
 
-    def _draw_thumb(self, event: Optional[tk.Event] = None) -> None:
-        """Draw thumbnail gradient + overlays on canvas."""
+    # ── Canvas / frame resize ─────────────────────────────────────────────────
+
+    def _on_canvas_resize(self, event: tk.Event) -> None:
+        self._redraw()
+
+    def _on_frame_resize(self, event: tk.Event) -> None:
+        self._redraw()
+
+    def _redraw(self) -> None:
         try:
             if not self.winfo_exists():
                 return
         except Exception:
             return
-        c = self._canvas
+        w = self.winfo_width()
+        fh = self._frame.winfo_reqheight()
+        if w < 4 or fh < 4:
+            return
+        h = fh + 2
+        bg = SURF2 if self._hover else SURF
+        bd = BORD_S if self._hover else BORD
+        self.delete("card_bg")
+        _round_rect(self, 0, 0, w - 1, h - 1, r=self.RADIUS,
+                    fill=bg, outline=bd, tags="card_bg")
+        self.tag_lower("card_bg")
+        self.itemconfigure(self._frame_id, width=w - 2)
+
+    # ── Thumbnail drawing ─────────────────────────────────────────────────────
+
+    def _draw_thumb(self, event: Optional[tk.Event] = None) -> None:
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+        c = self._thumb
         try:
             c.delete("all")
         except Exception:
@@ -542,45 +590,37 @@ class ProjectCard(tk.Frame):
         if w < 4:
             return
 
-        # Gradient background
         e = self._entry
         hue_a, hue_b = CAT_HUE.get(e.category, (260, 240))
         for y in range(h):
             t = y / h
             hue = hue_a + (hue_b - hue_a) * t
             r, g, b = _hsl_to_rgb(hue, 0.38, 0.20 - t * 0.05)
-            color = f"#{r:02x}{g:02x}{b:02x}"
-            c.create_line(0, y, w, y, fill=color)
+            c.create_line(0, y, w, y, fill=f"#{r:02x}{g:02x}{b:02x}")
 
-        # Subtle diagonal stripes
         rng = random.Random(e.thumb_seed)
         for i in range(0, w + h, 26):
             c.create_line(i, 0, 0, i, fill="#ffffff", stipple="gray12")
 
-        # Bottom gradient scrim (for waveform readability)
         scrim_h = 40
         for y in range(scrim_h):
             alpha = int((y / scrim_h) * 160)
-            r2 = max(0, int(rng.random() * 0))  # 0 – full black scrim
+            rng.random()
             c.create_line(0, h - scrim_h + y, w, h - scrim_h + y,
                           fill=f"#{alpha//4:02x}{alpha//6:02x}{alpha//4:02x}")
 
-        # Waveform bars at bottom
         wave = _gen_wave(e.wave_seed, bars=min(48, w // 5))
         bar_w = max(2, (w - 16) // len(wave) - 1)
         gap   = max(1, (w - 16 - len(wave) * bar_w) // len(wave))
-        wave_h = 28
-        wave_y = h - wave_h - 6
+        wave_h, wave_y = 28, h - 28 - 6
         for i, amp in enumerate(wave):
             x = 8 + i * (bar_w + gap)
             bh = int(amp * wave_h)
             by = wave_y + (wave_h - bh)
-            # Color: white for played portion (visual), accent color otherwise
-            color = self._accent
             c.create_rectangle(x, by, x + bar_w, wave_y + wave_h,
-                                fill=color, outline="", stipple="" if amp > 0.5 else "gray50")
+                                fill=self._accent, outline="",
+                                stipple="" if amp > 0.5 else "gray50")
 
-        # Duration badge (top-right)
         dur = e.duration_label()
         if dur != "00:00":
             c.create_rectangle(w - 52, 6, w - 6, 22, fill="#000000",
@@ -588,7 +628,6 @@ class ProjectCard(tk.Frame):
             c.create_text(w - 29, 14, text=dur, fill="#ffffff",
                           font=("Consolas", 8, "bold"), anchor="center")
 
-        # Category tag (top-left)
         cat_label = (e.category or "video").upper()
         c.create_rectangle(6, 6, 6 + len(cat_label) * 6 + 14, 22,
                             fill="#000000", outline="", stipple="gray50")
@@ -596,19 +635,41 @@ class ProjectCard(tk.Frame):
         c.create_text(22, 14, text=cat_label, fill="#ffffff",
                       font=("Segoe UI", 7, "bold"), anchor="w")
 
+    # ── Hover interaction ─────────────────────────────────────────────────────
+
     def _bind_hover(self) -> None:
         def on_enter(e):
-            self.configure(bg=SURF2, highlightbackground=BORD_S)
-            for c in self.winfo_children():
-                _recursive_bg(c, SURF2)
+            if self._leave_id:
+                self.after_cancel(self._leave_id)
+                self._leave_id = None
+            if not self._hover:
+                self._hover = True
+                _recursive_bg(self._frame, SURF2)
+                self._redraw()
+
+        def do_leave():
+            self._leave_id = None
+            try:
+                px, py = self.winfo_pointerxy()
+                rx, ry = self.winfo_rootx(), self.winfo_rooty()
+                cw, ch = self.winfo_width(), self.winfo_height()
+                if rx <= px <= rx + cw and ry <= py <= ry + ch:
+                    return
+            except Exception:
+                pass
+            self._hover = False
+            _recursive_bg(self._frame, SURF)
+            self._redraw()
+
         def on_leave(e):
-            self.configure(bg=SURF, highlightbackground=BORD)
-            for c in self.winfo_children():
-                _recursive_bg(c, SURF)
+            if self._leave_id:
+                self.after_cancel(self._leave_id)
+            self._leave_id = self.after(12, do_leave)
+
         def on_click(e):
             self._on_open(self._entry)
 
-        for w in _all_widgets(self):
+        for w in [self] + _all_widgets(self._frame):
             w.bind("<Enter>", on_enter)
             w.bind("<Leave>", on_leave)
             w.bind("<Button-1>", on_click)
@@ -912,6 +973,24 @@ class ProjectManagerScreen(tk.Frame):
     def _on_canvas_configure(self, event: tk.Event) -> None:
         self._scroll_canvas.itemconfigure(
             self._inner_id, width=event.width)
+        self._draw_bg_grid()
+
+    def _draw_bg_grid(self) -> None:
+        """Draw a subtle ambient dot-grid on the scroll canvas background."""
+        try:
+            c = self._scroll_canvas
+            c.delete("bg_grid")
+            w = c.winfo_width()
+            h = max(c.winfo_height(), 3200)
+            step = 44
+            col  = "#100f15"   # barely visible above BG0 (#0c0b0f)
+            for x in range(step, w, step):
+                c.create_line(x, 0, x, h, fill=col, tags="bg_grid", dash=(1, 4))
+            for y in range(step, h, step):
+                c.create_line(0, y, w, y, fill=col, tags="bg_grid", dash=(1, 4))
+            c.tag_lower("bg_grid")
+        except Exception:
+            pass
 
     def _on_mousewheel(self, event: tk.Event) -> None:
         if event.num == 4:
@@ -939,7 +1018,11 @@ class ProjectManagerScreen(tk.Frame):
         sort  = self._sort_mode.get()
 
         items = [e for e in self._projects if e.exists()]
-        if cat != "all":
+        if cat == "__edit":
+            items = [e for e in items if e.status in ("edit", "review")]
+        elif cat == "__final":
+            items = [e for e in items if e.status == "final"]
+        elif cat != "all":
             items = [e for e in items if e.category == cat]
         if query:
             items = [e for e in items if query in e.name.lower()
@@ -1065,29 +1148,25 @@ class ProjectManagerScreen(tk.Frame):
         frm.pack(fill="x", padx=28, pady=(20, 4))
         frm.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        total    = len(self._projects)
-        editing  = sum(1 for e in self._projects if e.status == "edit")
-        final    = sum(1 for e in self._projects if e.status == "final")
-        total_mb = sum(e.size_mb for e in self._projects)
+        editing   = sum(1 for e in self._projects if e.status == "edit")
+        total_dur = sum(e.duration_s for e in self._projects)
+        dur_label = f"{total_dur / 3600:.1f}h" if total_dur >= 3600 else f"{int(total_dur / 60)}min"
 
         cards = [
-            ("Em edição",    str(editing),
-             f"+{min(editing, 2)} essa semana"),
-            ("Projetos",     str(total),
-             f"{final} finalizados"),
-            ("Armazenamento", f"{total_mb/1024:.1f} GB" if total_mb >= 1024
-             else f"{total_mb:.0f} MB",
-             "uso estimado"),
-            ("Exportar",     "—",
-             "fila vazia"),
+            ("Em edição",     str(editing),   f"+{min(editing, 2)} essa semana",   ACCENT),
+            ("Tempo cortado", dur_label,       "do material",                        OK),
+            ("Comentários",   "—",             "não rastreado",                      TXT3),
+            ("Exportar",      "—",             "fila vazia",                         TXT3),
         ]
-        for col, (label, value, delta) in enumerate(cards):
+        for col, (label, value, delta, accent_col) in enumerate(cards):
             c = tk.Frame(frm, bg=SURF, highlightthickness=1,
                          highlightbackground=BORD)
             c.grid(row=0, column=col, sticky="ew",
                    padx=(0, 10) if col < 3 else 0, pady=4, ipadx=2)
+            # top accent line
+            tk.Frame(c, bg=accent_col, height=2).pack(fill="x")
             tk.Label(c, text=label.upper(), bg=SURF, fg=TXT3,
-                     font=("Segoe UI", 8)).pack(anchor="w", padx=14, pady=(10, 0))
+                     font=("Segoe UI", 8)).pack(anchor="w", padx=14, pady=(8, 0))
             tk.Label(c, text=value, bg=SURF, fg=TXT,
                      font=("Segoe UI", 24, "bold")).pack(anchor="w", padx=14)
             tk.Label(c, text=delta, bg=SURF, fg=TXT3,
@@ -1105,6 +1184,22 @@ class ProjectManagerScreen(tk.Frame):
             count = counts.get(cid, 0)
             is_active = self._filter_cat.get() == cid
             chip = self._make_chip(chips_frame, cid, clabel, count, is_active)
+            chip.pack(side="left", padx=(0, 6))
+            self._chip_btns[cid] = chip
+
+        # Divider
+        tk.Frame(chips_frame, bg=BORD_S, width=1).pack(
+            side="left", fill="y", padx=(6, 10), pady=4)
+
+        # Status filter chips
+        editing_count = sum(1 for e in self._projects if e.status in ("edit", "review"))
+        final_count   = sum(1 for e in self._projects if e.status == "final")
+        for cid, clabel, count in (
+            ("__edit",  "Em edição",   editing_count),
+            ("__final", "Finalizados", final_count),
+        ):
+            is_active = self._filter_cat.get() == cid
+            chip = self._make_status_chip(chips_frame, cid, clabel, count, is_active)
             chip.pack(side="left", padx=(0, 6))
             self._chip_btns[cid] = chip
 
@@ -1137,6 +1232,27 @@ class ProjectManagerScreen(tk.Frame):
             w.bind("<Button-1>", lambda e, c=cid: self._set_cat(c))
             w.bind("<Enter>", lambda e, f=frm, l=lbl, c=cid: self._chip_hover(f, l, c, True))
             w.bind("<Leave>", lambda e, f=frm, l=lbl, c=cid: self._chip_hover(f, l, c, False))
+        return frm
+
+    def _make_status_chip(self, parent: tk.Widget, cid: str, label: str,
+                          count: int, active: bool) -> tk.Frame:
+        """Status-filter chip with a dashed-style border (lighter color)."""
+        bg  = SURF3 if active else BG0
+        fg  = TXT  if active else TXT3
+        brd = _blend(ACCENT, 0.55) if active else TXT4
+
+        frm = tk.Frame(parent, bg=bg, cursor="hand2",
+                       highlightthickness=1, highlightbackground=brd)
+        text = f"{label}  {count}" if count else label
+        lbl_w = tk.Label(frm, text=text, bg=bg, fg=fg,
+                         font=("Segoe UI", 10), padx=10, pady=4)
+        lbl_w.pack()
+        for w in (frm, lbl_w):
+            w.bind("<Button-1>", lambda e, c=cid: self._set_cat(c))
+            w.bind("<Enter>",
+                   lambda e, f=frm, l=lbl_w, c=cid: self._chip_hover(f, l, c, True))
+            w.bind("<Leave>",
+                   lambda e, f=frm, l=lbl_w, c=cid: self._chip_hover(f, l, c, False))
         return frm
 
     def _chip_hover(self, frm, lbl, cid, entering) -> None:
@@ -1299,13 +1415,16 @@ class ProjectManagerScreen(tk.Frame):
             ("youtube", "Vlog — Cortes rápidos",               "Música + cortes"),
             ("youtube", "Multicam — Estúdio 4 ângulos",       "Sync + multicam"),
         ]
+        num_rows = (len(template_cards) + 2) // 3
         for col in range(3):
             grid.grid_columnconfigure(col, weight=1)
+        for row_idx in range(num_rows):
+            grid.grid_rowconfigure(row_idx, weight=1)
         for i, (cat, title, sub) in enumerate(template_cards):
             col, row = i % 3, i // 3
             c = tk.Frame(grid, bg=SURF, highlightthickness=1,
                          highlightbackground=BORD, cursor="hand2")
-            c.grid(row=row, column=col, sticky="ew",
+            c.grid(row=row, column=col, sticky="nsew",
                    padx=(0, 12) if col < 2 else 0, pady=(0, 12))
             # Thumb
             thumb_c = tk.Canvas(c, height=100, bg="#1a1820",

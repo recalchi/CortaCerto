@@ -94,6 +94,13 @@ class ProcessingConfig:
 
     # Music
     music_path: Optional[str] = None
+    music_volume_pct: float = 13.0   # background music level (0..200, maps to ffmpeg volume)
+
+    # Mixer (Etapa 5) — per-channel volumes & mutes for export
+    # video_volume_pct: scales main video audio (default 100 = unchanged)
+    # audio_muted_mixer: True → silence main audio in export (complements track_options["audio_muted"])
+    video_volume_pct: float = 100.0
+    audio_muted_mixer: bool = False
 
     @property
     def min_silence_ms(self) -> int:

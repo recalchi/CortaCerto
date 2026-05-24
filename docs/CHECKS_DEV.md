@@ -1,6 +1,6 @@
 # Checks Dev
 
-Atualizado em: 2026-05-14
+Atualizado em: 2026-05-21
 
 ## Checklist manual por versao
 
@@ -8,7 +8,46 @@ Atualizado em: 2026-05-14
 - [ ] Encerrar pelo terminal com `Ctrl+C` sem traceback.
 - [ ] Criar projeto importando imagem antes do video principal.
 - [ ] Carregar video principal curto.
+- [ ] Confirmar que o primeiro video mostra imagem no preview ao dar play.
+- [ ] Confirmar que video `.MOV` cria/usa proxy de preview sem tela preta.
 - [ ] Adicionar imagem e b-roll na caixa de midia.
+- [ ] Abrir `python main.py --web`.
+- [ ] Usar abas do Media Bin: Meus, Videos, Imagens, Audio, Sons, Favoritos e Baixados.
+- [ ] Configurar chaves de stock media pela engrenagem e recarregar.
+- [ ] Abrir configuracoes pela engrenagem do topo.
+- [ ] Abrir aba `Geral` em configuracoes.
+- [ ] Alternar icone de layout no cabecalho para modo CapCut.
+- [ ] Definir preset de layout ao abrir: ultima escolha.
+- [ ] Definir preset de layout ao abrir: layout padrao.
+- [ ] Definir preset de layout ao abrir: layout CapCut.
+- [ ] Confirmar layout CapCut com midias, preview e propriedades no topo.
+- [ ] Confirmar timeline ocupando a largura de ponta a ponta embaixo.
+- [ ] Arrastar bordas entre midias, preview e propriedades para redimensionar.
+- [ ] Arrastar borda acima da timeline para ajustar a altura da timeline.
+- [ ] Fechar e reabrir o editor e confirmar que o tamanho dos paineis foi mantido.
+- [ ] Alternar de volta para layout padrao.
+- [ ] Alternar proporcao 16:9, 9:16 e 1:1 e confirmar preview redimensionando corretamente.
+- [ ] Expandir/mover video fora do enquadro e confirmar contorno de limite no preview.
+- [ ] Ocultar e reexibir grade do enquadro pelo icone no preview.
+- [ ] Ajustar zoom interno do painel de midias.
+- [ ] Classificar midias por recentes, nome, fonte e duracao.
+- [ ] Confirmar arquivos importados em thumbnails pequenas em `Meus`.
+- [ ] Confirmar zoom e classificacao visiveis nos dois layouts.
+- [ ] Alternar `Atualizacoes automaticas`.
+- [ ] Alternar `Receber notificacao sobre atualizacoes`.
+- [ ] Confirmar renderizacao por GPU desmarcada por padrao e GPU identificada.
+- [ ] Definir pasta padrao para salvar.
+- [ ] Ver tamanho do cache e limpar pelo icone de lixo.
+- [ ] Editar campo `OPENAI_API_KEY` sem expor a chave na tela.
+- [ ] Ajustar orcamento mensal e tarifas estimadas de GPT/OpenAI.
+- [ ] Conferir aba `Uso GPT` com chamadas, custo estimado e log local.
+- [ ] Buscar video no Pexels.
+- [ ] Buscar imagem no Pixabay.
+- [ ] Buscar imagem no Unsplash.
+- [ ] Buscar audio/efeito no Freesound.
+- [ ] Baixar asset e confirmar entrada em Baixados.
+- [ ] Arrastar asset baixado para a timeline.
+- [ ] Usar asset baixado pelo botao `Usar`.
 - [ ] Arrastar imagem da caixa de midia para `MIDIA`.
 - [ ] Arrastar b-roll da caixa de midia para `MIDIA`.
 - [ ] Inserir midia pelo botao `Inserir na timeline`.
@@ -24,6 +63,9 @@ Atualizado em: 2026-05-14
 - [ ] Testar chroma key em overlay e comparar preview.
 - [ ] Criar texto no playhead.
 - [ ] Reproduzir e confirmar texto sincronizado com o preview.
+- [ ] Usar botao de atualizar preview manualmente quando o preview travar.
+- [ ] Adicionar segundo video, mover para depois do primeiro e confirmar playhead ate o final real.
+- [ ] Importar segundo video por duplo clique e confirmar que entra ao final da track principal.
 - [ ] Editar texto, cor, fundo e tamanho no painel direito.
 - [ ] Mover texto no preview.
 - [ ] Aparar pontas do texto.
@@ -50,3 +92,33 @@ Atualizado em: 2026-05-14
 - [x] Manter `.env` fora de leitura, log e versionamento.
 - [x] Nao misturar ajuste de texto, overlay e clipe base no inspector.
 - [x] Confirmar que preview e export continuam alinhados na area alterada.
+- [x] Criar backend de stock media com cache local e metadados.
+- [x] Criar Media Bin web com abas estilo CapCut.
+- [x] Criar configuracao web de chaves de API com valores mascarados.
+- [x] Validar Pexels, Pixabay, Unsplash e Freesound com busca minima.
+- [x] Rodar build TypeScript/Vite do frontend web.
+- [x] Reativar botao de configuracoes do topo no React.
+- [x] Criar aba geral de configuracoes.
+- [x] Adicionar flags de atualizacao, notificacao, GPU UI, pasta padrao e cache.
+- [x] Adicionar endpoint de limpeza de cache.
+- [x] Criar alternancia de layout no cabecalho.
+- [x] Criar layout CapCut com tres paineis no topo e timeline embaixo.
+- [x] Persistir preferencia de layout no navegador.
+- [x] Criar redimensionamento por bordas para paineis e timeline.
+- [x] Persistir tamanhos ajustados dos paineis no navegador.
+- [x] Criar preset de layout inicial nas configuracoes gerais.
+- [x] Compactar painel de midias no layout web.
+- [x] Criar zoom interno e classificacao do Media Bin.
+- [x] Exibir arquivos importados/recentes como thumbnails pequenas.
+- [x] Manter zoom e classificacao visiveis em todas as abas do Media Bin.
+- [x] Criar botao manual para atualizar/remontar o preview.
+- [x] Impedir preview de tocar arquivo original quando proxy de codec estiver pendente.
+- [x] Recalcular duracao da timeline apos mover, aparar, colar ou importar clipes.
+- [x] Criar proxy de preview para MOV/H.264 nao seguro.
+- [x] Fazer importacao de segundo video entrar em sequencia na track principal.
+- [x] Corrigir transicao automatica do preview na borda entre dois clipes.
+- [x] Redimensionar preview pela area disponivel ao alternar proporcao.
+- [x] Mostrar contorno quando o video transformado passa do enquadro.
+- [x] Criar toggle para ocultar/reexibir grade do enquadro no preview.
+- [x] Criar aba de uso GPT/OpenAI com consumo local estimado.
+- [x] Registrar uso de transcricao OpenAI Whisper no log local.
