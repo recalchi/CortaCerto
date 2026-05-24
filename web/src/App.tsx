@@ -241,7 +241,49 @@ function beginResize(e: React.PointerEvent<HTMLDivElement>, onDrag: (dx: number,
   window.addEventListener('pointercancel', onUp)
 }
 
-function ResizeHandle({
+type ResizeEdgeName = 'left' | 'right' | 'top' | 'bottom'
+
+function ResizeEdge({
+  edge,
+  onDrag,
+  className = '',
+}: {
+  edge: ResizeEdgeName
+  onDrag: (dx: number, dy: number) => void
+  className?: string
+}) {
+  const isY = edge === 'top' || edge === 'bottom'
+  const positionClass =
+    edge === 'left' ? 'left-[-7px] top-0 bottom-0 w-3.5 cursor-col-resize' :
+    edge === 'right' ? 'right-[-7px] top-0 bottom-0 w-3.5 cursor-col-resize' :
+    edge === 'top' ? 'top-[-7px] left-0 right-0 h-3.5 cursor-row-resize' :
+    'bottom-[-7px] left-0 right-0 h-3.5 cursor-row-resize'
+  const lineClass =
+    edge === 'left' ? 'left-[6px] top-0 bottom-0 w-px' :
+    edge === 'right' ? 'right-[6px] top-0 bottom-0 w-px' :
+    edge === 'top' ? 'top-[6px] left-0 right-0 h-px' :
+    'bottom-[6px] left-0 right-0 h-px'
+  return (
+    <div
+      data-axis={isY ? 'y' : 'x'}
+      data-layout-resize-handle="true"
+      onPointerDown={(e) => beginResize(e, onDrag)}
+      className={`group absolute ${positionClass} z-40 flex items-center justify-center touch-none select-none ${className}`}
+      title={isY ? 'Arraste para ajustar a altura da timeline' : 'Arraste para ajustar a largura do painel'}
+    >
+      <div
+        className={`absolute ${lineClass} bg-border group-hover:bg-accent transition-colors`}
+      />
+      <div
+        className={`rounded-full bg-border/70 opacity-0 group-hover:opacity-100 group-hover:bg-accent transition-all ${
+          isY ? 'h-1 w-12' : 'h-12 w-1'
+        }`}
+      />
+    </div>
+  )
+}
+
+function SplitHandle({
   axis,
   onDrag,
   className = '',
@@ -256,19 +298,41 @@ function ResizeHandle({
       data-axis={axis}
       data-layout-resize-handle="true"
       onPointerDown={(e) => beginResize(e, onDrag)}
-      className={`group relative z-30 flex items-center justify-center flex-shrink-0 touch-none select-none ${
-        isY ? 'h-4 -my-2 cursor-row-resize' : 'w-4 -mx-2 cursor-col-resize'
+      className={`group relative z-50 flex flex-shrink-0 items-center justify-center touch-none select-none ${
+        isY ? 'h-2 cursor-row-resize' : 'w-2 cursor-col-resize'
       } ${className}`}
-      title={isY ? 'Arraste para ajustar a altura da timeline' : 'Arraste para ajustar a largura do painel'}
+      title={isY ? 'Arraste para redimensionar os campos acima/abaixo' : 'Arraste para redimensionar os campos laterais'}
     >
       <div
-        className={`absolute ${isY ? 'inset-x-0 top-1/2 h-px' : 'inset-y-0 left-1/2 w-px'} bg-border group-hover:bg-accent transition-colors`}
+        className={`${isY ? 'h-px w-full' : 'h-full w-px'} bg-border/70 group-hover:bg-accent/60 group-active:bg-accent/70 transition-colors`}
       />
       <div
-        className={`rounded-full bg-border/70 opacity-0 group-hover:opacity-100 group-hover:bg-accent transition-all ${
-          isY ? 'h-1 w-12' : 'h-12 w-1'
+        className={`absolute rounded-full bg-accent/70 opacity-0 group-hover:opacity-80 group-active:opacity-90 transition-opacity ${
+          isY ? 'h-0.5 w-10' : 'h-10 w-0.5'
         }`}
       />
+    </div>
+  )
+}
+
+function ResizablePane({
+  children,
+  className = '',
+  style,
+  edges,
+}: {
+  children: React.ReactNode
+  className?: string
+  style?: React.CSSProperties
+  edges?: Partial<Record<ResizeEdgeName, (dx: number, dy: number) => void>>
+}) {
+  return (
+    <div className={`relative min-w-0 min-h-0 ${className}`} style={style}>
+      {children}
+      {edges?.left && <ResizeEdge edge="left" onDrag={edges.left} />}
+      {edges?.right && <ResizeEdge edge="right" onDrag={edges.right} />}
+      {edges?.top && <ResizeEdge edge="top" onDrag={edges.top} />}
+      {edges?.bottom && <ResizeEdge edge="bottom" onDrag={edges.bottom} />}
     </div>
   )
 }
@@ -512,36 +576,53 @@ function DefaultWorkspace({ project }: { project: ProjectState | null }) {
 
   return (
     <div className="flex flex-1 min-h-0 relative">
-      <LeftRail width={sizes.defaultLeft} />
-      <ResizeHandle
+      <ResizablePane
+        className="flex-shrink-0"
+        style={{ width: sizes.defaultLeft }}
+      >
+        <LeftRail width={sizes.defaultLeft} />
+      </ResizablePane>
+      <SplitHandle
         axis="x"
         onDrag={(dx) => setSizes((current) => ({
           ...current,
-          defaultLeft: clamp(sizes.defaultLeft + dx, 180, 460),
+          defaultLeft: clamp(sizes.defaultLeft + dx, 180, 520),
         }))}
       />
       <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden relative">
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <ResizablePane
+          className="flex-1 overflow-hidden"
+        >
           <Preview />
-        </div>
-        <ResizeHandle
+        </ResizablePane>
+        <SplitHandle
           axis="y"
           onDrag={(_dx, dy) => setSizes((current) => ({
             ...current,
-            defaultTimeline: clamp(sizes.defaultTimeline - dy, 190, 560),
+            defaultTimeline: clamp(sizes.defaultTimeline - dy, 190, 620),
           }))}
         />
-        <Timeline height={sizes.defaultTimeline} />
+        <ResizablePane
+          className="flex-shrink-0 overflow-hidden"
+          style={{ height: sizes.defaultTimeline }}
+        >
+          <Timeline height={sizes.defaultTimeline} />
+        </ResizablePane>
         {!project && <WelcomeOverlay />}
       </div>
-      <ResizeHandle
+      <SplitHandle
         axis="x"
         onDrag={(dx) => setSizes((current) => ({
           ...current,
-          defaultInspector: clamp(sizes.defaultInspector - dx, 220, 520),
+          defaultInspector: clamp(sizes.defaultInspector - dx, 220, 560),
         }))}
       />
-      <InspectorPanel className="border-l" width={sizes.defaultInspector} />
+      <ResizablePane
+        className="flex-shrink-0"
+        style={{ width: sizes.defaultInspector }}
+      >
+        <InspectorPanel className="border-l w-full h-full" />
+      </ResizablePane>
     </div>
   )
 }
@@ -552,38 +633,51 @@ function CapCutWorkspace({ project }: { project: ProjectState | null }) {
   return (
     <div className="flex flex-col flex-1 min-h-0 relative bg-bg gap-2 p-2">
       <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 min-h-0 overflow-hidden" style={{ width: sizes.capcutLeft }}>
+        <ResizablePane
+          className="flex-shrink-0 overflow-hidden"
+          style={{ width: sizes.capcutLeft }}
+        >
           <LeftRail panel />
-        </div>
-        <ResizeHandle
+        </ResizablePane>
+        <SplitHandle
           axis="x"
           onDrag={(dx) => setSizes((current) => ({
             ...current,
-            capcutLeft: clamp(sizes.capcutLeft + dx, 260, 560),
+            capcutLeft: clamp(sizes.capcutLeft + dx, 220, 620),
           }))}
         />
-        <div className="flex-1 min-w-0 min-h-0 overflow-hidden rounded-lg border border-border bg-bg-panel">
+        <ResizablePane
+          className="flex-1 overflow-hidden rounded-lg border border-border bg-bg-panel"
+        >
           <Preview />
-        </div>
-        <ResizeHandle
+        </ResizablePane>
+        <SplitHandle
           axis="x"
           onDrag={(dx) => setSizes((current) => ({
             ...current,
-            capcutInspector: clamp(sizes.capcutInspector - dx, 260, 560),
+            capcutInspector: clamp(sizes.capcutInspector - dx, 220, 620),
           }))}
         />
-        <InspectorPanel className="rounded-lg border" width={sizes.capcutInspector} />
+        <ResizablePane
+          className="flex-shrink-0"
+          style={{ width: sizes.capcutInspector }}
+        >
+          <InspectorPanel className="rounded-lg border w-full h-full" />
+        </ResizablePane>
       </div>
-      <ResizeHandle
+      <SplitHandle
         axis="y"
         onDrag={(_dx, dy) => setSizes((current) => ({
           ...current,
-          capcutTimeline: clamp(sizes.capcutTimeline - dy, 190, 560),
+          capcutTimeline: clamp(sizes.capcutTimeline - dy, 190, 620),
         }))}
       />
-      <div className="flex-shrink-0 overflow-hidden rounded-lg border border-border">
+      <ResizablePane
+        className="flex-shrink-0 overflow-hidden rounded-lg border border-border"
+        style={{ height: sizes.capcutTimeline }}
+      >
         <Timeline height={sizes.capcutTimeline} />
-      </div>
+      </ResizablePane>
       {!project && <WelcomeOverlay />}
     </div>
   )
