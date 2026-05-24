@@ -8,9 +8,26 @@ from pathlib import Path
 DEFAULT_API_ENV_NAMES = [
     "OPENAI_API_KEY",
     "OPENAI_API_KEY_SECONDARY",
+    "OPENAI_MONTHLY_BUDGET_USD",
+    "OPENAI_GPT_INPUT_USD_PER_1K",
+    "OPENAI_GPT_OUTPUT_USD_PER_1K",
+    "OPENAI_WHISPER_USD_PER_MIN",
     "GEMINI_API_KEY",
     "ANTHROPIC_API_KEY",
     "ELEVENLABS_API_KEY",
+    "CORTACERTO_AUTO_UPDATES",
+    "CORTACERTO_UPDATE_NOTIFICATIONS",
+    "CORTACERTO_UI_GPU_RENDERING",
+    "CORTACERTO_DEFAULT_SAVE_DIR",
+    "CORTACERTO_STARTUP_LAYOUT",
+    "PEXELS_API_KEY",
+    "PIXABAY_API_KEY",
+    "UNSPLASH_APP_ID",
+    "UNSPLASH_ACCESS_KEY",
+    "UNSPLASH_SECRET_KEY",
+    "FREESOUND_API_KEY",
+    "FREESOUND_CLIENT_ID",
+    "FREESOUND_CLIENT_SECRET",
 ]
 
 
@@ -25,7 +42,10 @@ def load_env_file(path: Path = Path(".env")) -> dict[str, str]:
     if not path.exists():
         return {}
     values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    # utf-8-sig strips the BOM that Windows editors (Notepad, PowerShell `Out-File`) prepend
+    # to UTF-8 files; without this the first key parses as "﻿OPENAI_API_KEY" and the
+    # subsequent .get("OPENAI_API_KEY") lookup silently misses.
+    for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         parsed = _parse_env_line(line)
         if parsed is not None:
             key, value = parsed
@@ -75,3 +95,30 @@ def _parse_env_line(line: str) -> tuple[str, str] | None:
     if not key:
         return None
     return key, value
+
+
+def update_env_file(updates: dict[str, str], path: Path = Path(".env")) -> None:
+    """Upsert dotenv values without logging secrets."""
+    existing_lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.exists() else []
+    remaining = dict(updates)
+    output: list[str] = []
+
+    for line in existing_lines:
+        parsed = _parse_env_line(line)
+        if parsed is None:
+            output.append(line)
+            continue
+        key, _value = parsed
+        if key in remaining:
+            output.append(f'{key}="{remaining.pop(key)}"')
+        else:
+            output.append(line)
+
+    if remaining:
+        if output and output[-1].strip():
+            output.append("")
+        output.append("# Stock media APIs")
+        for key, value in remaining.items():
+            output.append(f'{key}="{value}"')
+
+    path.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")

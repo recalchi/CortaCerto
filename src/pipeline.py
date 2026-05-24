@@ -138,6 +138,8 @@ def run_pipeline(
         clip_options = _clip_options_with_output_ranges(effective_clip_options, config.manual_segments)
         if config.remove_silence:
             main_out = os.path.join(output_dir, f"{base}_editado.mp4")
+            # Etapa 6: per-clip speed + transition data (base track only)
+            _per_clip_data = _build_per_clip_data(clip_options)
             render_stats = cut_silence(
                 video_path,
                 analysis,
@@ -153,6 +155,7 @@ def run_pipeline(
                 face_size=config.face_size,
                 cancel=cancel,
                 on_progress=lambda msg, p: prog(f"[3/6] {msg}", 0.16 + p * 0.34),
+                per_clip_data=_per_clip_data or None,
             )
             result.main_video   = main_out
             result.render_stats = render_stats
@@ -271,7 +274,8 @@ def run_pipeline(
 
                 if config.music_path and os.path.exists(config.music_path):
                     music_out = os.path.join(output_dir, f"{base}_master.mp4")
-                    _mix_music(source, config.music_path, music_out, result.final_duration_s, pm=pm)
+                    _mix_music(source, config.music_path, music_out, result.final_duration_s, pm=pm,
+                               music_volume_pct=float(getattr(config, "music_volume_pct", 13.0)))
                     source = music_out
                     export_keep.add(music_out)
                 prog("[5/6] Trilha final pronta.", 0.86)
@@ -594,6 +598,25 @@ def _build_clip_volume_filter(clip_options: list[dict[str, object]]) -> str:
         volume = max(0.0, float(volume_pct) / 100.0)
         filters.append(f"volume={volume:.4f}:enable='between(t,{start_s:.3f},{end_s:.3f})'")
     return ",".join(filters)
+
+
+def _build_per_clip_data(clip_options: list[dict[str, object]]) -> list[dict]:
+    """Extract speed_factor + transition per base-layer clip for cut_silence (Etapa 6)."""
+    result: list[dict] = []
+    for opt in clip_options:
+        if str(opt.get("layer") or "base").strip().lower() == "overlay":
+            continue
+        try:
+            sf = float(opt.get("speed_factor", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            sf = 1.0
+        tr = str(opt.get("transition") or "Corte").strip()
+        try:
+            td = float(opt.get("transition_duration_s", 0.4) or 0.4)
+        except (TypeError, ValueError):
+            td = 0.4
+        result.append({"speed_factor": sf, "transition": tr, "transition_duration_s": td})
+    return result
 
 
 def _clip_volume_adjustments(clip_options: list[dict[str, object]]) -> list[tuple[float, float, float]]:

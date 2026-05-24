@@ -243,12 +243,43 @@ def _compose_overlay_frame_bgr(base_bgr: object, overlay_bgr: object, option: di
     scale_pct = max(25.0, min(300.0, float(option.get("scale_pct", 100.0) or 100.0)))
     pos_x_pct = float(option.get("position_x_pct", 0.0) or 0.0)
     pos_y_pct = float(option.get("position_y_pct", 0.0) or 0.0)
+    rotation_deg = float(option.get("rotation_deg", 0.0) or 0.0)
+    blend_mode = str(option.get("blend_mode", "Normal") or "Normal")
+    opacity = _option_opacity_factor(option)
+
+    # Etapa D: apply rotation around the centre
+    if abs(rotation_deg) > 0.5:
+        cx, cy = width / 2.0, height / 2.0
+        M = cv2.getRotationMatrix2D((cx, cy), rotation_deg, 1.0)
+        overlay = cv2.warpAffine(overlay, M, (width, height), flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+
+    # Etapa E: apply per-clip crop (each edge 0..50 %)
+    _ct = float(option.get("crop_top_pct",    0.0) or 0.0)
+    _cb = float(option.get("crop_bottom_pct", 0.0) or 0.0)
+    _cl = float(option.get("crop_left_pct",   0.0) or 0.0)
+    _cr = float(option.get("crop_right_pct",  0.0) or 0.0)
+    if any(c > 0.1 for c in (_ct, _cb, _cl, _cr)):
+        oh, ow = overlay.shape[:2]
+        t = int(oh * _ct / 100.0)
+        b = int(oh * (1.0 - _cb / 100.0))
+        l = int(ow * _cl / 100.0)
+        r = int(ow * (1.0 - _cr / 100.0))
+        if r > l and b > t:
+            cropped = overlay[t:b, l:r]
+            overlay = cv2.resize(cropped, (ow, oh), interpolation=cv2.INTER_LINEAR)
+
+    # Etapa F: per-clip color correction
+    _brightness = float(option.get("brightness", 0.0) or 0.0)
+    _contrast   = float(option.get("contrast",   0.0) or 0.0)
+    _saturation = float(option.get("saturation", 0.0) or 0.0)
+    overlay = _apply_color_correction_bgr(overlay, _brightness, _contrast, _saturation)
 
     if scale_pct >= 100.0:
         rendered = _apply_overlay_chroma_bgr(overlay, option, base_bgr)
         rendered = _scale_frame_bgr_positioned(rendered, scale_pct, pos_x_pct, pos_y_pct)
         rendered = _draw_overlay_text_if_needed_bgr(rendered, option)
-        return _blend_overlay_bgr(base_bgr, rendered, _option_opacity_factor(option))
+        return _blend_overlay_bgr_mode(base_bgr, rendered, opacity, blend_mode)
 
     left, top, right, bottom = _scaled_overlay_bounds(width, height, scale_pct, pos_x_pct, pos_y_pct)
     if right <= left or bottom <= top:
@@ -258,9 +289,32 @@ def _compose_overlay_frame_bgr(base_bgr: object, overlay_bgr: object, option: di
     background = out[top:bottom, left:right]
     scaled = _apply_overlay_chroma_bgr(scaled, option, background)
     scaled = _draw_overlay_text_if_needed_bgr(scaled, option)
-    scaled = _blend_overlay_bgr(background, scaled, _option_opacity_factor(option))
+    scaled = _blend_overlay_bgr_mode(background, scaled, opacity, blend_mode)
     out[top:bottom, left:right] = scaled
     return out
+
+
+def _apply_color_correction_bgr(frame: object, brightness: float, contrast: float, saturation: float) -> object:
+    """Etapa F: apply per-clip brightness/contrast/saturation corrections."""
+    import numpy as np
+    if not any(abs(v) > 0.5 for v in (brightness, contrast, saturation)):
+        return frame
+    f = frame.astype(np.float32)
+    # Brightness: additive shift mapped from -100..+100 → -128..+128
+    if abs(brightness) > 0.5:
+        f = f + brightness * 1.28
+    # Contrast: scale around midpoint 128 using factor 0..2
+    if abs(contrast) > 0.5:
+        c_factor = (contrast + 100.0) / 100.0
+        f = (f - 128.0) * c_factor + 128.0
+    f = np.clip(f, 0, 255).astype(np.uint8)
+    # Saturation: scale HSV S channel using factor 0..2
+    if abs(saturation) > 0.5:
+        s_factor = (saturation + 100.0) / 100.0
+        hsv = cv2.cvtColor(f, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * s_factor, 0, 255)
+        f = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+    return f
 
 
 def _option_opacity_factor(option: dict[str, object]) -> float:
@@ -272,14 +326,41 @@ def _option_opacity_factor(option: dict[str, object]) -> float:
 
 
 def _blend_overlay_bgr(base_bgr: object, overlay_bgr: object, opacity: float) -> object:
+    return _blend_overlay_bgr_mode(base_bgr, overlay_bgr, opacity, "Normal")
+
+
+def _blend_overlay_bgr_mode(base_bgr: object, overlay_bgr: object, opacity: float, blend_mode: str) -> object:
+    """Blend *overlay_bgr* onto *base_bgr* with *opacity* and a blend mode (Etapa D)."""
+    import numpy as np
     opacity = max(0.0, min(1.0, float(opacity)))
     if opacity <= 0.0:
         return base_bgr
-    if opacity >= 1.0:
-        return overlay_bgr
     if base_bgr.shape[:2] != overlay_bgr.shape[:2]:
         overlay_bgr = cv2.resize(overlay_bgr, (base_bgr.shape[1], base_bgr.shape[0]), interpolation=cv2.INTER_AREA)
-    return cv2.addWeighted(overlay_bgr, opacity, base_bgr, 1.0 - opacity, 0.0)
+    m = str(blend_mode or "Normal").strip().lower()
+    if m == "normal":
+        return cv2.addWeighted(overlay_bgr, opacity, base_bgr, 1.0 - opacity, 0.0)
+    # Convert to float 0..1 for numpy blending
+    b = base_bgr.astype(np.float32) / 255.0
+    o = overlay_bgr.astype(np.float32) / 255.0
+    if m == "screen":
+        blended = 1.0 - (1.0 - b) * (1.0 - o)
+    elif m == "multiply":
+        blended = b * o
+    elif m == "overlay":
+        blended = np.where(b < 0.5, 2.0 * b * o, 1.0 - 2.0 * (1.0 - b) * (1.0 - o))
+    elif m == "add":
+        blended = np.clip(b + o, 0.0, 1.0)
+    elif m == "darken":
+        blended = np.minimum(b, o)
+    elif m == "lighten":
+        blended = np.maximum(b, o)
+    elif m in ("soft light", "soft_light", "softlight"):
+        blended = (1.0 - 2.0 * o) * b ** 2 + 2.0 * o * b
+    else:
+        blended = o
+    result = np.clip(b * (1.0 - opacity) + blended * opacity, 0.0, 1.0)
+    return (result * 255.0).astype(np.uint8)
 
 
 def _scaled_overlay_bounds(

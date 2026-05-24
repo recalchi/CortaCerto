@@ -1,0 +1,57 @@
+/* Import Geist fonts (design spec) — must be first */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: #fff;
+  font-family: 'Geist', 'Segoe UI', system-ui, sans-serif;
+  overflow: hidden;
+  /* Design handoff: rich gradient background */
+  background:
+    radial-gradient(ellipse 90% 60% at 5% 0%, rgba(100,60,200,0.22) 0%, transparent 65%),
+    radial-gradient(ellipse 70% 50% at 95% 100%, rgba(220,80,140,0.15) 0%, transparent 60%),
+    linear-gradient(180deg, #0a090c 0%, #0d0b11 100%);
+}
+
+/* Frosted-glass panel mixin — apply via inline style or wrapper class */
+.glass {
+  background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.018));
+  border: 1px solid rgba(180,160,255,0.12);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(180,160,255,0.15); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(180,160,255,0.3); }
+
+/* Range input custom style (design: purple gradient fill) */
+input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.12);
+  outline: none;
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.5);
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  border-radius: 2px;
+}

@@ -1,0 +1,5 @@
+# Test-only dependencies. Install with:
+#   pip install -r requirements-dev.txt
+# These are NOT bundled with the desktop app — only needed when running pytest.
+pytest>=8.0
+httpx>=0.27   # required by fastapi.testclient for HTTP-level tests

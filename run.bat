@@ -31,7 +31,35 @@ if not defined PYTHON_CMD (
 )
 
 echo Python: %PYTHON_CMD%
-%PYTHON_CMD% main.py %*
+
+REM If no --web / --web-dev flag is passed, default to --web (React UI via WebView2).
+REM Use --web-dev only when running Vite separately with "npm run dev" in web\.
+set "EXTRA_ARGS=%*"
+echo %EXTRA_ARGS% | findstr /I "\-\-web" >nul 2>&1
+if errorlevel 1 set "EXTRA_ARGS=--web %*"
+
+REM Auto-build the React frontend if web\dist\index.html is missing.
+REM This runs on first launch or after a git pull that added new frontend features.
+if not exist "web\dist\index.html" (
+    echo [CortaCerto] Construindo interface React (primeira vez)...
+    where npm >nul 2>&1
+    if errorlevel 1 (
+        echo [AVISO] npm nao encontrado - instale Node.js para construir a interface.
+    ) else (
+        pushd web
+        call npm install --prefer-offline --no-audit --no-fund >nul 2>&1
+        call npm run build
+        popd
+        if errorlevel 1 (
+            echo [ERRO] Falha ao construir a interface. Verifique npm e Node.js.
+            pause
+            exit /b 1
+        )
+        echo [CortaCerto] Interface construida com sucesso.
+    )
+)
+
+%PYTHON_CMD% main.py %EXTRA_ARGS%
 set "APP_EXIT=%errorlevel%"
 
 if not "%APP_EXIT%"=="0" (

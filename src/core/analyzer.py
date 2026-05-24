@@ -49,15 +49,24 @@ def _run_silencedetect(video_path: str, noise_db: float, min_silence_s: float) -
     """
     Run ffmpeg silencedetect and return list of (silence_start, silence_end) in seconds.
     ffmpeg writes silencedetect output to stderr.
+
+    Speed optimisations applied:
+      -vn          skip video decoding entirely (only audio is needed)
+      -ac 1        downmix to mono before analysis
+      -ar 8000     resample to 8 kHz — plenty for silence detection, much faster
     """
     result = subprocess.run(
         [
             ffmpeg(), "-i", video_path,
+            "-vn",                   # no video decode
+            "-ac", "1",              # mono
+            "-ar", "8000",           # 8 kHz (silence detection doesn't need hi-fi)
             "-af", f"silencedetect=noise={noise_db:.1f}dB:duration={min_silence_s:.3f}",
             "-f", "null", "-",
         ],
         capture_output=True,
         text=True,
+        timeout=300,                 # 5 min hard cap — prevents infinite freeze
     )
 
     starts = [float(m) for m in re.findall(r"silence_start:\s*([\d.]+)", result.stderr)]
