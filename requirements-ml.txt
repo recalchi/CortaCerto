@@ -5,7 +5,7 @@
 mediapipe==0.10.14
 
 # YOLOv8: person detection + pose estimation
-ultralytics>=8.2.0
+ultralytics>=8.4.90
 
 # rembg: U2Net background removal (ONNX-based, high quality)
 rembg[gpu]>=2.0.57
