@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeftRight, Clock3, Search, Star, StarOff } from 'lucide-react'
 import { Clip, useStore } from '../../store/useStore'
 
-const TRANSITION_FAVORITES_KEY = 'cortacerto_transition_favorites_v1'
+const TRANSITION_FAVORITES_STORAGE_ID = 'cortacerto_transition_favorites_v1'
 
 type TransitionCategory =
   | 'popular'
@@ -56,7 +56,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 function readFavorites(): string[] {
   try {
-    const raw = localStorage.getItem(TRANSITION_FAVORITES_KEY)
+    const raw = localStorage.getItem(TRANSITION_FAVORITES_STORAGE_ID)
     if (!raw) return []
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : []
@@ -67,7 +67,7 @@ function readFavorites(): string[] {
 
 function writeFavorites(ids: string[]) {
   try {
-    localStorage.setItem(TRANSITION_FAVORITES_KEY, JSON.stringify(ids.slice(0, 120)))
+    localStorage.setItem(TRANSITION_FAVORITES_STORAGE_ID, JSON.stringify(ids.slice(0, 120)))
   } catch {
     // ignore
   }

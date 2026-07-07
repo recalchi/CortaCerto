@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Box, Search, Star, StarOff, Sticker } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 
-const STICKER_FAVORITES_KEY = 'cortacerto_sticker_favorites_v1'
+const STICKER_FAVORITES_STORAGE_ID = 'cortacerto_sticker_favorites_v1'
 
 type StickerItem = {
   id: string
@@ -45,7 +45,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 function readFavorites(): string[] {
   try {
-    const raw = localStorage.getItem(STICKER_FAVORITES_KEY)
+    const raw = localStorage.getItem(STICKER_FAVORITES_STORAGE_ID)
     if (!raw) return []
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : []
@@ -56,7 +56,7 @@ function readFavorites(): string[] {
 
 function writeFavorites(ids: string[]) {
   try {
-    localStorage.setItem(STICKER_FAVORITES_KEY, JSON.stringify(ids.slice(0, 160)))
+    localStorage.setItem(STICKER_FAVORITES_STORAGE_ID, JSON.stringify(ids.slice(0, 160)))
   } catch {
     // ignore
   }
