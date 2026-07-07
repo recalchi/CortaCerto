@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
 import mimetypes
 import os
+import random
 import re
+import wave
 import time
 import urllib.parse
 import urllib.request
@@ -36,11 +39,64 @@ class StockProvider:
 
 
 PROVIDERS: dict[str, StockProvider] = {
+    "cortacerto": StockProvider("cortacerto", "CortaCerto", ("audio",), ()),
     "pexels": StockProvider("pexels", "Pexels", ("video", "image"), ("PEXELS_API_KEY",)),
     "pixabay": StockProvider("pixabay", "Pixabay", ("video", "image"), ("PIXABAY_API_KEY",)),
     "unsplash": StockProvider("unsplash", "Unsplash", ("image",), ("UNSPLASH_ACCESS_KEY",)),
     "freesound": StockProvider("freesound", "Freesound", ("audio",), ("FREESOUND_API_KEY",)),
 }
+
+BUILTIN_SFX: tuple[dict[str, Any], ...] = (
+    {
+        "id": "cc_magic_sparkle_open",
+        "title": "Magic Sparkle Open",
+        "author": "CortaCerto",
+        "duration_s": 1.25,
+        "category": "magic",
+    },
+    {
+        "id": "cc_typing_text_fast",
+        "title": "Typing Text Fast",
+        "author": "CortaCerto",
+        "duration_s": 1.35,
+        "category": "typing",
+    },
+    {
+        "id": "cc_paper_page_turn",
+        "title": "Paper Page Turn",
+        "author": "CortaCerto",
+        "duration_s": 1.05,
+        "category": "paper",
+    },
+    {
+        "id": "cc_pencil_draw_reveal",
+        "title": "Pencil Draw Reveal",
+        "author": "CortaCerto",
+        "duration_s": 1.45,
+        "category": "draw",
+    },
+    {
+        "id": "cc_soft_whoosh_text",
+        "title": "Soft Whoosh Text",
+        "author": "CortaCerto",
+        "duration_s": 0.85,
+        "category": "transition",
+    },
+    {
+        "id": "cc_pop_bubble_ui",
+        "title": "Pop Bubble UI",
+        "author": "CortaCerto",
+        "duration_s": 0.55,
+        "category": "ui",
+    },
+    {
+        "id": "cc_notification_chime",
+        "title": "Notification Chime",
+        "author": "CortaCerto",
+        "duration_s": 1.0,
+        "category": "ui",
+    },
+)
 
 
 def stock_cache_root() -> Path:
@@ -92,6 +148,19 @@ def search_stock_assets(provider: str, query: str, media_type: str, per_page: in
         raise ValueError("Fonte de midia desconhecida")
     if not query:
         return []
+    if provider == "cortacerto":
+        _ensure_builtin_sfx_assets()
+        q = query.lower()
+        return [
+            asset for asset in list_downloaded_assets()
+            if asset.get("provider") == "cortacerto"
+            and asset.get("type") == "audio"
+            and (
+                q in str(asset.get("title") or "").lower()
+                or q in str(asset.get("category") or "").lower()
+                or q in "generated local sfx magic typing paper draw transition ui"
+            )
+        ][:per_page]
 
     if provider == "pexels":
         return _search_pexels(query, media_type, per_page)
@@ -105,6 +174,7 @@ def search_stock_assets(provider: str, query: str, media_type: str, per_page: in
 
 
 def list_downloaded_assets() -> list[dict[str, Any]]:
+    _ensure_builtin_sfx_assets()
     assets: list[dict[str, Any]] = []
     for metadata_path in stock_cache_root().glob("*/*/*.json"):
         try:
@@ -116,6 +186,94 @@ def list_downloaded_assets() -> list[dict[str, Any]]:
             assets.append(data)
     assets.sort(key=lambda item: str(item.get("downloaded_at") or ""), reverse=True)
     return assets
+
+
+def _ensure_builtin_sfx_assets() -> None:
+    root = stock_cache_root() / "cortacerto" / "audio"
+    root.mkdir(parents=True, exist_ok=True)
+    for spec in BUILTIN_SFX:
+        asset_id = str(spec["id"])
+        wav_path = root / f"{asset_id}.wav"
+        meta_path = wav_path.with_suffix(".wav.json")
+        duration_s = float(spec["duration_s"])
+        if not wav_path.is_file():
+            _write_builtin_sfx_wav(wav_path, asset_id, duration_s)
+        metadata = {
+            "id": asset_id,
+            "provider": "cortacerto",
+            "type": "audio",
+            "title": str(spec["title"]),
+            "author": str(spec["author"]),
+            "license": "CortaCerto Generated SFX - royalty-free local",
+            "source_url": "local://cortacerto/generated-sfx",
+            "download_url": "",
+            "thumbnail_url": "",
+            "duration_s": duration_s,
+            "width": None,
+            "height": None,
+            "local_path": str(wav_path),
+            "metadata_path": str(meta_path),
+            "downloaded_at": "builtin",
+            "category": str(spec.get("category") or "sfx"),
+        }
+        try:
+            meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            continue
+
+
+def _write_builtin_sfx_wav(path: Path, asset_id: str, duration_s: float) -> None:
+    sample_rate = 44100
+    total = max(1, int(sample_rate * duration_s))
+    rnd = random.Random(asset_id)
+    samples: list[int] = []
+    for i in range(total):
+        t = i / sample_rate
+        x = 0.0
+        if "magic" in asset_id:
+            env = max(0.0, 1.0 - t / duration_s)
+            x += 0.34 * env * math.sin(2 * math.pi * (880 + 260 * t) * t)
+            x += 0.22 * env * math.sin(2 * math.pi * (1320 + 520 * t) * t)
+            if int(t * 24) % 5 == 0:
+                x += 0.08 * env * (rnd.random() * 2 - 1)
+        elif "typing" in asset_id:
+            hit = int(t * 15)
+            local = (t * 15) - hit
+            if local < 0.055:
+                env = (1 - local / 0.055) ** 2
+                x += 0.46 * env * (rnd.random() * 2 - 1)
+                x += 0.15 * env * math.sin(2 * math.pi * 2300 * t)
+        elif "paper" in asset_id:
+            env = math.sin(min(1.0, t / duration_s) * math.pi)
+            sweep = 400 + 1800 * (t / duration_s)
+            x += 0.16 * env * math.sin(2 * math.pi * sweep * t)
+            x += 0.28 * env * (rnd.random() * 2 - 1)
+        elif "pencil" in asset_id:
+            env = 0.55 + 0.45 * math.sin(2 * math.pi * 5 * t)
+            x += 0.24 * env * (rnd.random() * 2 - 1)
+            x += 0.08 * math.sin(2 * math.pi * 1750 * t)
+        elif "whoosh" in asset_id:
+            p = t / duration_s
+            env = math.sin(p * math.pi)
+            x += 0.33 * env * (rnd.random() * 2 - 1)
+            x += 0.18 * env * math.sin(2 * math.pi * (250 + 1700 * p) * t)
+        elif "pop" in asset_id:
+            env = max(0.0, 1.0 - t / duration_s) ** 4
+            x += 0.48 * env * math.sin(2 * math.pi * (220 + 900 * t) * t)
+        elif "chime" in asset_id:
+            env = max(0.0, 1.0 - t / duration_s) ** 1.6
+            x += 0.28 * env * math.sin(2 * math.pi * 660 * t)
+            x += 0.22 * env * math.sin(2 * math.pi * 990 * t)
+            x += 0.14 * env * math.sin(2 * math.pi * 1320 * t)
+        else:
+            x = 0.15 * math.sin(2 * math.pi * 440 * t)
+        samples.append(int(max(-1.0, min(1.0, x)) * 32767))
+
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(b"".join(int(v).to_bytes(2, "little", signed=True) for v in samples))
 
 
 def download_stock_asset(asset: dict[str, Any]) -> dict[str, Any]:

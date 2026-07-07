@@ -17,6 +17,125 @@ from .video_effects import apply_video_effects_bgr
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
 
+def render_person_removal_pass(
+    input_video: str,
+    output_video: str,
+    strength: float = 72.0,
+    feather: float = 10.0,
+    cancel: Optional[threading.Event] = None,
+    on_progress: Optional[Callable[[str, float], None]] = None,
+) -> str:
+    """Remove the main moving person with segmentation + inpainting."""
+    strength = max(10.0, min(100.0, float(strength or 72.0)))
+    feather = max(0.0, min(30.0, float(feather or 10.0)))
+    cancel = cancel or threading.Event()
+
+    cap = cv2.VideoCapture(input_video)
+    if not cap.isOpened():
+        raise RuntimeError("Não foi possível abrir o segmento para remover pessoa.")
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = max(1.0, cap.get(cv2.CAP_PROP_FPS))
+    total_frames = max(1, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
+    encoder, enc_args = detect_video_encoder()
+    temp_video = f"{output_video}.person.mp4"
+
+    if on_progress:
+        on_progress(f"Remoção de pessoa | Encode: {encoder}.", 0.0)
+
+    cmd = [
+        ffmpeg(),
+        "-loglevel", "error",
+        "-nostats",
+        "-y",
+        "-f", "rawvideo",
+        "-pix_fmt", "bgr24",
+        "-s:v", f"{width}x{height}",
+        "-r", f"{fps:.6f}",
+        "-i", "-",
+        "-an",
+        "-c:v", encoder, *enc_args,
+        "-pix_fmt", "yuv420p",
+        temp_video,
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    stderr_chunks: list[bytes] = []
+
+    def _drain_stderr() -> None:
+        try:
+            while proc.stderr:
+                chunk = proc.stderr.read(8192)
+                if not chunk:
+                    break
+                stderr_chunks.append(chunk)
+        except Exception:
+            pass
+
+    threading.Thread(target=_drain_stderr, daemon=True).start()
+
+    try:
+        frame_index = 0
+        while True:
+            if cancel.is_set():
+                raise CancelledError("cancelled")
+            ok, frame_bgr = cap.read()
+            if not ok or frame_bgr is None:
+                break
+            rendered = _apply_person_removal_bgr(frame_bgr, strength, feather)
+            if proc.stdin is None:
+                raise RuntimeError("Pipe do encoder indisponível.")
+            proc.stdin.write(rendered.tobytes())
+            frame_index += 1
+            if on_progress and frame_index % 10 == 0:
+                on_progress(
+                    f"Remoção de pessoa | Frame {frame_index}/{total_frames}",
+                    frame_index / total_frames,
+                )
+    except Exception:
+        with contextlib.suppress(Exception):
+            if proc.stdin:
+                proc.stdin.close()
+        with contextlib.suppress(Exception):
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+        raise
+    finally:
+        cap.release()
+
+    with contextlib.suppress(Exception):
+        if proc.stdin:
+            proc.stdin.close()
+    ret = proc.wait(timeout=max(30, total_frames // max(1, int(fps)) * 6))
+    if ret != 0:
+        tail = b"".join(stderr_chunks).decode("utf-8", errors="replace")[-1200:]
+        raise RuntimeError(f"Falha ao remover pessoa.\n{tail}")
+
+    with ProcessManager(cancel) as pm:
+        pm.run_checked(
+            [
+                ffmpeg(), "-y",
+                "-i", temp_video,
+                "-i", input_video,
+                "-map", "0:v:0",
+                "-map", "1:a:0?",
+                "-c:v", "copy",
+                "-c:a", "copy",
+                "-shortest",
+                output_video,
+            ],
+            context="mux remoção de pessoa",
+            timeout_s=max(60.0, total_frames / fps * 4.0),
+        )
+    with contextlib.suppress(OSError):
+        import os
+        os.remove(temp_video)
+    if on_progress:
+        on_progress("Pessoa removida do segmento.", 1.0)
+    return output_video
+
+
 def render_clip_source_pass(
     input_video: str,
     output_video: str,
@@ -315,6 +434,50 @@ def _apply_color_correction_bgr(frame: object, brightness: float, contrast: floa
         hsv[:, :, 1] = np.clip(hsv[:, :, 1] * s_factor, 0, 255)
         f = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
     return f
+
+
+def _apply_person_removal_bgr(frame_bgr: object, strength: float, feather: float) -> object:
+    try:
+        from PIL import Image
+        from .segmentation import detect_face, segment_person
+
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        pil = Image.fromarray(rgb)
+        face_box = detect_face(pil)
+        _rgba, alpha = segment_person(
+            pil,
+            face_box=face_box,
+            feather_radius=max(0, int(round(feather))),
+            work_resolution=512,
+        )
+        if alpha is None:
+            return frame_bgr
+        mask = np.asarray(alpha, dtype=np.uint8)
+        if mask.shape[:2] != frame_bgr.shape[:2]:
+            mask = cv2.resize(mask, (frame_bgr.shape[1], frame_bgr.shape[0]), interpolation=cv2.INTER_LINEAR)
+        threshold = max(18, int(150 - strength * 1.1))
+        mask = (mask >= threshold).astype(np.uint8) * 255
+        if cv2.countNonZero(mask) < 16:
+            return frame_bgr
+
+        dilate_px = max(1, int(round(strength / 18.0)))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_px * 2 + 1, dilate_px * 2 + 1))
+        hard_mask = cv2.dilate(mask, kernel, iterations=1)
+
+        radius = max(3, int(round(strength / 18.0)))
+        filled = cv2.inpaint(frame_bgr, hard_mask, radius, cv2.INPAINT_TELEA)
+
+        soft_mask = hard_mask.astype(np.float32) / 255.0
+        if feather > 0.0:
+            k = max(3, int(feather) * 2 + 1)
+            if k % 2 == 0:
+                k += 1
+            soft_mask = cv2.GaussianBlur(soft_mask, (k, k), 0)
+        soft_mask = np.clip(soft_mask * (strength / 100.0), 0.0, 1.0)[:, :, None]
+        out = frame_bgr.astype(np.float32) * (1.0 - soft_mask) + filled.astype(np.float32) * soft_mask
+        return np.clip(out, 0, 255).astype(np.uint8)
+    except Exception:
+        return frame_bgr
 
 
 def _option_opacity_factor(option: dict[str, object]) -> float:

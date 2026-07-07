@@ -42,11 +42,16 @@ export interface Clip {
   scale_pct: number
   opacity_pct: number
   transition: string
+  transition_duration_s?: number
+  compound_id?: string
+  compound_label?: string
   // text clip fields
   text_overlay?:         string
   text_position_x_pct?: number
   text_position_y_pct?: number
   text_size_pct?:        number
+  text_side_margin_pct?: number
+  text_line_spacing?:    number
   text_color?:           string
   text_bold?:            boolean
   text_italic?:          boolean
@@ -61,6 +66,7 @@ export interface Clip {
   text_stroke_color?:       string
   text_stroke_width?:       number   // px
   text_shadow_enabled?:     boolean
+  text_shadow_color?:       string
   // chroma key
   chroma_enabled?:   boolean
   chroma_color?:     string
@@ -81,6 +87,60 @@ export interface Clip {
   exposure?:     number   // -100..+100, multiplies output
   sharpness?:    number   // 0..100, sharpness boost
   vignette?:     number   // 0..100, dark vignette intensity
+  blur_type?:    'none' | 'gaussian' | 'box' | 'pixelate'
+  blur_intensity?: number  // 0..100
+  blur_direction?: 'both' | 'horizontal' | 'vertical'
+  person_remove_enabled?: boolean
+  person_remove_strength?: number
+  person_remove_feather?: number
+  // Advanced color panel (CapCut-like) persisted fields
+  color_hsl_grid?: {
+    master_hue?: number
+    master_sat?: number
+    master_luma?: number
+    red_hue?: number
+    red_sat?: number
+    red_luma?: number
+    yellow_hue?: number
+    yellow_sat?: number
+    yellow_luma?: number
+    green_hue?: number
+    green_sat?: number
+    green_luma?: number
+    cyan_hue?: number
+    cyan_sat?: number
+    cyan_luma?: number
+    blue_hue?: number
+    blue_sat?: number
+    blue_luma?: number
+    magenta_hue?: number
+    magenta_sat?: number
+    magenta_luma?: number
+  }
+  color_curves_grid?: {
+    shadows?: number
+    midtones?: number
+    highlights?: number
+    fade?: number
+  }
+  color_wheels_grid?: {
+    shadow_hue?: number
+    shadow_intensity?: number
+    mid_hue?: number
+    mid_intensity?: number
+    high_hue?: number
+    high_intensity?: number
+  }
+  color_mask_grid?: {
+    skin_tone_protect?: boolean
+    skin_tone_strength?: number
+    vignette_mask?: number
+  }
+  lut_preset_name?: string
+  lut_intensity?: number
+  ai_premium_auto?: boolean
+  ai_premium_palette?: boolean
+  ai_premium_correct?: boolean
   crop_top_pct: number
   crop_bottom_pct: number
   crop_left_pct: number
@@ -101,6 +161,16 @@ export interface Clip {
   animation_out?:          string
   animation_in_duration_s?:  number   // seconds (0..2)
   animation_out_duration_s?: number
+  // Optional motion keyframes sampled on the clip local timeline (seconds from clip.start_s).
+  motion_keyframes?: Array<{
+    t: number
+    easing?: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out'
+    position_x?: number
+    position_y?: number
+    scale_pct?: number
+    opacity_pct?: number
+    volume_pct?: number
+  }>
 }
 
 export interface Track {
@@ -160,12 +230,19 @@ export interface ProjectState {
   // Per-source proxy paths for appended videos (HEVC/VP9 etc. need transcoding).
   // Key = original source_path, value = local H.264 proxy path (or empty string).
   source_proxies?: Record<string, string>
+  timeline_markers?: Array<{
+    id: string
+    time_s: number
+    label: string
+    color: string
+  }>
 }
 
 export interface TrackState {
   locked: boolean
   hidden: boolean
   muted:  boolean
+  solo:   boolean
 }
 
 export interface ExportSettings {
@@ -185,14 +262,14 @@ const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   silenceEnabled: false,
   silenceStyle:   'natural',
   platform:       'youtube',
-  normalizeAudio: true,
+  normalizeAudio: false,
 }
 
 const DEFAULT_TRACK_STATES: Record<string, TrackState> = {
-  video:   { locked: false, hidden: false, muted: false },
-  audio:   { locked: false, hidden: false, muted: false },
-  text:    { locked: false, hidden: false, muted: false },
-  overlay: { locked: false, hidden: false, muted: false },
+  video:   { locked: false, hidden: false, muted: false, solo: false },
+  audio:   { locked: false, hidden: false, muted: false, solo: false },
+  text:    { locked: false, hidden: false, muted: false, solo: false },
+  overlay: { locked: false, hidden: false, muted: false, solo: false },
 }
 
 interface AppStore {
@@ -200,6 +277,7 @@ interface AppStore {
   selectedClipId:    string | null
   selectedClipIds:   string[]       // multi-select (Ctrl+Click)
   snapEnabled:       boolean        // snap clips to edges/playhead when dragging
+  rippleMode:        boolean        // when true, delete closes gaps (ripple delete)
   activeLeftTab:     string
   isRendering:       boolean
   renderProgress:    number
@@ -213,7 +291,11 @@ interface AppStore {
   clipboardClip:  Clip | null
   isDirty:        boolean          // unsaved changes exist
   projectName:    string | null    // editable in Header
+  projectFilePath: string | null   // current .ccproj path for quick save
   workspaceLayout: WorkspaceLayout
+  captionPreviewEnabled: boolean
+  captionPreviewText: string
+  captionPreviewStyle: Partial<Clip> | null
 
   // Undo / redo history (structural edits only — split, delete)
   past:   ProjectState[]
@@ -222,19 +304,30 @@ interface AppStore {
   setProject:          (p: ProjectState) => void
   setWorkspaceLayout:  (layout: WorkspaceLayout) => void
   setProjectName:      (name: string) => void
+  setProjectFilePath:  (path: string | null) => void
   setProxyStatus:      (status: ProjectState['proxy_status'], path?: string) => void
   markSaved:           () => void
   setTrackState:       (trackId: string, patch: Partial<TrackState>) => void
   setExportSetting:    <K extends keyof ExportSettings>(key: K, val: ExportSettings[K]) => void
   copyClip:            (id: string) => void
   pasteClip:           () => void
+  duplicateSelectionAtPlayhead: () => void
   addTextClip:         (startS: number, endS: number, text: string, style?: Partial<Clip>) => void
+  addStickerClip:      (startS: number, endS: number, sticker: { id: string; label: string; emoji: string; bg: string; fg: string }) => void
+  applyTextStyle:      (style: Partial<Clip>, ids?: string[]) => void
+  clearTextClips:      (ids?: string[]) => void
   updateClip:          (id: string, patch: Partial<Clip>) => void
   splitClip:           (id: string, atTime: number) => void
   deleteClip:          (id: string) => void
   rippleDelete:        (id: string) => void
+  closeGapAfterClip:   (id: string) => void
+  compileSelectedClips: () => void
+  uncompileSelectedClips: () => void
+  addTimelineMarker:   (timeS: number, label?: string) => void
+  removeTimelineMarker: (id: string) => void
   importAudio:         (path: string, durationS: number, waveform?: number[]) => void
   importImage:         (path: string, durationS?: number) => void
+  importOverlayVideo:  (path: string, durationS?: number) => void
   /** Add a transparent Adjustment Layer (clip_type='adjustment') on the overlay
    *  track. Affects clips below it on the timeline via color grading. */
   addAdjustmentLayer:  (durationS?: number) => void
@@ -246,11 +339,13 @@ interface AppStore {
   toggleClipSelection:   (id: string) => void
   clearSelection:        () => void
   setSnapEnabled:        (v: boolean) => void
+  setRippleMode:         (v: boolean) => void
   setAspectRatio:        (ratio: AspectRatio) => void
   // Multi-track (Phase 2b)
   addExtraTrack:         (type: 'video' | 'audio') => void
   removeExtraTrack:      (type: 'video' | 'audio', index: number) => void
   moveClipToTrack:       (clipId: string, target: { kind: 'video' | 'audio'; index: number }) => void
+  renameTrack:           (target: { kind: 'video' | 'audio' | 'text' | 'overlay'; index: number }, name: string) => void
   setActiveLeftTab:    (tab: string) => void
   setRenderProgress:   (p: number) => void
   setRenderMessage:    (m: string) => void
@@ -259,12 +354,44 @@ interface AppStore {
   setRenderError:      (err: string | null) => void
   setPreviewTime:      (t: number) => void
   setTimelineZoom:     (z: number) => void
+  setCaptionPreview:   (enabled: boolean, text?: string, style?: Partial<Clip> | null) => void
+}
+
+export function buildPersistableProject(
+  project: ProjectState,
+  projectName?: string | null,
+  projectFilePath?: string | null,
+): ProjectState & { _projectName?: string; _projectPath?: string; project_path?: string } {
+  const fallbackName =
+    projectName
+    ?? project.videoPath?.replace(/\\/g, '/').split('/').pop()?.replace(/\.[^.]+$/, '')
+    ?? projectFilePath?.replace(/\\/g, '/').split('/').pop()?.replace(/\.[^.]+$/, '')
+    ?? 'Projeto'
+  return {
+    ...project,
+    _projectName: fallbackName,
+    _projectPath: projectFilePath ?? undefined,
+    project_path: projectFilePath ?? undefined,
+  }
 }
 
 // (patchTrack was the legacy single-clip patcher; updateClip now uses patchAll
 // inline to cascade time patches to linked pairs.)
 
 const MAX_HISTORY = 50
+
+function sanitizeTextStylePatch(style: Partial<Clip>): Partial<Clip> {
+  const patch: Partial<Clip> = { ...style }
+  // Styling updates must never overwrite caption content or structural fields.
+  delete (patch as any).text_overlay
+  delete (patch as any).label
+  delete (patch as any).id
+  delete (patch as any).start_s
+  delete (patch as any).end_s
+  delete (patch as any).clip_type
+  delete (patch as any).source_path
+  return patch
+}
 
 function clipEndDuration(project: ProjectState | null): number {
   if (!project) return 0
@@ -287,6 +414,80 @@ function withTimelineDuration(project: ProjectState, minimum = 0): ProjectState 
   }
 }
 
+function sourceTimeAtProjectTime(clip: Clip, projectTime: number): number {
+  const speed = Math.max(0.05, Number(clip.speed_factor ?? 1))
+  const sourceStart = clip.start_s - (clip.source_offset_s ?? 0)
+  return sourceStart + (projectTime - clip.start_s) * speed
+}
+
+function shiftClipByTimelineDelta(c: Clip, delta: number): Clip {
+  const next: Clip = {
+    ...c,
+    start_s: Math.max(0, c.start_s + delta),
+    end_s: Math.max(0, c.end_s + delta),
+  }
+  if (c.source_path) {
+    next.source_offset_s = Math.round(((c.source_offset_s ?? 0) + delta) * 1000) / 1000
+  }
+  return next
+}
+
+function rippleTrackByIds(track: Track, ids: Set<string>): Track {
+  const removed = track.clips
+    .filter((c) => ids.has(c.id))
+    .sort((a, b) => a.start_s - b.start_s)
+  if (removed.length === 0) return track
+  const clips = track.clips
+    .filter((c) => !ids.has(c.id))
+    .map((c) => {
+      const shift = removed.reduce((total, r) => (
+        c.start_s >= r.end_s ? total + Math.max(0, r.end_s - r.start_s) : total
+      ), 0)
+      return shift > 0
+        ? shiftClipByTimelineDelta(c, -shift)
+        : c
+    })
+  return { ...track, clips }
+}
+
+function shiftTrackFrom(track: Track, fromTime: number, delta: number): Track {
+  if (Math.abs(delta) < 0.0001) return track
+  return {
+    ...track,
+    clips: track.clips.map((c) => (
+      c.start_s >= fromTime - 0.0001
+        ? shiftClipByTimelineDelta(c, delta)
+        : c
+    )),
+  }
+}
+
+function findClipTrack(project: ProjectState, id: string): Track | null {
+  const tracks: Track[] = [
+    project.video_track,
+    project.audio_track,
+    project.text_track,
+    project.overlay_track,
+    ...(project.extra_video_tracks ?? []),
+    ...(project.extra_audio_tracks ?? []),
+    ...(project.extra_overlay_tracks ?? []),
+  ]
+  return tracks.find((track) => track.clips.some((clip) => clip.id === id)) ?? null
+}
+
+function mapProjectTracks(project: ProjectState, mapper: (track: Track) => Track): ProjectState {
+  return {
+    ...project,
+    video_track: mapper(project.video_track),
+    audio_track: mapper(project.audio_track),
+    text_track: mapper(project.text_track),
+    overlay_track: mapper(project.overlay_track),
+    extra_video_tracks: project.extra_video_tracks?.map(mapper),
+    extra_audio_tracks: project.extra_audio_tracks?.map(mapper),
+    extra_overlay_tracks: project.extra_overlay_tracks?.map(mapper),
+  }
+}
+
 // O10: Adaptive undo — fewer history entries for large projects to save memory.
 function maxHistory(project: ProjectState | null): number {
   if (!project) return MAX_HISTORY
@@ -304,6 +505,7 @@ export const useStore = create<AppStore>((set) => ({
   selectedClipId:    null,
   selectedClipIds:   [],
   snapEnabled:       true,
+  rippleMode:        false,
   activeLeftTab:     'media',
   isRendering:       false,
   renderProgress:    0,
@@ -317,12 +519,16 @@ export const useStore = create<AppStore>((set) => ({
   clipboardClip:     null,
   isDirty:           false,
   projectName:       null,
+  projectFilePath:   null,
   workspaceLayout:   'default',
+  captionPreviewEnabled: false,
+  captionPreviewText: 'Exemplo de legenda automatica',
+  captionPreviewStyle: null,
   past:              [],
   future:            [],
 
   setProject: (p) => set(() => {
-    const { _projectName, ...rest } = p as any
+    const { _projectName, _projectPath, project_path, ...rest } = p as any
     const cleanProjectBase: ProjectState = {
       loaded:         rest.loaded ?? true,
       videoPath:      rest.videoPath ?? null,
@@ -342,6 +548,7 @@ export const useStore = create<AppStore>((set) => ({
       proxy_path:     rest.proxy_path,
       source_proxies: rest.source_proxies ?? {},
       aspect_ratio:   rest.aspect_ratio   ?? '16:9',
+      timeline_markers: Array.isArray(rest.timeline_markers) ? rest.timeline_markers : [],
     }
     const cleanProject = withTimelineDuration(cleanProjectBase, cleanProjectBase.duration_s)
     const derivedName = cleanProject.videoPath?.replace(/\\/g, '/').split('/').pop()?.replace(/\.[^.]+$/, '') ?? null
@@ -354,11 +561,15 @@ export const useStore = create<AppStore>((set) => ({
       trackStates: { ...DEFAULT_TRACK_STATES },
       isDirty: false,
       projectName: (_projectName as string | undefined) ?? derivedName,
+      projectFilePath: (_projectPath as string | undefined) ?? (project_path as string | undefined) ?? null,
+      captionPreviewEnabled: false,
+      captionPreviewStyle: null,
     }
   }),
 
   setWorkspaceLayout: (layout) => set({ workspaceLayout: layout }),
   setProjectName: (name) => set({ projectName: name, isDirty: true }),
+  setProjectFilePath: (path) => set({ projectFilePath: path }),
   setProxyStatus: (status, path) => set((state) => state.project ? ({
     project: { ...state.project, proxy_status: status, proxy_path: path ?? state.project.proxy_path },
   }) : {}),
@@ -367,7 +578,7 @@ export const useStore = create<AppStore>((set) => ({
     trackStates: {
       ...state.trackStates,
       [trackId]: {
-        ...(state.trackStates[trackId] ?? DEFAULT_TRACK_STATES[trackId] ?? { locked: false, hidden: false, muted: false }),
+        ...(state.trackStates[trackId] ?? DEFAULT_TRACK_STATES[trackId] ?? { locked: false, hidden: false, muted: false, solo: false }),
         ...patch,
       },
     },
@@ -387,6 +598,7 @@ export const useStore = create<AppStore>((set) => ({
       scale_pct: 100,
       opacity_pct: 100,
       transition: 'Corte',
+      transition_duration_s: 0.4,
       brightness: 0,
       contrast: 0,
       saturation: 0,
@@ -401,6 +613,7 @@ export const useStore = create<AppStore>((set) => ({
       text_position_x_pct: 0,
       text_position_y_pct: 72,
       text_size_pct: 100,
+      text_side_margin_pct: 5,
       text_color: '#ffffff',
       text_bold: false,
       text_italic: false,
@@ -423,13 +636,130 @@ export const useStore = create<AppStore>((set) => ({
     }
   }),
 
+  addStickerClip: (startS, endS, sticker) => set((state) => {
+    if (!state.project) return {}
+    const newClip: Clip = {
+      id: `stk_${Date.now().toString(36)}`,
+      start_s: startS,
+      end_s: endS,
+      clip_type: 'sticker',
+      label: sticker.label || 'Sticker',
+      source_path: `sticker:${sticker.id}`,
+      text_overlay: sticker.emoji,
+      volume_pct: 0,
+      scale_pct: 100,
+      opacity_pct: 100,
+      transition: 'Corte',
+      transition_duration_s: 0.4,
+      brightness: 0,
+      contrast: 0,
+      saturation: 0,
+      crop_top_pct: 0,
+      crop_bottom_pct: 0,
+      crop_left_pct: 0,
+      crop_right_pct: 0,
+      speed_factor: 1,
+      rotation_deg: 0,
+      blend_mode: 'Normal',
+      z_order: 14,
+      text_position_x_pct: 0,
+      text_position_y_pct: 55,
+      text_size_pct: 130,
+      text_color: sticker.fg || '#ffffff',
+      text_background_enabled: true,
+      text_background_color: sticker.bg || '#111827',
+      text_background_alpha: 0.9,
+      text_shadow_enabled: true,
+      text_stroke_enabled: false,
+      text_bold: false,
+      text_align: 'center',
+      chroma_enabled: false,
+      chroma_color: '#00ff00',
+      chroma_tolerance: 45,
+      position_x: 0,
+      position_y: 0,
+    }
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      selectedClipId: newClip.id,
+      selectedClipIds: [newClip.id],
+      project: withTimelineDuration({
+        ...state.project,
+        overlay_track: { ...state.project.overlay_track, clips: [...state.project.overlay_track.clips, newClip] },
+      }, state.project.duration_s),
+    }
+  }),
+
+  applyTextStyle: (style, ids) => set((state) => {
+    if (!state.project) return {}
+    const safeStyle = sanitizeTextStylePatch(style)
+    if (Object.keys(safeStyle).length === 0) return {}
+    const targetIds = new Set<string>(
+      (ids && ids.length > 0)
+        ? ids
+        : state.project.text_track.clips.map((c) => c.id),
+    )
+    if (targetIds.size === 0) return {}
+    return {
+      isDirty: true,
+      project: {
+        ...state.project,
+        text_track: {
+          ...state.project.text_track,
+          clips: state.project.text_track.clips.map((c) => (
+            targetIds.has(c.id) ? { ...c, ...safeStyle } : c
+          )),
+        },
+      },
+    }
+  }),
+
+  clearTextClips: (ids) => set((state) => {
+    if (!state.project) return {}
+    const targetIds = new Set<string>(
+      (ids && ids.length > 0)
+        ? ids
+        : state.project.text_track.clips.map((c) => c.id),
+    )
+    if (targetIds.size === 0) return {}
+    const project = withTimelineDuration({
+      ...state.project,
+      text_track: {
+        ...state.project.text_track,
+        clips: state.project.text_track.clips.filter((c) => !targetIds.has(c.id)),
+      },
+    })
+    const selectedClipId = state.selectedClipId && targetIds.has(state.selectedClipId)
+      ? null
+      : state.selectedClipId
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      selectedClipId,
+      selectedClipIds: state.selectedClipIds.filter((id) => !targetIds.has(id)),
+      project,
+    }
+  }),
+
   updateClip: (id, patch) => set((state) => {
     if (!state.project) return {}
-    const isTimePatch = 'start_s' in patch || 'end_s' in patch
+    const isSpeedPatch = 'speed_factor' in patch
+    const isTimePatch = 'start_s' in patch || 'end_s' in patch || isSpeedPatch
     const ids = new Set<string>(isTimePatch ? getLinkedClipIds(id, state.project) : [id])
+    const patchForClip = (c: Clip): Partial<Clip> => {
+      if (!ids.has(c.id)) return {}
+      if (!isSpeedPatch || 'end_s' in patch) return patch
+      const oldSpeed = Math.max(0.05, Number(c.speed_factor ?? 1))
+      const newSpeed = Math.max(0.05, Number(patch.speed_factor ?? 1))
+      const sourceDuration = Math.max(0.01, (c.end_s - c.start_s) * oldSpeed)
+      return { ...patch, end_s: c.start_s + sourceDuration / newSpeed }
+    }
     const patchTrack = (track: Track): Track => ({
       ...track,
-      clips: track.clips.map((c) => ids.has(c.id) ? { ...c, ...patch } : c),
+      clips: track.clips.map((c) => ids.has(c.id) ? { ...c, ...patchForClip(c) } : c),
     })
     const patchedProject: ProjectState = {
       ...state.project,
@@ -441,7 +771,12 @@ export const useStore = create<AppStore>((set) => ({
       extra_audio_tracks: state.project.extra_audio_tracks?.map(patchTrack),
       extra_overlay_tracks: state.project.extra_overlay_tracks?.map(patchTrack),
     }
-    return { isDirty: true, project: isTimePatch ? withTimelineDuration(patchedProject) : patchedProject }
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      project: isTimePatch ? withTimelineDuration(patchedProject) : patchedProject,
+    }
   }),
 
   splitClip: (id, atTime) => set((state) => {
@@ -452,7 +787,11 @@ export const useStore = create<AppStore>((set) => ({
       clips: track.clips.flatMap((c) => {
         if (!linkedIds.has(c.id) || atTime <= c.start_s || atTime >= c.end_s) return [c]
         const suffix = Date.now().toString(36)
-        return [{ ...c, end_s: atTime }, { ...c, id: `${c.id}_${suffix}`, start_s: atTime }]
+        const right: Clip = { ...c, id: `${c.id}_${suffix}`, start_s: atTime }
+        if (c.source_path) {
+          right.source_offset_s = atTime - sourceTimeAtProjectTime(c, atTime)
+        }
+        return [{ ...c, end_s: atTime }, right]
       }),
     })
     const project = withTimelineDuration({
@@ -470,6 +809,31 @@ export const useStore = create<AppStore>((set) => ({
 
   deleteClip: (id) => set((state) => {
     if (!state.project) return {}
+    if (state.rippleMode) {
+      const roots = state.selectedClipIds.length > 1 ? state.selectedClipIds : [id]
+      const ids = new Set<string>()
+      for (const root of roots) {
+        for (const linked of getLinkedClipIds(root, state.project)) ids.add(linked)
+      }
+      const project = withTimelineDuration({
+        ...state.project,
+        video_track: rippleTrackByIds(state.project.video_track, ids),
+        audio_track: rippleTrackByIds(state.project.audio_track, ids),
+        text_track: rippleTrackByIds(state.project.text_track, ids),
+        overlay_track: rippleTrackByIds(state.project.overlay_track, ids),
+        extra_video_tracks: state.project.extra_video_tracks?.map((track) => rippleTrackByIds(track, ids)),
+        extra_audio_tracks: state.project.extra_audio_tracks?.map((track) => rippleTrackByIds(track, ids)),
+        extra_overlay_tracks: state.project.extra_overlay_tracks?.map((track) => rippleTrackByIds(track, ids)),
+      })
+      return {
+        past: [...state.past, state.project].slice(-maxHistory(state.project)),
+        future: [],
+        isDirty: true,
+        selectedClipId: null,
+        selectedClipIds: [],
+        project,
+      }
+    }
     const ids = new Set<string>()
     for (const cid of (state.selectedClipIds.length > 1 ? state.selectedClipIds : [id])) {
       for (const linked of getLinkedClipIds(cid, state.project)) ids.add(linked)
@@ -498,26 +862,15 @@ export const useStore = create<AppStore>((set) => ({
   rippleDelete: (id) => set((state) => {
     if (!state.project) return {}
     const ids = new Set(getLinkedClipIds(id, state.project))
-    const rippleTrack = (track: Track): Track => {
-      const removed = track.clips.find((c) => ids.has(c.id))
-      if (!removed) return track
-      const gap = removed.end_s - removed.start_s
-      return {
-        ...track,
-        clips: track.clips
-          .filter((c) => !ids.has(c.id))
-          .map((c) => c.start_s >= removed.end_s ? { ...c, start_s: c.start_s - gap, end_s: c.end_s - gap } : c),
-      }
-    }
     const project = withTimelineDuration({
       ...state.project,
-      video_track: rippleTrack(state.project.video_track),
-      audio_track: rippleTrack(state.project.audio_track),
-      text_track: rippleTrack(state.project.text_track),
-      overlay_track: rippleTrack(state.project.overlay_track),
-      extra_video_tracks: state.project.extra_video_tracks?.map(rippleTrack),
-      extra_audio_tracks: state.project.extra_audio_tracks?.map(rippleTrack),
-      extra_overlay_tracks: state.project.extra_overlay_tracks?.map(rippleTrack),
+      video_track: rippleTrackByIds(state.project.video_track, ids),
+      audio_track: rippleTrackByIds(state.project.audio_track, ids),
+      text_track: rippleTrackByIds(state.project.text_track, ids),
+      overlay_track: rippleTrackByIds(state.project.overlay_track, ids),
+      extra_video_tracks: state.project.extra_video_tracks?.map((track) => rippleTrackByIds(track, ids)),
+      extra_audio_tracks: state.project.extra_audio_tracks?.map((track) => rippleTrackByIds(track, ids)),
+      extra_overlay_tracks: state.project.extra_overlay_tracks?.map((track) => rippleTrackByIds(track, ids)),
     })
     return {
       past: [...state.past, state.project].slice(-maxHistory(state.project)),
@@ -529,10 +882,132 @@ export const useStore = create<AppStore>((set) => ({
     }
   }),
 
+  closeGapAfterClip: (id) => set((state) => {
+    if (!state.project) return {}
+    const track = findClipTrack(state.project, id)
+    const clip = track?.clips.find((c) => c.id === id)
+    if (!track || !clip) return {}
+    const selection = new Set(state.selectedClipIds.includes(id) ? state.selectedClipIds : [id])
+    const selectedOnTrack = track.clips.filter((c) => selection.has(c.id))
+    const boundaryEnd = selectedOnTrack.length > 0
+      ? Math.max(...selectedOnTrack.map((c) => c.end_s))
+      : clip.end_s
+    const next = track.clips
+      .filter((c) => !selection.has(c.id) && c.start_s >= boundaryEnd + 0.001)
+      .sort((a, b) => a.start_s - b.start_s)[0]
+    if (!next) return {}
+    const gap = Math.max(0, next.start_s - boundaryEnd)
+    if (gap <= 0.001) return {}
+    const project = withTimelineDuration({
+      ...state.project,
+      video_track: shiftTrackFrom(state.project.video_track, next.start_s, -gap),
+      audio_track: shiftTrackFrom(state.project.audio_track, next.start_s, -gap),
+      text_track: shiftTrackFrom(state.project.text_track, next.start_s, -gap),
+      overlay_track: shiftTrackFrom(state.project.overlay_track, next.start_s, -gap),
+      extra_video_tracks: state.project.extra_video_tracks?.map((t) => shiftTrackFrom(t, next.start_s, -gap)),
+      extra_audio_tracks: state.project.extra_audio_tracks?.map((t) => shiftTrackFrom(t, next.start_s, -gap)),
+      extra_overlay_tracks: state.project.extra_overlay_tracks?.map((t) => shiftTrackFrom(t, next.start_s, -gap)),
+    })
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      project,
+    }
+  }),
+
+  compileSelectedClips: () => set((state) => {
+    if (!state.project) return {}
+    const ids = state.selectedClipIds.length > 1
+      ? state.selectedClipIds
+      : state.selectedClipId
+        ? [state.selectedClipId]
+        : []
+    if (ids.length < 2) return {}
+    const target = new Set(ids)
+    const groupId = `compound_${Date.now().toString(36)}`
+    const label = `Compilado ${ids.length} clipes`
+    const project = mapProjectTracks(state.project, (track) => ({
+      ...track,
+      clips: track.clips.map((clip) => target.has(clip.id)
+        ? { ...clip, compound_id: groupId, compound_label: label }
+        : clip),
+    }))
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      project,
+    }
+  }),
+
+  uncompileSelectedClips: () => set((state) => {
+    if (!state.project) return {}
+    const selectedId = state.selectedClipId
+    if (!selectedId) return {}
+    const all = [
+      ...state.project.video_track.clips,
+      ...state.project.audio_track.clips,
+      ...state.project.text_track.clips,
+      ...state.project.overlay_track.clips,
+      ...(state.project.extra_video_tracks ?? []).flatMap((t) => t.clips),
+      ...(state.project.extra_audio_tracks ?? []).flatMap((t) => t.clips),
+      ...(state.project.extra_overlay_tracks ?? []).flatMap((t) => t.clips),
+    ]
+    const selected = all.find((clip) => clip.id === selectedId)
+    const groupId = selected?.compound_id
+    if (!groupId) return {}
+    const project = mapProjectTracks(state.project, (track) => ({
+      ...track,
+      clips: track.clips.map((clip) => clip.compound_id === groupId
+        ? { ...clip, compound_id: undefined, compound_label: undefined }
+        : clip),
+    }))
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      project,
+    }
+  }),
+
+  addTimelineMarker: (timeS, label) => set((state) => {
+    if (!state.project) return {}
+    const markers = state.project.timeline_markers ?? []
+    const colorPool = ['#8B6BFF', '#22d4bc', '#f59e0b', '#f472b6', '#60a5fa']
+    const marker = {
+      id: `marker_${Date.now().toString(36)}`,
+      time_s: Math.max(0, Number(timeS) || 0),
+      label: label || `M${markers.length + 1}`,
+      color: colorPool[markers.length % colorPool.length],
+    }
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      project: {
+        ...state.project,
+        timeline_markers: [...markers, marker].sort((a, b) => a.time_s - b.time_s),
+      },
+    }
+  }),
+
+  removeTimelineMarker: (id) => set((state) => {
+    if (!state.project) return {}
+    const markers = state.project.timeline_markers ?? []
+    if (!markers.some((marker) => marker.id === id)) return {}
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      project: { ...state.project, timeline_markers: markers.filter((marker) => marker.id !== id) },
+    }
+  }),
+
   importAudio: (path, durationS, waveform) => set((state) => {
     if (!state.project) return {}
     const label = path.replace(/\\/g, '/').split('/').pop() ?? 'Audio'
-    const start = Math.max(...state.project.audio_track.clips.map((c) => c.end_s), 0)
+    const start = Math.max(0, state.previewTime ?? 0)
     const newClip: Clip = {
       id: `audio_${Date.now().toString(36)}`,
       start_s: start,
@@ -546,6 +1021,7 @@ export const useStore = create<AppStore>((set) => ({
       scale_pct: 100,
       opacity_pct: 100,
       transition: 'Corte',
+      transition_duration_s: 0.4,
       brightness: 0,
       contrast: 0,
       saturation: 0,
@@ -558,13 +1034,20 @@ export const useStore = create<AppStore>((set) => ({
       blend_mode: 'Normal',
       z_order: 0,
     }
+    const extraAudioTracks = state.project.extra_audio_tracks ?? []
+    const shortLabel = label.length > 34 ? `${label.slice(0, 31)}...` : label
     return {
       past: [...state.past, state.project].slice(-maxHistory(state.project)),
       future: [],
       isDirty: true,
+      selectedClipId: newClip.id,
+      selectedClipIds: [newClip.id],
       project: withTimelineDuration({
         ...state.project,
-        audio_track: { ...state.project.audio_track, clips: [...state.project.audio_track.clips, newClip] },
+        extra_audio_tracks: [
+          ...extraAudioTracks,
+          { name: shortLabel || `Audio ${extraAudioTracks.length + 2}`, clips: [newClip] },
+        ],
       }, state.project.duration_s),
     }
   }),
@@ -584,6 +1067,7 @@ export const useStore = create<AppStore>((set) => ({
       scale_pct: 100,
       opacity_pct: 100,
       transition: 'Corte',
+      transition_duration_s: 0.4,
       brightness: 0,
       contrast: 0,
       saturation: 0,
@@ -595,6 +1079,48 @@ export const useStore = create<AppStore>((set) => ({
       rotation_deg: 0,
       blend_mode: 'Normal',
       z_order: 0,
+    }
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      selectedClipId: newClip.id,
+      selectedClipIds: [newClip.id],
+      project: withTimelineDuration({
+        ...state.project,
+        overlay_track: { ...state.project.overlay_track, clips: [...state.project.overlay_track.clips, newClip] },
+      }, state.project.duration_s),
+    }
+  }),
+
+  importOverlayVideo: (path, durationS = 5) => set((state) => {
+    if (!state.project) return {}
+    const label = path.replace(/\\/g, '/').split('/').pop() ?? 'Overlay'
+    const start = state.previewTime ?? 0
+    const newClip: Clip = {
+      id: `ovv_${Date.now().toString(36)}`,
+      start_s: start,
+      end_s: start + durationS,
+      clip_type: 'video_overlay',
+      label,
+      source_path: path,
+      source_offset_s: 0,
+      volume_pct: 100,
+      scale_pct: 100,
+      opacity_pct: 100,
+      transition: 'Corte',
+      transition_duration_s: 0.4,
+      brightness: 0,
+      contrast: 0,
+      saturation: 0,
+      crop_top_pct: 0,
+      crop_bottom_pct: 0,
+      crop_left_pct: 0,
+      crop_right_pct: 0,
+      speed_factor: 1,
+      rotation_deg: 0,
+      blend_mode: 'Normal',
+      z_order: 12,
     }
     return {
       past: [...state.past, state.project].slice(-maxHistory(state.project)),
@@ -623,6 +1149,7 @@ export const useStore = create<AppStore>((set) => ({
       scale_pct: 100,
       opacity_pct: 100,
       transition: 'Corte',
+      transition_duration_s: 0.4,
       brightness: 0,
       contrast: 0,
       saturation: 0,
@@ -664,6 +1191,7 @@ export const useStore = create<AppStore>((set) => ({
       scale_pct: 100,
       opacity_pct: 100,
       transition: 'Corte',
+      transition_duration_s: 0.4,
       brightness: 0,
       contrast: 0,
       saturation: 0,
@@ -758,14 +1286,99 @@ export const useStore = create<AppStore>((set) => ({
     }, state.project.duration_s)
     return { past: [...state.past, state.project].slice(-maxHistory(state.project)), future: [], isDirty: true, selectedClipId: newClip.id, project }
   }),
+  duplicateSelectionAtPlayhead: () => set((state) => {
+    if (!state.project) return {}
+    const selectedIds = state.selectedClipIds.length > 0
+      ? state.selectedClipIds
+      : state.selectedClipId
+        ? [state.selectedClipId]
+        : []
+    if (selectedIds.length === 0) return {}
+    const selectedSet = new Set(selectedIds)
 
-  setSelectedClip: (id) => set({ selectedClipId: id, selectedClipIds: id ? [id] : [] }),
+    const selectedClips: Clip[] = [
+      ...state.project.video_track.clips,
+      ...state.project.audio_track.clips,
+      ...state.project.text_track.clips,
+      ...state.project.overlay_track.clips,
+      ...(state.project.extra_video_tracks ?? []).flatMap((t) => t.clips),
+      ...(state.project.extra_audio_tracks ?? []).flatMap((t) => t.clips),
+      ...(state.project.extra_overlay_tracks ?? []).flatMap((t) => t.clips),
+    ].filter((c) => selectedSet.has(c.id))
+    if (selectedClips.length === 0) return {}
+
+    const minStart = Math.min(...selectedClips.map((c) => c.start_s))
+    const idSeed = Date.now().toString(36)
+    const idCounter: Record<string, number> = {}
+    const newIds: string[] = []
+
+    const duplicateTrack = (track: Track): Track => {
+      const appended: Clip[] = []
+      for (const clip of track.clips) {
+        if (!selectedSet.has(clip.id)) continue
+        const key = `${clip.id}_${idSeed}`
+        idCounter[key] = (idCounter[key] ?? 0) + 1
+        const dur = Math.max(0.01, clip.end_s - clip.start_s)
+        const offset = clip.start_s - minStart
+        const nextStart = Math.max(0, state.previewTime + offset)
+        const nextEnd = nextStart + dur
+        const clone: Clip = {
+          ...clip,
+          id: `${clip.id}_dup_${idSeed}_${idCounter[key]}`,
+          start_s: nextStart,
+          end_s: nextEnd,
+        }
+        newIds.push(clone.id)
+        appended.push(clone)
+      }
+      if (appended.length === 0) return track
+      return { ...track, clips: [...track.clips, ...appended].sort((a, b) => a.start_s - b.start_s) }
+    }
+
+    const project = withTimelineDuration({
+      ...state.project,
+      video_track: duplicateTrack(state.project.video_track),
+      audio_track: duplicateTrack(state.project.audio_track),
+      text_track: duplicateTrack(state.project.text_track),
+      overlay_track: duplicateTrack(state.project.overlay_track),
+      extra_video_tracks: (state.project.extra_video_tracks ?? []).map(duplicateTrack),
+      extra_audio_tracks: (state.project.extra_audio_tracks ?? []).map(duplicateTrack),
+      extra_overlay_tracks: (state.project.extra_overlay_tracks ?? []).map(duplicateTrack),
+    }, state.project.duration_s)
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      selectedClipId: newIds.length > 0 ? newIds[newIds.length - 1] : state.selectedClipId,
+      selectedClipIds: newIds.length > 0 ? newIds : state.selectedClipIds,
+      project,
+    }
+  }),
+
+  setSelectedClip: (id) => set((state) => {
+    if (!id || !state.project) return { selectedClipId: id, selectedClipIds: id ? [id] : [] }
+    const all = [
+      ...state.project.video_track.clips,
+      ...state.project.audio_track.clips,
+      ...state.project.text_track.clips,
+      ...state.project.overlay_track.clips,
+      ...(state.project.extra_video_tracks ?? []).flatMap((t) => t.clips),
+      ...(state.project.extra_audio_tracks ?? []).flatMap((t) => t.clips),
+      ...(state.project.extra_overlay_tracks ?? []).flatMap((t) => t.clips),
+    ]
+    const clip = all.find((c) => c.id === id)
+    const groupId = clip?.compound_id
+    if (!groupId) return { selectedClipId: id, selectedClipIds: [id] }
+    const ids = all.filter((c) => c.compound_id === groupId).map((c) => c.id)
+    return { selectedClipId: id, selectedClipIds: ids.length ? ids : [id] }
+  }),
   toggleClipSelection: (id) => set((state) => {
     const ids = state.selectedClipIds.includes(id) ? state.selectedClipIds.filter((x) => x !== id) : [...state.selectedClipIds, id]
     return { selectedClipIds: ids, selectedClipId: ids.length ? ids[ids.length - 1] : null }
   }),
   clearSelection: () => set({ selectedClipIds: [], selectedClipId: null }),
   setSnapEnabled: (v) => set({ snapEnabled: v }),
+  setRippleMode: (v) => set({ rippleMode: v }),
   setAspectRatio: (ratio) => set((state) => state.project ? ({ isDirty: true, project: { ...state.project, aspect_ratio: ratio } }) : {}),
 
   addExtraTrack: (type) => set((state) => {
@@ -811,6 +1424,51 @@ export const useStore = create<AppStore>((set) => ({
     const project = withTimelineDuration({ ...state.project, [trackKey]: updated[0], [extraKey]: updated.slice(1) } as ProjectState, state.project.duration_s)
     return { past: [...state.past, state.project].slice(-maxHistory(state.project)), future: [], isDirty: true, project }
   }),
+  renameTrack: (target, name) => set((state) => {
+    if (!state.project) return {}
+    const clean = name.trim()
+    if (!clean) return {}
+    const project = { ...state.project }
+    if (target.kind === 'video') {
+      if (target.index === 0) {
+        project.video_track = { ...project.video_track, name: clean }
+      } else {
+        const extras = [...(project.extra_video_tracks ?? [])]
+        const ix = target.index - 1
+        if (ix < 0 || ix >= extras.length) return {}
+        extras[ix] = { ...extras[ix], name: clean }
+        project.extra_video_tracks = extras
+      }
+    } else if (target.kind === 'audio') {
+      if (target.index === 0) {
+        project.audio_track = { ...project.audio_track, name: clean }
+      } else {
+        const extras = [...(project.extra_audio_tracks ?? [])]
+        const ix = target.index - 1
+        if (ix < 0 || ix >= extras.length) return {}
+        extras[ix] = { ...extras[ix], name: clean }
+        project.extra_audio_tracks = extras
+      }
+    } else if (target.kind === 'overlay') {
+      if (target.index === 0) {
+        project.overlay_track = { ...project.overlay_track, name: clean }
+      } else {
+        const extras = [...(project.extra_overlay_tracks ?? [])]
+        const ix = target.index - 1
+        if (ix < 0 || ix >= extras.length) return {}
+        extras[ix] = { ...extras[ix], name: clean }
+        project.extra_overlay_tracks = extras
+      }
+    } else {
+      project.text_track = { ...project.text_track, name: clean }
+    }
+    return {
+      past: [...state.past, state.project].slice(-maxHistory(state.project)),
+      future: [],
+      isDirty: true,
+      project,
+    }
+  }),
 
   setActiveLeftTab:    (tab)  => set({ activeLeftTab: tab }),
   setRenderProgress:   (p)    => set({ renderProgress: p }),
@@ -820,4 +1478,9 @@ export const useStore = create<AppStore>((set) => ({
   setRenderError:      (err)  => set({ renderError: err }),
   setPreviewTime:      (t)    => set({ previewTime: t }),
   setTimelineZoom:     (z)    => set({ timelineZoom: z }),
+  setCaptionPreview:   (enabled, text, style) => set((state) => ({
+    captionPreviewEnabled: enabled,
+    captionPreviewText: text === undefined ? state.captionPreviewText : text,
+    captionPreviewStyle: style === undefined ? state.captionPreviewStyle : style,
+  })),
 }))

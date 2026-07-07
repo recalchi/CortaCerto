@@ -3,11 +3,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from src.core import editor
 from src.config import ProcessingConfig
 from src.pipeline import (
     _audio_postprocess_label,
     _build_audio_postprocess_filters,
     _build_clip_volume_filter,
+    _build_per_clip_data,
     _clip_options_for_track_options,
     _clip_options_with_output_ranges,
     _clip_volume_adjustments,
@@ -36,6 +38,117 @@ class PipelineCleanupTests(unittest.TestCase):
 
         self.assertEqual(_export_output_plan(config), "vídeo final, versão vertical, 5 thumbnails")
 
+    def test_render_segment_falls_back_to_libx264_when_hardware_encoder_fails(self) -> None:
+        class DummyProcessManager:
+            def __init__(self) -> None:
+                self.calls: list[tuple[list[str], str]] = []
+
+            def run_checked(self, cmd: list[str], context: str, timeout_s: float) -> None:
+                self.calls.append((cmd, context))
+                if len(self.calls) == 1:
+                    raise RuntimeError("segmento seg_00001: ffmpeg exit 4294967256 Function not implemented")
+
+        pm = DummyProcessManager()
+
+        with mock.patch("src.core.editor._has_audio_stream", return_value=False), \
+                mock.patch("src.core.editor.ffmpeg", return_value="ffmpeg"):
+            editor._render_segment(
+                "input.mp4",
+                0.0,
+                1.0,
+                "out.ts",
+                editor.SegmentEffect(),
+                "",
+                "h264_qsv",
+                ["-global_quality", "19"],
+                pm,
+                30.0,
+            )
+
+        self.assertEqual(len(pm.calls), 2)
+        self.assertIn("h264_qsv", pm.calls[0][0])
+        self.assertIn("libx264", pm.calls[1][0])
+        self.assertNotIn("-hwaccel", pm.calls[1][0])
+        self.assertIn("fallback libx264", pm.calls[1][1])
+
+    def test_render_segment_fits_source_into_project_canvas_before_user_transform(self) -> None:
+        class DummyProcessManager:
+            def __init__(self) -> None:
+                self.cmd: list[str] = []
+
+            def run_checked(self, cmd: list[str], context: str, timeout_s: float) -> None:
+                self.cmd = cmd
+
+        pm = DummyProcessManager()
+        fx = editor.SegmentEffect(scale_pct=150.0, position_x=42.0, position_y=-18.0)
+
+        with mock.patch("src.core.editor._has_audio_stream", return_value=False), \
+                mock.patch("src.core.editor.ffmpeg", return_value="ffmpeg"):
+            editor._render_segment(
+                "input.mp4",
+                0.0,
+                1.0,
+                "out.ts",
+                fx,
+                "",
+                "libx264",
+                ["-crf", "18"],
+                pm,
+                30.0,
+                target_size=(1080, 1920),
+            )
+
+        vf = pm.cmd[pm.cmd.index("-vf") + 1]
+        self.assertIn("scale=1080:1920:force_original_aspect_ratio=decrease", vf)
+        self.assertIn("pad=1080:1920", vf)
+        self.assertIn("crop=1080:1920", vf)
+        self.assertIn("-42.000", vf)
+        self.assertIn("+18.000", vf)
+
+    def test_drawtext_font_size_scales_with_export_height(self) -> None:
+        self.assertGreater(editor._drawtext_font_size(100, 1920), editor._drawtext_font_size(100, 1080))
+        self.assertGreaterEqual(editor._drawtext_font_size(80, 1920), 60)
+
+    def test_export_text_style_uses_preview_margin_and_position(self) -> None:
+        style = editor._text_style_from_export_clip(
+            {
+                "text_overlay": "Legenda com quebra automatica",
+                "text_position_x_pct": 10.0,
+                "text_position_y_pct": 84.0,
+                "text_side_margin_pct": 12.0,
+                "text_line_spacing": 1.35,
+                "text_size_pct": 90.0,
+                "text_background_enabled": False,
+            },
+            frame_height=1920,
+        )
+
+        self.assertEqual(style.pos_x_pct, 60.0)
+        self.assertEqual(style.pos_y_pct, 84.0)
+        self.assertEqual(style.max_width_pct, 76.0)
+        self.assertEqual(style.line_spacing, 1.35)
+        self.assertFalse(style.bg_enabled)
+        self.assertTrue(style.shadow_enabled)
+
+    def test_timeline_audio_mix_filter_respects_clip_timing_and_source_offset(self) -> None:
+        fc = editor._build_timeline_audio_mix_filter([
+            {
+                "source_path": "voice.wav",
+                "start_s": 5.0,
+                "end_s": 7.5,
+                "source_offset_s": 5.0,
+                "volume_pct": 80.0,
+                "fade_in_s": 0.2,
+                "fade_out_s": 0.3,
+            }
+        ])
+
+        self.assertIn("[0:a]anull[a0]", fc)
+        self.assertIn("atrim=start=0.000:duration=2.500", fc)
+        self.assertIn("volume=0.8000", fc)
+        self.assertIn("adelay=5000|5000", fc)
+        self.assertIn("amix=inputs=2:duration=first", fc)
+
     def test_audio_postprocess_filters_are_independent_controls(self) -> None:
         clean = ProcessingConfig(audio_normalization=False)
         self.assertEqual(_build_audio_postprocess_filters(clean), [])
@@ -63,7 +176,15 @@ class PipelineCleanupTests(unittest.TestCase):
 
     def test_clip_option_plan_summarizes_editor_adjustments(self) -> None:
         plan = _clip_option_plan([
-            {"scale_pct": 125.0, "volume_pct": 80.0, "transition": "Fade", "text_overlay": "Intro", "chroma_enabled": True},
+            {
+                "scale_pct": 125.0,
+                "volume_pct": 80.0,
+                "transition": "Fade",
+                "text_overlay": "Intro",
+                "chroma_enabled": True,
+                "blur_type": "gaussian",
+                "blur_intensity": 35.0,
+            },
             {"layer": "overlay", "source_path": "logo.png", "scale_pct": 100.0, "volume_pct": 100.0, "transition": "Corte"},
             {"scale_pct": 100.0, "volume_pct": 100.0, "transition": "Corte", "text_overlay": ""},
         ])
@@ -72,7 +193,25 @@ class PipelineCleanupTests(unittest.TestCase):
         self.assertIn("volume em 1 clipe(s)", plan)
         self.assertIn("texto em 1 clipe(s)", plan)
         self.assertIn("chroma em 1 clipe(s)", plan)
+        self.assertIn("desfoque em 1 clipe(s)", plan)
         self.assertIn("1 overlay(s) visual(is)", plan)
+
+    def test_per_clip_data_carries_blur_controls_to_renderer(self) -> None:
+        data = _build_per_clip_data([
+            {"speed_factor": 1.25, "transition": "Fade", "blur_type": "pixelate", "blur_intensity": 55.0, "blur_direction": "both"},
+            {"layer": "overlay", "blur_type": "box", "blur_intensity": 100.0},
+        ])
+
+        self.assertEqual(data, [
+            {
+                "speed_factor": 1.25,
+                "transition": "Fade",
+                "transition_duration_s": 0.4,
+                "blur_type": "pixelate",
+                "blur_intensity": 55.0,
+                "blur_direction": "both",
+            }
+        ])
 
     def test_clip_options_for_track_options_applies_export_layer_state(self) -> None:
         options = _clip_options_for_track_options(

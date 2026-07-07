@@ -26,6 +26,7 @@ LICENSE.txt
 # IDE
 .vscode/
 .idea/
+.claude/
 *.suo
 *.user
 

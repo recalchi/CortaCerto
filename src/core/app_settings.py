@@ -9,8 +9,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from src.api_settings import load_env_file
+from src.api_settings import load_env_file, update_env_file
 from src.core.stock_assets import stock_cache_root
+from src.core.error_log import default_error_log_dir, error_log_path
 
 
 GENERAL_SETTING_ENV_NAMES = [
@@ -19,7 +20,25 @@ GENERAL_SETTING_ENV_NAMES = [
     "CORTACERTO_UI_GPU_RENDERING",
     "CORTACERTO_DEFAULT_SAVE_DIR",
     "CORTACERTO_STARTUP_LAYOUT",
+    "CORTACERTO_UI_THEME",
 ]
+
+
+def remember_default_save_dir(path_or_dir: str, env_file: Path = Path(".env")) -> str:
+    """Persist the directory used by the latest project/export save action."""
+    raw = str(path_or_dir or "").strip().strip('"').strip("'")
+    if not raw:
+        return ""
+    candidate = Path(os.path.normpath(raw))
+    directory = candidate if candidate.is_dir() else candidate.parent
+    if not str(directory):
+        return ""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        update_env_file({"CORTACERTO_DEFAULT_SAVE_DIR": str(directory)}, env_file)
+        return str(directory)
+    except Exception:
+        return ""
 
 
 def general_settings(env_file: Path = Path(".env")) -> dict[str, Any]:
@@ -30,8 +49,13 @@ def general_settings(env_file: Path = Path(".env")) -> dict[str, Any]:
         "ui_gpu_rendering": _bool_value(_setting_value("CORTACERTO_UI_GPU_RENDERING", values), False),
         "default_save_dir": _setting_value("CORTACERTO_DEFAULT_SAVE_DIR", values),
         "startup_layout": _layout_value(_setting_value("CORTACERTO_STARTUP_LAYOUT", values)),
+        "ui_theme": _theme_value(_setting_value("CORTACERTO_UI_THEME", values)),
         "gpu": detect_gpu_info(),
         "cache": cache_info(),
+        "logs": {
+            "dir": str(default_error_log_dir()),
+            "file": str(error_log_path()),
+        },
     }
 
 
@@ -110,6 +134,11 @@ def _bool_value(value: str, default: bool) -> bool:
 def _layout_value(value: str) -> str:
     clean = value.strip().lower()
     return clean if clean in {"last", "default", "capcut"} else "last"
+
+
+def _theme_value(value: str) -> str:
+    clean = value.strip().lower()
+    return clean if clean in {"violet", "graphite", "midnight", "emerald"} else "violet"
 
 
 def _dir_size(path: Path) -> int:

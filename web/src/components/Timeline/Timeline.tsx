@@ -12,14 +12,15 @@
  * • Toolbar: editing tools left, zoom right
  */
 
-import React, { useRef, useEffect, useCallback, useState, useLayoutEffect } from 'react'
+import React, { useRef, useEffect, useCallback, useState, useLayoutEffect, useMemo } from 'react'
 import {
   Scissors, Trash2, Zap, Volume2, Undo2, Redo2,
   Lock, Unlock, Eye, EyeOff, VolumeX,
-  Music, Plus, Minus, Magnet, Sliders,
-  ChevronDown, Pencil, Copy,
+  Music, Plus, Minus, Magnet, Sliders, Headphones, Flag,
+  ChevronDown, Pencil, Copy, Type, Layers, ArrowUp, ArrowDown, Mic, Square, ChevronsLeft,
 } from 'lucide-react'
 import { useStore, getLinkedClipIds, Clip, ProjectState, TrackState } from '../../store/useStore'
+import { api } from '../../api/client'
 
 // ── Layout constants (measured from CapCut) ─────────────────────────────────
 const RULER_H     = 28    // px — time ruler (including toolbar-2nd row in CapCut)
@@ -29,7 +30,6 @@ const HEADER_W    = 130   // px — left header column (wide enough for label + 
 const TOOLBAR_H   = 38    // px — top toolbar row
 /** Default Timeline height (no extra tracks). Dynamically grows when extras are added. */
 const TIMELINE_H_BASE = TOOLBAR_H + RULER_H + SUB_H + MAIN_H + SUB_H + SUB_H  // 296
-/** Height of the "+ Nova faixa" row between categories (taller = easier to click). */
 const ADD_TRACK_ROW_H = 28
 
 // ── CapCut exact colors ──────────────────────────────────────────────────────
@@ -41,6 +41,7 @@ const BG_TRACK    = '#141420'   // track row background
 const BG_HEADER   = '#0f0f18'   // header column background
 const BG_RULER    = '#0a0a14'   // ruler background
 const BORDER_CLR  = '#1e1e2e'   // divider between rows
+const API_BASE    = 'http://127.0.0.1:7472'
 
 // ── Track definitions (CapCut order: overlay above main, audio below) ────────
 //
@@ -69,6 +70,13 @@ interface TrackDef {
   stateId:   string
 }
 
+type MarqueeRect = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
 /** Build the ordered list of track rows from the current project. */
 function buildTracks(project: ProjectState | null): TrackDef[] {
   const rows: TrackDef[] = []
@@ -89,18 +97,18 @@ function buildTracks(project: ProjectState | null): TrackDef[] {
       label: overlayExtras[i].name || `Overlay ${i + 2}`,
       index: i + 1, height: SUB_H, isMain: false, isAudio: false,
       getClips: (p) => p.extra_overlay_tracks?.[i]?.clips ?? [],
-      stateId: 'overlay',
+      stateId: `overlay-${i + 1}`,
     })
   }
   rows.push({
-    id: 'overlay', category: 'overlay', label: 'Overlay', index: 0,
+    id: 'overlay', category: 'overlay', label: project.overlay_track.name || 'Overlay', index: 0,
     height: SUB_H, isMain: false, isAudio: false,
     getClips: (p) => p.overlay_track.clips,
     stateId: 'overlay',
   })
   // Main video (always height MAIN_H), then video extras below it
   rows.push({
-    id: 'video', category: 'video', label: 'Vídeo', index: 0,
+    id: 'video', category: 'video', label: project.video_track.name || 'Vídeo', index: 0,
     height: MAIN_H, isMain: true, isAudio: false,
     getClips: (p) => p.video_track.clips,
     stateId: 'video',
@@ -112,12 +120,12 @@ function buildTracks(project: ProjectState | null): TrackDef[] {
       label: videoExtras[i].name || `Vídeo ${i + 2}`,
       index: i + 1, height: SUB_H, isMain: false, isAudio: false,
       getClips: (p) => p.extra_video_tracks?.[i]?.clips ?? [],
-      stateId: 'video',
+      stateId: `video-${i + 1}`,
     })
   }
   // Audio main, then extras
   rows.push({
-    id: 'audio', category: 'audio', label: 'Áudio', index: 0,
+    id: 'audio', category: 'audio', label: project.audio_track.name || 'Áudio', index: 0,
     height: SUB_H, isMain: false, isAudio: true,
     getClips: (p) => p.audio_track.clips,
     stateId: 'audio',
@@ -129,12 +137,12 @@ function buildTracks(project: ProjectState | null): TrackDef[] {
       label: audioExtras[i].name || `Áudio ${i + 2}`,
       index: i + 1, height: SUB_H, isMain: false, isAudio: true,
       getClips: (p) => p.extra_audio_tracks?.[i]?.clips ?? [],
-      stateId: 'audio',
+      stateId: `audio-${i + 1}`,
     })
   }
   // Text at the bottom
   rows.push({
-    id: 'text', category: 'text', label: 'Texto', index: 0,
+    id: 'text', category: 'text', label: project.text_track.name || 'Texto', index: 0,
     height: SUB_H, isMain: false, isAudio: false,
     getClips: (p) => p.text_track.clips,
     stateId: 'text',
@@ -151,17 +159,34 @@ function fmtTime(s: number): string {
   return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
 }
 
+function normalizeTransitionName(value: unknown): string {
+  const v = String(value ?? 'Corte').trim()
+  return v || 'Corte'
+}
+
+function transitionBadgeColor(name: string): string {
+  const n = normalizeTransitionName(name).toLowerCase()
+  if (n.includes('fade')) return '#8b5cf6'
+  if (n.includes('dissolver')) return '#06b6d4'
+  if (n.includes('wipe')) return '#10b981'
+  if (n.includes('zoom')) return '#f97316'
+  return '#64748b'
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 export function Timeline({ height }: { height?: number }) {
   const {
     project, previewTime, setPreviewTime,
     timelineZoom, setTimelineZoom,
+    rippleMode, setRippleMode,
     selectedClipId, selectedClipIds, setSelectedClip, toggleClipSelection,
     snapEnabled, setSnapEnabled,
-    updateClip, splitClip, deleteClip, rippleDelete, undo, redo,
+    updateClip, splitClip, deleteClip, rippleDelete, closeGapAfterClip, undo, redo,
+    compileSelectedClips, uncompileSelectedClips, addTimelineMarker, removeTimelineMarker,
     past, future,
     trackStates, setTrackState,
-    appendVideo, importAudio, importImage,
+    appendVideo, importAudio, importImage, importOverlayVideo, setSourceProxy,
+    addTextClip, duplicateSelectionAtPlayhead,
   } = useStore()
 
   // P0-2: file drop handlers — called from TrackRow when a native file is dropped
@@ -202,13 +227,247 @@ export function Timeline({ height }: { height?: number }) {
     importImage(filePath, 5)
   }, [project, importImage])
 
+  const handleOverlayVideoFileDrop = useCallback(async (filePath: string) => {
+    if (!project) return
+    try {
+      const { exportSettings } = useStore.getState()
+      const res = await fetch('http://127.0.0.1:7472/api/analyze-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: filePath,
+          silence_style: exportSettings.silenceStyle,
+          auto_cut: false,
+        }),
+      })
+      if (!res.ok) return
+      const d = await res.json()
+      const duration = Math.max(0.1, Number(d.duration_s ?? 5))
+      importOverlayVideo(filePath, duration)
+      if (d.proxy_status === 'ready' && d.proxy_path) {
+        setSourceProxy(filePath, d.proxy_path)
+      }
+    } catch { /* ignore */ }
+  }, [project, importOverlayVideo, setSourceProxy])
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const recordingChunksRef = useRef<BlobPart[]>([])
+  const recordingTimerRef = useRef<number | null>(null)
+  const recordingStartedAtRef = useRef<number | null>(null)
+  const [recording, setRecording] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
+
+  const stopRecordingTimer = useCallback(() => {
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+  }, [])
+
+  const detectRecordingMimeType = useCallback((): string => {
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+      'audio/mp4',
+    ]
+    for (const candidate of candidates) {
+      try {
+        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(candidate)) {
+          return candidate
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return ''
+  }, [])
+
+  const extFromMime = useCallback((mime: string): string => {
+    const m = mime.toLowerCase()
+    if (m.includes('ogg')) return '.ogg'
+    if (m.includes('mp4')) return '.m4a'
+    if (m.includes('wav')) return '.wav'
+    return '.webm'
+  }, [])
+
+  const waveformFromAudioBlob = useCallback(async (blob: Blob, bins = 300): Promise<{ samples: number[]; duration_s: number | null }> => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!AudioCtx) return { samples: [], duration_s: null }
+      const ctx = new AudioCtx()
+      const buffer = await ctx.decodeAudioData(await blob.arrayBuffer())
+      const length = buffer.length
+      const channels = Math.max(1, buffer.numberOfChannels)
+      const samples: number[] = []
+      for (let i = 0; i < bins; i++) {
+        const start = Math.floor((i / bins) * length)
+        const end = Math.max(start + 1, Math.floor(((i + 1) / bins) * length))
+        let sum = 0
+        let count = 0
+        for (let ch = 0; ch < channels; ch++) {
+          const data = buffer.getChannelData(ch)
+          for (let j = start; j < end; j++) {
+            const v = data[j] || 0
+            sum += v * v
+            count++
+          }
+        }
+        samples.push(Math.sqrt(sum / Math.max(1, count)))
+      }
+      await ctx.close?.()
+      const max = Math.max(...samples, 0.0001)
+      return {
+        samples: samples.map((v) => Math.max(0.02, Math.min(1, v / max))),
+        duration_s: Number.isFinite(buffer.duration) && buffer.duration > 0 ? buffer.duration : null,
+      }
+    } catch {
+      return { samples: [], duration_s: null }
+    }
+  }, [])
+
+  const startAudioRecording = useCallback(async () => {
+    if (recording) return
+    if (!project) {
+      window.alert('Abra um projeto antes de gravar áudio.')
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = detectRecordingMimeType()
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream)
+
+      mediaStreamRef.current = stream
+      mediaRecorderRef.current = recorder
+      recordingChunksRef.current = []
+      recordingStartedAtRef.current = performance.now()
+
+      recorder.ondataavailable = (ev: BlobEvent) => {
+        if (ev.data && ev.data.size > 0) recordingChunksRef.current.push(ev.data)
+      }
+
+      recorder.onstop = async () => {
+        const recordedMs = recordingStartedAtRef.current === null
+          ? recordingSeconds * 1000
+          : performance.now() - recordingStartedAtRef.current
+        const recordedDuration = Math.max(0.1, recordedMs / 1000)
+        recordingStartedAtRef.current = null
+        stopRecordingTimer()
+        setRecording(false)
+        setRecordingSeconds(0)
+        try {
+          mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+        } catch {
+          // ignore
+        }
+        mediaStreamRef.current = null
+
+        const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+        recordingChunksRef.current = []
+        if (!blob.size) return
+        const localAudio = await waveformFromAudioBlob(blob, 300)
+
+        const ext = extFromMime(blob.type)
+        const fileName = `timeline-recording${ext}`
+        const form = new FormData()
+        form.append('audio', blob, fileName)
+
+        try {
+          const saved = await api.post('/api/audio-recording/save', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          })
+          const path = String(saved.data?.path || '')
+          if (!path) return
+          const wfRes = await fetch(`${API_BASE}/api/audio-waveform?path=${encodeURIComponent(path)}&bins=300`)
+          const wfData = await wfRes.json().catch(() => ({ samples: [], duration_s: 60 }))
+          const probedDuration = Number(wfData.duration_s ?? 0)
+          const localDuration = Number(localAudio.duration_s ?? 0)
+          const candidates = [localDuration, recordedDuration, probedDuration].filter((v) => Number.isFinite(v) && v > 0.05)
+          const chosenDuration = candidates.length ? Math.min(...candidates) : 0.1
+          const safeDuration = Math.max(0.1, Math.min(chosenDuration, recordedDuration + 0.25))
+          const backendWaveform = Array.isArray(wfData.samples) ? wfData.samples : []
+          importAudio(path, safeDuration, localAudio.samples.length ? localAudio.samples : backendWaveform)
+        } catch {
+          window.alert('Não foi possível salvar/importar a gravação.')
+        }
+      }
+
+      recorder.start(250)
+      setRecording(true)
+      setRecordingSeconds(0)
+      stopRecordingTimer()
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1)
+      }, 1000)
+    } catch {
+      window.alert('Permissão de microfone negada ou indisponível.')
+    }
+  }, [detectRecordingMimeType, extFromMime, importAudio, project, recording, stopRecordingTimer, waveformFromAudioBlob])
+
+  const stopAudioRecording = useCallback(() => {
+    try {
+      const recorder = mediaRecorderRef.current
+      if (recorder && recorder.state !== 'inactive') recorder.stop()
+      else {
+        stopRecordingTimer()
+        setRecording(false)
+        setRecordingSeconds(0)
+        recordingStartedAtRef.current = null
+      }
+    } catch {
+      stopRecordingTimer()
+      setRecording(false)
+      setRecordingSeconds(0)
+      recordingStartedAtRef.current = null
+    }
+  }, [stopRecordingTimer])
+
+  useEffect(() => {
+    return () => {
+      stopRecordingTimer()
+      recordingStartedAtRef.current = null
+      try {
+        const recorder = mediaRecorderRef.current
+        if (recorder && recorder.state !== 'inactive') recorder.stop()
+      } catch {
+        // ignore
+      }
+      try {
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+      } catch {
+        // ignore
+      }
+    }
+  }, [stopRecordingTimer])
+
   const scrollRef  = useRef<HTMLDivElement>(null)
   const syncing    = useRef(false)
+  const marqueeJustEnded = useRef(false)
   const [viewW, setViewW] = useState(800)
+  const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null)
 
   const duration = project?.duration_s ?? 0
   const pxPerSec = 80 * timelineZoom
   const totalW   = Math.max(duration * pxPerSec + viewW, viewW)
+  const allClips = project
+    ? [
+      ...project.video_track.clips,
+      ...project.audio_track.clips,
+      ...project.text_track.clips,
+      ...project.overlay_track.clips,
+      ...(project.extra_video_tracks ?? []).flatMap((t) => t.clips),
+      ...(project.extra_audio_tracks ?? []).flatMap((t) => t.clips),
+      ...(project.extra_overlay_tracks ?? []).flatMap((t) => t.clips),
+    ]
+    : []
+  const selectedClip = selectedClipId ? allClips.find((c) => c.id === selectedClipId) ?? null : null
+  const canLayerMove = !!selectedClip && ['image', 'video_overlay', 'video', 'text'].includes(selectedClip.clip_type)
+  const canCompileSelection = selectedClipIds.length > 1
+  const canUncompileSelection = !!selectedClip?.compound_id
 
   // Measure scroll container width
   useLayoutEffect(() => {
@@ -233,8 +492,35 @@ export function Timeline({ height }: { height?: number }) {
           : state.selectedClipId ? [state.selectedClipId] : []
         if (toDelete.length === 0) return
         e.preventDefault()
-        // deleteClip already handles multi-delete when selectedClipIds has >1 item
-        state.deleteClip(toDelete[0])
+        if (state.rippleMode) state.rippleDelete(toDelete[0])
+        else state.deleteClip(toDelete[0])
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        useStore.getState().duplicateSelectionAtPlayhead()
+        return
+      }
+      if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        const state = useStore.getState()
+        const id = state.selectedClipId
+        if (!id || !state.project) return
+        const all = [
+          ...state.project.video_track.clips,
+          ...state.project.audio_track.clips,
+          ...state.project.text_track.clips,
+          ...state.project.overlay_track.clips,
+          ...(state.project.extra_video_tracks ?? []).flatMap((t) => t.clips),
+          ...(state.project.extra_audio_tracks ?? []).flatMap((t) => t.clips),
+          ...(state.project.extra_overlay_tracks ?? []).flatMap((t) => t.clips),
+        ]
+        const clip = all.find((c) => c.id === id)
+        if (!clip) return
+        if (!(clip.clip_type === 'image' || clip.clip_type === 'video_overlay' || clip.clip_type === 'video' || clip.clip_type === 'sticker' || clip.clip_type === 'text')) return
+        e.preventDefault()
+        const delta = e.key === 'ArrowUp' ? 1 : -1
+        const next = Math.max(-200, Math.min(200, Number(clip.z_order ?? 0) + delta))
+        state.updateClip(id, { z_order: next })
+        return
       }
       if (e.key === 's' && !e.ctrlKey && !e.metaKey && selectedClipId) {
         e.preventDefault()
@@ -290,20 +576,125 @@ export function Timeline({ height }: { height?: number }) {
     window.addEventListener('mouseup', onUp)
   }, [pxPerSec, duration, setPreviewTime])
 
+  const bumpSelectedLayers = useCallback((delta: number) => {
+    const state = useStore.getState()
+    const proj = state.project
+    if (!proj) return
+    const ids = state.selectedClipIds.length > 0
+      ? state.selectedClipIds
+      : state.selectedClipId
+        ? [state.selectedClipId]
+        : []
+    if (ids.length === 0) return
+    const map = new Map<string, Clip>([
+      ...proj.video_track.clips,
+      ...proj.audio_track.clips,
+      ...proj.text_track.clips,
+      ...proj.overlay_track.clips,
+      ...(proj.extra_video_tracks ?? []).flatMap((t) => t.clips),
+      ...(proj.extra_audio_tracks ?? []).flatMap((t) => t.clips),
+      ...(proj.extra_overlay_tracks ?? []).flatMap((t) => t.clips),
+    ].map((c) => [c.id, c]))
+    for (const id of ids) {
+      const clip = map.get(id)
+      if (!clip) continue
+      if (!(clip.clip_type === 'image' || clip.clip_type === 'video_overlay' || clip.clip_type === 'video' || clip.clip_type === 'sticker' || clip.clip_type === 'text')) continue
+      const next = Math.max(-200, Math.min(200, Number(clip.z_order ?? 0) + delta))
+      state.updateClip(id, { z_order: next })
+    }
+  }, [])
+
   // Phase 4: dynamic track list derived from project (includes extras)
   const tracks = buildTracks(project)
-  // Add ADD_TRACK_ROW_H for each category boundary that gets a "+ Faixa" button
-  const addTrackSpacerCount = tracks.reduce((n, tr, i) => {
-    const next = tracks[i + 1]
-    if (tr.category === 'video' && (!next || next.category !== 'video')) return n + 1
-    if (tr.category === 'audio' && (!next || next.category !== 'audio')) return n + 1
-    return n
-  }, 0)
-  const allTracksH = tracks.reduce((s, t) => s + t.height, 0) + addTrackSpacerCount * ADD_TRACK_ROW_H
+  const allTracksH = tracks.reduce((s, t) => s + t.height, 0)
   const playheadX  = previewTime * pxPerSec
   const naturalHeight = TOOLBAR_H + RULER_H + allTracksH
   const timelineHeight = height ?? naturalHeight
   const trackAreaHeight = RULER_H + allTracksH
+  const trackTopMap = useMemo(() => {
+    let y = RULER_H
+    const map = new Map<string, number>()
+    for (const tr of tracks) {
+      map.set(tr.id, y)
+      y += tr.height
+    }
+    return map
+  }, [tracks])
+
+  const findClipsInRect = useCallback((rect: MarqueeRect): string[] => {
+    if (!project) return []
+    const left = Math.min(rect.x1, rect.x2)
+    const right = Math.max(rect.x1, rect.x2)
+    const top = Math.min(rect.y1, rect.y2)
+    const bottom = Math.max(rect.y1, rect.y2)
+    const ids: string[] = []
+    for (const tr of tracks) {
+      if (trackStates[tr.stateId]?.hidden) continue
+      const rowTop = trackTopMap.get(tr.id) ?? RULER_H
+      const rowBottom = rowTop + tr.height
+      if (rowBottom < top || rowTop > bottom) continue
+      for (const clip of tr.getClips(project)) {
+        const clipLeft = clip.start_s * pxPerSec
+        const clipRight = clip.end_s * pxPerSec
+        if (clipRight >= left && clipLeft <= right) ids.push(clip.id)
+      }
+    }
+    return Array.from(new Set(ids))
+  }, [project, pxPerSec, trackStates, trackTopMap, tracks])
+
+  const startMarqueeSelection = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || !project) return
+    const target = e.target as HTMLElement
+    let node: HTMLElement | null = target
+    while (node && node !== e.currentTarget) {
+      if (node.getAttribute('data-clip') === 'true') return
+      if (node.getAttribute('data-no-marquee') === 'true') return
+      if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.tagName === 'BUTTON' || node.tagName === 'SELECT') return
+      node = node.parentElement
+    }
+    const rect = e.currentTarget.getBoundingClientRect()
+    const start = {
+      x: Math.max(0, e.clientX - rect.left),
+      y: Math.max(0, e.clientY - rect.top),
+    }
+    if (start.y < RULER_H) return
+    const additive = e.ctrlKey || e.metaKey || e.shiftKey
+    const originalIds = additive ? [...useStore.getState().selectedClipIds] : []
+    let didDragMarquee = false
+
+    const onMove = (ev: MouseEvent) => {
+      const next = {
+        x: Math.max(0, ev.clientX - rect.left),
+        y: Math.max(0, ev.clientY - rect.top),
+      }
+      if (!didDragMarquee && Math.hypot(next.x - start.x, next.y - start.y) < 5) return
+      didDragMarquee = true
+      setMarqueeRect({ x1: start.x, y1: start.y, x2: next.x, y2: next.y })
+    }
+
+    const onUp = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      const end = {
+        x: Math.max(0, ev.clientX - rect.left),
+        y: Math.max(0, ev.clientY - rect.top),
+      }
+      if (didDragMarquee) {
+        const picked = findClipsInRect({ x1: start.x, y1: start.y, x2: end.x, y2: end.y })
+        const ids = additive ? Array.from(new Set([...originalIds, ...picked])) : picked
+        useStore.setState({
+          selectedClipIds: ids,
+          selectedClipId: ids.length ? ids[ids.length - 1] : null,
+        })
+        marqueeJustEnded.current = true
+        setTimeout(() => { marqueeJustEnded.current = false }, 0)
+      }
+      setMarqueeRect(null)
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [findClipsInRect, project])
 
   return (
     <div
@@ -329,15 +720,46 @@ export function Timeline({ height }: { height?: number }) {
           }
         }}
         onAddMedia={() => useStore.getState().setActiveLeftTab('media')}
+        onAddText={() => {
+          const t = Math.max(0, previewTime)
+          addTextClip(t, t + 3, 'Novo texto')
+          useStore.getState().setActiveLeftTab('text')
+        }}
+        onDuplicate={() => duplicateSelectionAtPlayhead()}
         onSplit={() => { if (selectedClipId) splitClip(selectedClipId, previewTime) }}
-        onDelete={() => { if (selectedClipId) deleteClip(selectedClipId) }}
+        onDelete={() => {
+          if (!selectedClipId) return
+          if (rippleMode) rippleDelete(selectedClipId)
+          else deleteClip(selectedClipId)
+        }}
+        onCloseGap={() => { if (selectedClipId) closeGapAfterClip(selectedClipId) }}
+        onLayerUp={() => bumpSelectedLayers(1)}
+        onLayerDown={() => bumpSelectedLayers(-1)}
+        onCompile={() => compileSelectedClips()}
+        onUncompile={() => uncompileSelectedClips()}
+        canCompile={canCompileSelection}
+        canUncompile={canUncompileSelection}
+        onAddMarker={() => addTimelineMarker(previewTime)}
         onUndo={undo}
         onRedo={redo}
         canUndo={past.length > 0}
         canRedo={future.length > 0}
         hasSelection={!!selectedClipId}
+        canLayerMove={canLayerMove}
         snapEnabled={snapEnabled}
         onToggleSnap={() => setSnapEnabled(!snapEnabled)}
+        rippleMode={rippleMode}
+        onToggleRipple={() => setRippleMode(!rippleMode)}
+        onOpenAudioTab={() => useStore.getState().setActiveLeftTab('audio')}
+        onOpenEffectsTab={() => useStore.getState().setActiveLeftTab('effects')}
+        recording={recording}
+        recordingSeconds={recordingSeconds}
+        onToggleRecording={() => {
+          if (recording) stopAudioRecording()
+          else startAudioRecording().catch(() => undefined)
+        }}
+        onAddVideoTrack={() => useStore.getState().addExtraTrack('video')}
+        onAddAudioTrack={() => useStore.getState().addExtraTrack('audio')}
       />
 
       {/* ── Track area ── */}
@@ -351,21 +773,14 @@ export function Timeline({ height }: { height?: number }) {
         >
           {/* ruler spacer */}
           <div style={{ height: RULER_H, borderBottom: `1px solid ${BORDER_CLR}` }} />
-          {tracks.map((tr, i) => {
-            const next = tracks[i + 1]
-            // Show "+ Faixa" button at the boundary between this track and the next,
-            // when this is the LAST track of its category (video or audio).
-            // Overlay/text categories don't get + buttons (overlays can use the
-            // existing image-clip drop; text is single-track).
-            const showAddButton =
-              (tr.category === 'video' && (!next || next.category !== 'video')) ||
-              (tr.category === 'audio' && (!next || next.category !== 'audio'))
+          {tracks.map((tr) => {
             return (
               <React.Fragment key={tr.id}>
                 <TrackHeader
                   track={tr}
-                  trackState={trackStates[tr.stateId] ?? { locked: false, hidden: false, muted: false }}
+                  trackState={trackStates[tr.stateId] ?? { locked: false, hidden: false, muted: false, solo: false }}
                   onSetState={(patch) => setTrackState(tr.stateId, patch)}
+                  onRename={(nextName) => useStore.getState().renameTrack({ kind: tr.category, index: tr.index }, nextName)}
                   onRemove={tr.index > 0
                     ? () => useStore.getState().removeExtraTrack(
                         tr.category === 'audio' ? 'audio' : 'video',
@@ -373,12 +788,6 @@ export function Timeline({ height }: { height?: number }) {
                       )
                     : undefined}
                 />
-                {showAddButton && (
-                  <AddTrackButton
-                    category={tr.category as 'video' | 'audio'}
-                    onAdd={() => useStore.getState().addExtraTrack(tr.category as 'video' | 'audio')}
-                  />
-                )}
               </React.Fragment>
             )
           })}
@@ -396,11 +805,17 @@ export function Timeline({ height }: { height?: number }) {
           >
             <div
               style={{ width: totalW, position: 'relative', minWidth: '100%' }}
+              onMouseDown={startMarqueeSelection}
               // Click in the timeline body that's NOT a clip → seek + clear selection.
               // Clips opt out via data-clip="true"; ruler still seeks via its own
               // onMouseDown.  Walks up DOM to detect clip clicks even when child
               // elements (label spans, resize handles) are the actual target.
               onClick={(e) => {
+                if (marqueeJustEnded.current) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  return
+                }
                 const el = e.target as HTMLElement
                 let node: HTMLElement | null = el
                 while (node && node !== e.currentTarget) {
@@ -421,6 +836,12 @@ export function Timeline({ height }: { height?: number }) {
                 duration={duration}
                 pxPerSec={pxPerSec}
                 onMouseDown={onRulerMouseDown}
+              />
+              <TimelineMarkerLayer
+                markers={project?.timeline_markers ?? []}
+                pxPerSec={pxPerSec}
+                height={allTracksH + RULER_H}
+                onRemove={removeTimelineMarker}
               />
 
               {/* Playhead line — design: purple with glow */}
@@ -449,12 +870,8 @@ export function Timeline({ height }: { height?: number }) {
                   We mirror the same spacer logic as the header column so the
                   "+ Faixa" buttons in the headers line up with empty space
                   here in the scroll canvas. */}
-              {tracks.map((tr, i) => {
-                const next  = tracks[i + 1]
+              {tracks.map((tr) => {
                 const clips = project ? tr.getClips(project) : []
-                const showAddSpacer =
-                  (tr.category === 'video' && (!next || next.category !== 'video')) ||
-                  (tr.category === 'audio' && (!next || next.category !== 'audio'))
                 return (
                   <React.Fragment key={tr.id}>
                     <TrackRow
@@ -469,25 +886,33 @@ export function Timeline({ height }: { height?: number }) {
                       splitClip={splitClip}
                       deleteClip={deleteClip}
                       rippleDelete={rippleDelete}
+                      closeGapAfterClip={closeGapAfterClip}
                       previewTime={previewTime}
                       waveform={project?.waveform ?? []}
                       totalDuration={project?.duration_s ?? 0}
                       hidden={trackStates[tr.stateId]?.hidden ?? false}
                       locked={trackStates[tr.stateId]?.locked ?? false}
-                      onVideoFileDrop={tr.id === 'video' ? handleVideoFileDrop : undefined}
-                      onAudioFileDrop={tr.id === 'audio' ? handleAudioFileDrop : undefined}
+                      onVideoFileDrop={tr.id === 'video' ? handleVideoFileDrop : (tr.category === 'overlay' ? handleOverlayVideoFileDrop : undefined)}
+                      onAudioFileDrop={tr.category === 'audio' ? handleAudioFileDrop : undefined}
                       onImageFileDrop={tr.id === 'overlay' ? handleImageFileDrop : undefined}
                     />
-                    {showAddSpacer && (
-                      <div style={{
-                        height: ADD_TRACK_ROW_H,
-                        borderBottom: `1px solid ${BORDER_CLR}`,
-                        background: BG_TRACK,
-                      }} />
-                    )}
                   </React.Fragment>
                 )
               })}
+              {marqueeRect && (
+                <div
+                  className="absolute z-40 pointer-events-none rounded-[2px]"
+                  style={{
+                    left: Math.min(marqueeRect.x1, marqueeRect.x2),
+                    top: Math.min(marqueeRect.y1, marqueeRect.y2),
+                    width: Math.abs(marqueeRect.x2 - marqueeRect.x1),
+                    height: Math.abs(marqueeRect.y2 - marqueeRect.y1),
+                    border: '1px solid rgba(139,107,255,0.95)',
+                    background: 'rgba(139,107,255,0.16)',
+                    boxShadow: '0 0 0 1px rgba(255,255,255,0.08) inset',
+                  }}
+                />
+              )}
             </div>
           </div>
 
@@ -660,19 +1085,87 @@ function Ruler({
 // ═══════════════════════════════════════════════════════════════════════════════
 // Track header — label + icon row (CapCut exact layout)
 // ═══════════════════════════════════════════════════════════════════════════════
+function TimelineMarkerLayer({
+  markers, pxPerSec, height, onRemove,
+}: {
+  markers: NonNullable<ProjectState['timeline_markers']>
+  pxPerSec: number
+  height: number
+  onRemove: (id: string) => void
+}) {
+  if (!markers.length) return null
+  return (
+    <div className="absolute left-0 top-0 z-[25] pointer-events-none" style={{ width: '100%', height }}>
+      {markers.map((marker) => {
+        const x = marker.time_s * pxPerSec
+        return (
+          <div
+            key={marker.id}
+            className="absolute top-0 pointer-events-auto"
+            data-no-marquee="true"
+            title={`${marker.label} - ${fmtTime(marker.time_s)}. Duplo clique para remover.`}
+            onDoubleClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onRemove(marker.id)
+            }}
+            style={{ left: x }}
+          >
+            <div
+              className="absolute top-0 -translate-x-1/2 rounded-b px-1 py-0.5 text-[8px] font-semibold text-black"
+              style={{ background: marker.color, minWidth: 18, textAlign: 'center' }}
+            >
+              {marker.label}
+            </div>
+            <div
+              className="absolute top-0"
+              style={{
+                width: 1,
+                height,
+                background: marker.color,
+                opacity: 0.72,
+                boxShadow: `0 0 6px ${marker.color}77`,
+              }}
+            />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function TrackHeader({
   track,
   trackState,
   onSetState,
+  onRename,
   onRemove,
 }: {
   track: TrackDef
   trackState: TrackState
   onSetState: (patch: Partial<TrackState>) => void
+  onRename: (name: string) => void
   /** When set, this is an EXTRA track and a delete button is shown */
   onRemove?: () => void
 }) {
-  const { locked, hidden, muted } = trackState
+  const { locked, hidden, muted, solo } = trackState
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState(track.label)
+
+  useEffect(() => {
+    if (!renaming) setNameDraft(track.label)
+  }, [track.label, renaming])
+
+  const commitRename = useCallback(() => {
+    const clean = nameDraft.trim()
+    if (clean && clean !== track.label) onRename(clean)
+    setRenaming(false)
+  }, [nameDraft, onRename, track.label])
+
+  const cancelRename = useCallback(() => {
+    setNameDraft(track.label)
+    setRenaming(false)
+  }, [track.label])
   // Category accent color — matches the clip color in the scroll area
   const accentColor = track.isAudio
     ? '#1e6fa0'
@@ -696,20 +1189,50 @@ function TrackHeader({
         className="flex items-center flex-shrink-0"
         style={{ height: 20, paddingLeft: 6, paddingRight: 4, paddingTop: 3, gap: 4 }}
       >
-        <span style={{
-          flex: 1,
-          fontSize: 9,
-          fontWeight: 700,
-          color: track.isMain ? '#9999bb' : '#666680',
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          userSelect: 'none',
-        }}>
-          {track.label}
-        </span>
+        {renaming ? (
+          <input
+            autoFocus
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename()
+              if (e.key === 'Escape') cancelRename()
+            }}
+            style={{
+              flex: 1,
+              fontSize: 9,
+              fontWeight: 700,
+              color: '#c9c9e6',
+              letterSpacing: '0.04em',
+              background: '#161627',
+              border: '1px solid #2a2a42',
+              borderRadius: 3,
+              padding: '1px 4px',
+              outline: 'none',
+            }}
+          />
+        ) : (
+          <span
+            onDoubleClick={() => setRenaming(true)}
+            title="Duplo clique para renomear"
+            style={{
+              flex: 1,
+              fontSize: 9,
+              fontWeight: 700,
+              color: track.isMain ? '#9999bb' : '#666680',
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              userSelect: 'none',
+              cursor: 'text',
+            }}
+          >
+            {track.label}
+          </span>
+        )}
         {onRemove && (
           <button
             onClick={onRemove}
@@ -742,6 +1265,11 @@ function TrackHeader({
           active={muted} activeColor="#f03e3e"
           title={muted ? 'Ativar' : 'Silenciar'} onClick={() => onSetState({ muted: !muted })}
         />
+        <HdrBtn
+          icon={<Headphones size={11} />}
+          active={solo} activeColor="#7c5cff"
+          title={solo ? 'Desativar solo' : 'Solo'} onClick={() => onSetState({ solo: !solo })}
+        />
       </div>
     </div>
   )
@@ -749,7 +1277,7 @@ function TrackHeader({
 
 /** Row between track-category groups with a "+ Nova faixa" button.
  *  Lives in the HEADER column only; scroll canvas renders a plain matching spacer. */
-function AddTrackButton({
+export function AddTrackButton({
   category, onAdd,
 }: {
   category: 'video' | 'audio'
@@ -826,7 +1354,7 @@ function HdrBtn({
 // ═══════════════════════════════════════════════════════════════════════════════
 function TrackRow({
   track, clips, pxPerSec, selectedClipId, selectedClipIds, onSelect, onToggleSelect,
-  updateClip, splitClip, deleteClip, rippleDelete, previewTime,
+  updateClip, splitClip, deleteClip, rippleDelete, closeGapAfterClip, previewTime,
   waveform, totalDuration, hidden = false, locked = false,
   onVideoFileDrop, onAudioFileDrop, onImageFileDrop,
 }: {
@@ -839,6 +1367,7 @@ function TrackRow({
   splitClip:     (id: string, at: number) => void
   deleteClip:    (id: string) => void
   rippleDelete:  (id: string) => void
+  closeGapAfterClip: (id: string) => void
   previewTime: number
   waveform: number[]
   totalDuration: number
@@ -850,9 +1379,22 @@ function TrackRow({
 }) {
   // Track whether a drag moved far enough to suppress the click-to-select
   const didDrag = useRef(false)
+  const didDragKeyframe = useRef(false)
+  const [keyframeDragInfo, setKeyframeDragInfo] = useState<{
+    clipId: string
+    left: number
+    t: number
+  } | null>(null)
+  const [selectedKeyframes, setSelectedKeyframes] = useState<string[]>([])
 
   // P0-2: file drop from native OS or internal MediaTab drag
   const [dropOver, setDropOver] = useState(false)
+  const [resizeDraft, setResizeDraft] = useState<{
+    clipId: string
+    start_s: number
+    end_s: number
+    side: 'left' | 'right'
+  } | null>(null)
 
   const handleFileDrop = useCallback((e: React.DragEvent) => {
     setDropOver(false)
@@ -899,6 +1441,50 @@ function TrackRow({
     }
   }, [ctxMenu])
 
+  // Transition markers between consecutive clips on this track.
+  // Drawn only for non-audio tracks and only when clips touch at the boundary.
+  const transitionMarkers = useMemo(() => {
+    if (hidden || track.isAudio || clips.length < 2) return [] as Array<{
+      id: string
+      x: number
+      width: number
+      label: string
+      color: string
+      duration: number
+    }>
+    const sorted = [...clips]
+      .filter((c) => Number.isFinite(c?.start_s) && Number.isFinite(c?.end_s))
+      .sort((a, b) => (a.start_s as number) - (b.start_s as number))
+    const markers: Array<{
+      id: string
+      x: number
+      width: number
+      label: string
+      color: string
+      duration: number
+    }> = []
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const left = sorted[i]
+      const right = sorted[i + 1]
+      const transition = normalizeTransitionName(left.transition)
+      if (transition === 'Corte') continue
+      // Show only if this is effectively a cut point (clips touch).
+      const boundaryGap = Math.abs((right.start_s as number) - (left.end_s as number))
+      if (boundaryGap > 0.12) continue
+      const duration = Math.max(0.1, Math.min(1.5, Number(left.transition_duration_s ?? 0.4)))
+      const width = Math.max(12, Math.min(38, duration * pxPerSec))
+      markers.push({
+        id: `${left.id}->${right.id}`,
+        x: (left.end_s as number) * pxPerSec,
+        width,
+        label: transition,
+        color: transitionBadgeColor(transition),
+        duration,
+      })
+    }
+    return markers
+  }, [clips, hidden, pxPerSec, track.isAudio])
+
   // Snap a proposed clip-start time to nearby clip edges AND the playhead.
   // Snap is gated by the global `snapEnabled` toggle (magnet icon in toolbar).
   const SNAP_PX = 14   // forgiving snap radius for easier "fit into gap" behavior
@@ -934,6 +1520,31 @@ function TrackRow({
     const origEnd          = clip.end_s   as number
     const origSourceOffset = (clip.source_offset_s ?? 0) as number
     const dur              = origEnd - origStart
+    const stateAtDrag = useStore.getState()
+    const projectAtDrag = stateAtDrag.project
+    const dragSelectionIds = stateAtDrag.selectedClipIds.includes(clip.id)
+      ? stateAtDrag.selectedClipIds
+      : [clip.id]
+    const coveredIds = new Set<string>()
+    const dragItems = projectAtDrag ? [
+      ...projectAtDrag.video_track.clips,
+      ...projectAtDrag.audio_track.clips,
+      ...projectAtDrag.text_track.clips,
+      ...projectAtDrag.overlay_track.clips,
+      ...(projectAtDrag.extra_video_tracks ?? []).flatMap((t) => t.clips),
+      ...(projectAtDrag.extra_audio_tracks ?? []).flatMap((t) => t.clips),
+      ...(projectAtDrag.extra_overlay_tracks ?? []).flatMap((t) => t.clips),
+    ].filter((item) => {
+      if (!dragSelectionIds.includes(item.id)) return false
+      if (coveredIds.has(item.id)) return false
+      for (const linked of getLinkedClipIds(item.id, projectAtDrag)) coveredIds.add(linked)
+      return true
+    }).map((item) => ({
+      id: item.id,
+      start: item.start_s,
+      end: item.end_s,
+      sourceOffset: item.source_offset_s ?? 0,
+    })) : []
 
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX
@@ -950,11 +1561,21 @@ function TrackRow({
       // If start_s shifts by Δ but source_offset_s stays the same, the clip
       // ends up showing a different range of the source file (drifts out
       // of the trimmed region the user intended).
-      updateClip(clip.id, {
-        start_s:         Math.round(newStart * 1000) / 1000,
-        end_s:           Math.round((newStart + dur) * 1000) / 1000,
-        source_offset_s: Math.round((origSourceOffset + actualDelta) * 1000) / 1000,
-      })
+      if (dragItems.length > 1) {
+        for (const item of dragItems) {
+          updateClip(item.id, {
+            start_s:         Math.round(Math.max(0, item.start + actualDelta) * 1000) / 1000,
+            end_s:           Math.round(Math.max(0, item.end + actualDelta) * 1000) / 1000,
+            source_offset_s: Math.round((item.sourceOffset + actualDelta) * 1000) / 1000,
+          })
+        }
+      } else {
+        updateClip(clip.id, {
+          start_s:         Math.round(newStart * 1000) / 1000,
+          end_s:           Math.round((newStart + dur) * 1000) / 1000,
+          source_offset_s: Math.round((origSourceOffset + actualDelta) * 1000) / 1000,
+        })
+      }
     }
     const onUp = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', onMove)
@@ -995,23 +1616,117 @@ function TrackRow({
     const startX   = e.clientX
     const origStart = clip.start_s as number
     const origEnd   = clip.end_s   as number
+    let nextStart = origStart
+    let nextEnd = origEnd
 
     const onMove = (ev: MouseEvent) => {
       const dt = (ev.clientX - startX) / pxPerSec
       if (side === 'left') {
-        const newStart = Math.max(0, Math.min(origStart + dt, origEnd - 0.1))
-        updateClip(clip.id, { start_s: Math.round(newStart * 100) / 100 })
+        nextStart = Math.round(Math.max(0, Math.min(origStart + dt, origEnd - 0.1)) * 1000) / 1000
+        nextEnd = origEnd
       } else {
-        const newEnd = Math.max(origStart + 0.1, origEnd + dt)
-        updateClip(clip.id, { end_s: Math.round(newEnd * 100) / 100 })
+        nextStart = origStart
+        nextEnd = Math.round(Math.max(origStart + 0.1, origEnd + dt) * 1000) / 1000
       }
+      setResizeDraft({ clipId: clip.id, start_s: nextStart, end_s: nextEnd, side })
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup',   onUp)
+      setResizeDraft(null)
+      if (Math.abs(nextStart - origStart) > 0.001 || Math.abs(nextEnd - origEnd) > 0.001) {
+        updateClip(clip.id, side === 'left'
+          ? { start_s: nextStart }
+          : { end_s: nextEnd })
+        const current = useStore.getState().previewTime
+        if (current < nextStart || current >= nextEnd) {
+          useStore.getState().setPreviewTime(Math.max(nextStart, Math.min(nextEnd - 0.001, side === 'left' ? nextStart + 0.02 : nextEnd - 0.02)))
+        }
+      }
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup',   onUp)
+  }
+
+  const startKeyframeDrag = (
+    e: React.MouseEvent,
+    clip: any,
+    keyframeIndex: number,
+  ) => {
+    e.stopPropagation()
+    if (locked) return
+    e.preventDefault()
+    didDragKeyframe.current = false
+    const startX = e.clientX
+    const startT = (clip.motion_keyframes?.[keyframeIndex]?.t ?? 0) as number
+    const clipDur = Math.max(0.01, (clip.end_s as number) - (clip.start_s as number))
+    const SNAP_KF_PX = 10
+    const FRAME_STEP = 1 / 30
+    const kfKey = (ix: number) => `${clip.id}:${ix}`
+    const selectedIdxs = selectedKeyframes
+      .filter((k) => k.startsWith(`${clip.id}:`))
+      .map((k) => parseInt(k.split(':')[1] ?? '-1', 10))
+      .filter((ix) => ix >= 0 && ix < (clip.motion_keyframes?.length ?? 0))
+    const dragIdxs = selectedIdxs.includes(keyframeIndex) && selectedIdxs.length > 1
+      ? selectedIdxs
+      : [keyframeIndex]
+    const dragItems = dragIdxs.map((ix) => ({
+      ix,
+      start: (clip.motion_keyframes?.[ix]?.t ?? 0) as number,
+    }))
+    setSelectedKeyframes(dragIdxs.map(kfKey))
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX
+      if (!didDragKeyframe.current && Math.abs(dx) < 3) return
+      didDragKeyframe.current = true
+      const dt = dx / pxPerSec
+      let nextT = Math.max(0, Math.min(clipDur, startT + dt))
+      // Hold Shift for frame-stepped precision while dragging.
+      if (ev.shiftKey) nextT = Math.round(nextT / FRAME_STEP) * FRAME_STEP
+      const playheadLocal = Math.max(0, Math.min(clipDur, previewTime - (clip.start_s as number)))
+      if (Math.abs((nextT - playheadLocal) * pxPerSec) <= SNAP_KF_PX) nextT = playheadLocal
+      nextT = Math.round(nextT * 100) / 100
+      const delta = nextT - startT
+      setKeyframeDragInfo({
+        clipId: clip.id,
+        left: (clip.start_s as number) * pxPerSec + nextT * pxPerSec,
+        t: nextT,
+      })
+
+      const next = Array.isArray(clip.motion_keyframes) ? [...clip.motion_keyframes] : []
+      for (const item of dragItems) {
+        if (item.ix < 0 || item.ix >= next.length) continue
+        let target = Math.max(0, Math.min(clipDur, item.start + delta))
+        if (ev.shiftKey) target = Math.round(target / FRAME_STEP) * FRAME_STEP
+        next[item.ix] = { ...next[item.ix], t: Math.round(target * 100) / 100 }
+      }
+      updateClip(clip.id, { motion_keyframes: next })
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setKeyframeDragInfo(null)
+      const latest = useStore.getState().project
+      if (!latest) return
+      const all = [
+        ...latest.video_track.clips,
+        ...latest.audio_track.clips,
+        ...latest.text_track.clips,
+        ...latest.overlay_track.clips,
+        ...(latest.extra_video_tracks ?? []).flatMap((t) => t.clips),
+        ...(latest.extra_audio_tracks ?? []).flatMap((t) => t.clips),
+        ...(latest.extra_overlay_tracks ?? []).flatMap((t) => t.clips),
+      ]
+      const after = all.find((c) => c.id === clip.id)
+      if (!after?.motion_keyframes) return
+      // click following mouseup should not trigger "jump to keyframe"
+      if (didDragKeyframe.current) {
+        setTimeout(() => { didDragKeyframe.current = false }, 0)
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
   }
 
   return (
@@ -1077,12 +1792,16 @@ function TrackRow({
         if (selectedClipId === clip.id) return true
         return x + w > -200 && x < 20000  // broad pass; parent scroll handles the rest
       }).map((clip) => {
-        const x         = clip.start_s * pxPerSec
-        const w         = Math.max(4, (clip.end_s - clip.start_s) * pxPerSec)
+        const draftForClip = resizeDraft?.clipId === clip.id ? resizeDraft : null
+        const renderClip = draftForClip
+          ? { ...clip, start_s: draftForClip.start_s, end_s: draftForClip.end_s }
+          : clip
+        const x         = renderClip.start_s * pxPerSec
+        const w         = Math.max(4, (renderClip.end_s - renderClip.start_s) * pxPerSec)
         const isSel     = selectedClipId === clip.id
         const isMultiSel = selectedClipIds.includes(clip.id)
         const inset     = track.isMain ? 3 : 2
-        const dur       = clip.end_s - clip.start_s
+        const dur       = renderClip.end_s - renderClip.start_s
 
         return (
           <div
@@ -1143,13 +1862,67 @@ function TrackRow({
               }}
             />
 
+            {/* Clip keyframes (diamond markers) */}
+            {Array.isArray(clip.motion_keyframes) && clip.motion_keyframes.length > 0 && w > 28 && (
+              <div style={{ position: 'absolute', left: 0, right: 0, top: 6, height: 10, zIndex: 18, pointerEvents: 'none' }}>
+                {clip.motion_keyframes
+                  .filter((kf: { t: number }) => typeof kf.t === 'number' && kf.t >= 0 && kf.t <= dur + 0.001)
+                  .map((kf: { t: number }, ix: number) => {
+                    const left = Math.max(6, Math.min(w - 6, kf.t * pxPerSec))
+                    const isNearPlayhead = Math.abs((clip.start_s + kf.t) - previewTime) <= 0.04
+                    const keyId = `${clip.id}:${ix}`
+                    const isSelectedKeyframe = selectedKeyframes.includes(keyId)
+                    return (
+                      <button
+                        key={`${clip.id}-kf-${ix}-${kf.t}`}
+                        onMouseDown={(e) => startKeyframeDrag(e, clip, ix)}
+                        onClick={(e) => {
+                          if (didDragKeyframe.current) {
+                            e.stopPropagation()
+                            return
+                          }
+                          if (e.ctrlKey || e.metaKey) {
+                            e.stopPropagation()
+                            setSelectedKeyframes((prev) => (
+                              prev.includes(keyId)
+                                ? prev.filter((k) => k !== keyId)
+                                : [...prev, keyId]
+                            ))
+                            return
+                          }
+                          e.stopPropagation()
+                          setSelectedKeyframes([keyId])
+                          useStore.getState().setSelectedClip(clip.id)
+                          useStore.getState().setPreviewTime(clip.start_s + kf.t)
+                        }}
+                        title={`Keyframe ${kf.t.toFixed(2)}s — arraste para mover (Shift = passo de frame)`}
+                        style={{
+                          position: 'absolute',
+                          left: left - 4,
+                          top: 0,
+                          width: 8,
+                          height: 8,
+                          transform: 'rotate(45deg)',
+                          borderRadius: 1,
+                          border: `1px solid ${isSelectedKeyframe ? '#ffffff' : isNearPlayhead ? '#ffffff' : '#a2a2c8'}`,
+                          background: isSelectedKeyframe ? '#22d4bc' : isNearPlayhead ? '#8B6BFF' : 'rgba(15,15,35,0.9)',
+                          pointerEvents: 'auto',
+                          cursor: 'pointer',
+                          padding: 0,
+                        }}
+                      />
+                    )
+                  })}
+              </div>
+            )}
+
             {/* Video: real thumbnail frames (not for image or adjustment clips) */}
             {!track.isAudio && clip.clip_type !== 'image' && clip.clip_type !== 'adjustment' && w > 20 && (
               <ThumbStrip
                 width={w}
                 isMain={track.isMain}
                 sourcePath={clip.source_path}
-                clipStart={clip.start_s}
+                clipStart={renderClip.start_s}
                 sourceOffsetS={clip.source_offset_s ?? 0}
                 pxPerSec={pxPerSec}
               />
@@ -1171,11 +1944,12 @@ function TrackRow({
               <WaveformBars
                 width={w}
                 height={track.height - inset * 2}
-                waveform={waveform}
-                clipStart={clip.start_s}
-                clipEnd={clip.end_s}
+                waveform={clip.source_waveform ? [] : (clip.clip_type === 'music' ? [] : waveform)}
+                clipStart={renderClip.start_s}
+                clipEnd={renderClip.end_s}
                 totalDuration={totalDuration}
                 sourceWaveform={clip.source_waveform}
+                volumePct={clip.volume_pct ?? 100}
               />
             )}
 
@@ -1232,6 +2006,32 @@ function TrackRow({
                       {fmtTime(dur)}
                     </span>
                   )}
+                  {clip.compound_id && w > 96 && (
+                    <span style={{
+                      marginLeft: 6,
+                      padding: '1px 4px',
+                      borderRadius: 2,
+                      background: 'rgba(139,107,255,0.72)',
+                      color: '#fff',
+                      fontSize: 8,
+                      fontWeight: 700,
+                    }}>
+                      grupo
+                    </span>
+                  )}
+                  {w > 96 && ((clip.animation_in && clip.animation_in !== 'none') || (clip.animation_out && clip.animation_out !== 'none')) && (
+                    <span style={{
+                      marginLeft: 6,
+                      padding: '1px 4px',
+                      borderRadius: 2,
+                      background: 'rgba(34,212,188,0.7)',
+                      color: '#031b1a',
+                      fontSize: 8,
+                      fontWeight: 700,
+                    }}>
+                      anim
+                    </span>
+                  )}
                 </div>
               )
             )}
@@ -1245,11 +2045,16 @@ function TrackRow({
               onClick={(e) => e.stopPropagation()}
               title="Arrastar para aparar início"
             >
-              <div style={{
-                position: 'absolute', left: 0, top: 4, bottom: 4, width: 3,
-                background: '#fff', borderRadius: '0 2px 2px 0',
-                boxShadow: '0 0 4px rgba(255,255,255,0.5)',
-              }} />
+                  <div style={{
+                    position: 'absolute', left: 0, top: 4, bottom: 4, width: 3,
+                    background: '#fff', borderRadius: '0 2px 2px 0',
+                    boxShadow: '0 0 4px rgba(255,255,255,0.5)',
+                  }} />
+                  {draftForClip?.side === 'left' && (
+                    <span style={{ position: 'absolute', top: 4, left: 5, fontSize: 9, color: '#fff', background: 'rgba(0,0,0,0.65)', padding: '1px 3px', borderRadius: 2 }}>
+                      {fmtTime(renderClip.start_s)}
+                    </span>
+                  )}
             </div>
             <div
               className="absolute right-0 top-0 bottom-0 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1258,19 +2063,124 @@ function TrackRow({
               onClick={(e) => e.stopPropagation()}
               title="Arrastar para aparar fim"
             >
-              <div style={{
-                position: 'absolute', right: 0, top: 4, bottom: 4, width: 3,
-                background: '#fff', borderRadius: '2px 0 0 2px',
-                boxShadow: '0 0 4px rgba(255,255,255,0.5)',
-              }} />
+                  <div style={{
+                    position: 'absolute', right: 0, top: 4, bottom: 4, width: 3,
+                    background: '#fff', borderRadius: '2px 0 0 2px',
+                    boxShadow: '0 0 4px rgba(255,255,255,0.5)',
+                  }} />
+                  {draftForClip?.side === 'right' && (
+                    <span style={{ position: 'absolute', top: 4, right: 5, fontSize: 9, color: '#fff', background: 'rgba(0,0,0,0.65)', padding: '1px 3px', borderRadius: 2 }}>
+                      {fmtTime(renderClip.end_s)}
+                    </span>
+                  )}
             </div>
           </div>
         )
       })} {/* end virtualized clip map */}
 
+      {!hidden && transitionMarkers.map((marker) => (
+        <div
+          key={marker.id}
+          title={`${marker.label} · ${marker.duration.toFixed(2)}s`}
+          style={{
+            position: 'absolute',
+            left: marker.x - marker.width / 2,
+            width: marker.width,
+            top: 5,
+            bottom: 5,
+            zIndex: 22,
+            pointerEvents: 'none',
+            border: `1px solid ${marker.color}`,
+            background: `${marker.color}22`,
+            borderRadius: 3,
+            boxShadow: `0 0 6px ${marker.color}55`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: 7,
+              height: 7,
+              transform: 'rotate(45deg)',
+              border: `1px solid ${marker.color}`,
+              background: '#0d1020',
+              boxShadow: `0 0 4px ${marker.color}77`,
+            }}
+          />
+          {marker.width >= 24 && (
+            <span
+              style={{
+                position: 'absolute',
+                bottom: -14,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                fontSize: 9,
+                color: marker.color,
+                whiteSpace: 'nowrap',
+                textShadow: '0 1px 2px rgba(0,0,0,0.65)',
+              }}
+            >
+              {marker.label}
+            </span>
+          )}
+        </div>
+      ))}
+
+      {keyframeDragInfo && (
+        <div
+          style={{
+            position: 'absolute',
+            left: keyframeDragInfo.left,
+            top: 2,
+            transform: 'translate(-50%, -115%)',
+            pointerEvents: 'none',
+            zIndex: 45,
+            background: 'rgba(8,8,20,0.96)',
+            border: '1px solid #2a2a44',
+            borderRadius: 4,
+            padding: '1px 5px',
+            fontSize: 10,
+            lineHeight: 1.2,
+            color: '#d8d8ef',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {keyframeDragInfo.t.toFixed(2)}s
+        </div>
+      )}
+
       {/* Context menu (right-click on clip) */}
       {ctxMenu && (() => {
         const ctxClip = clips.find((c: any) => c.id === ctxMenu.clipId) as any
+        const ctxDur = ctxClip ? Math.max(0.01, (ctxClip.end_s as number) - (ctxClip.start_s as number)) : 0.01
+        const ctxLocalPlayhead = ctxClip
+          ? Math.max(0, Math.min(ctxDur, previewTime - (ctxClip.start_s as number)))
+          : 0
+        const ctxKfs = (ctxClip?.motion_keyframes ?? []) as Array<{
+          t: number
+          easing?: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out'
+          position_x?: number
+          position_y?: number
+          scale_pct?: number
+          opacity_pct?: number
+          volume_pct?: number
+        }>
+        const ctxKfAtPlayheadIx = ctxKfs.findIndex((kf) => Math.abs(kf.t - ctxLocalPlayhead) <= 0.04)
+        const ctxNearestKfIx = ctxKfs.length === 0
+          ? -1
+          : ctxKfs.reduce((best, kf, ix) => (
+              best < 0 || Math.abs(kf.t - ctxLocalPlayhead) < Math.abs(ctxKfs[best].t - ctxLocalPlayhead) ? ix : best
+            ), -1 as number)
+        const ctxCanLayerMove = !!ctxClip && (
+          ctxClip.clip_type === 'image'
+          || ctxClip.clip_type === 'video_overlay'
+          || ctxClip.clip_type === 'video'
+          || ctxClip.clip_type === 'sticker'
+          || ctxClip.clip_type === 'text'
+        )
+
         return (
           <div
             className="fixed z-50 bg-bg-panel border border-border rounded-lg shadow-2xl py-1 min-w-[160px]"
@@ -1298,11 +2208,128 @@ function TrackRow({
             <button
               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors"
               onClick={() => {
+                useStore.getState().setSelectedClip(ctxMenu.clipId)
+                useStore.getState().duplicateSelectionAtPlayhead()
+                setCtxMenu(null)
+              }}
+            >
+              <Copy size={11} /> Duplicar no playhead (Ctrl+D)
+            </button>
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors"
+              onClick={() => {
                 splitClip(ctxMenu.clipId, previewTime)
                 setCtxMenu(null)
               }}
             >
               <Scissors size={11} /> Dividir no playhead
+            </button>
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!ctxCanLayerMove}
+              onClick={() => {
+                if (!ctxClip || !ctxCanLayerMove) { setCtxMenu(null); return }
+                const next = Math.max(-200, Math.min(200, Number(ctxClip.z_order ?? 0) + 1))
+                updateClip(ctxMenu.clipId, { z_order: next })
+                setCtxMenu(null)
+              }}
+            >
+              <ArrowUp size={11} /> Trazer camada para frente
+            </button>
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!ctxCanLayerMove}
+              onClick={() => {
+                if (!ctxClip || !ctxCanLayerMove) { setCtxMenu(null); return }
+                const next = Math.max(-200, Math.min(200, Number(ctxClip.z_order ?? 0) - 1))
+                updateClip(ctxMenu.clipId, { z_order: next })
+                setCtxMenu(null)
+              }}
+            >
+              <ArrowDown size={11} /> Enviar camada para trás
+            </button>
+            <div className="border-t border-border my-1" />
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors"
+              onClick={() => {
+                if (!ctxClip) { setCtxMenu(null); return }
+                const t = Math.round(ctxLocalPlayhead * 100) / 100
+                const next = [...ctxKfs]
+                const ix = next.findIndex((kf) => Math.abs(kf.t - t) <= 0.04)
+                const frame = {
+                  t,
+                  easing: 'linear' as const,
+                  position_x: ctxClip.position_x ?? 0,
+                  position_y: ctxClip.position_y ?? 0,
+                  scale_pct: ctxClip.scale_pct ?? 100,
+                  opacity_pct: ctxClip.opacity_pct ?? 100,
+                  volume_pct: ctxClip.volume_pct ?? 100,
+                }
+                if (ix >= 0) next[ix] = { ...next[ix], ...frame }
+                else next.push(frame)
+                next.sort((a, b) => a.t - b.t)
+                updateClip(ctxMenu.clipId, { motion_keyframes: next })
+                setCtxMenu(null)
+              }}
+            >
+              <Plus size={11} /> Keyframe no playhead
+            </button>
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={ctxNearestKfIx < 0}
+              onClick={() => {
+                if (!ctxClip || ctxNearestKfIx < 0) { setCtxMenu(null); return }
+                const t = Math.round(ctxLocalPlayhead * 100) / 100
+                const src = ctxKfs[ctxNearestKfIx]
+                const next = [...ctxKfs]
+                const ix = next.findIndex((kf) => Math.abs(kf.t - t) <= 0.04)
+                const duplicated = { ...src, t }
+                if (ix >= 0) next[ix] = duplicated
+                else next.push(duplicated)
+                next.sort((a, b) => a.t - b.t)
+                updateClip(ctxMenu.clipId, { motion_keyframes: next })
+                setCtxMenu(null)
+              }}
+            >
+              <Copy size={11} /> Duplicar keyframe no playhead
+            </button>
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={ctxNearestKfIx < 0}
+              onClick={() => {
+                if (!ctxClip || ctxNearestKfIx < 0) { setCtxMenu(null); return }
+                const t = Math.round(ctxLocalPlayhead * 100) / 100
+                const next = [...ctxKfs]
+                next[ctxNearestKfIx] = { ...next[ctxNearestKfIx], t }
+                next.sort((a, b) => a.t - b.t)
+                updateClip(ctxMenu.clipId, { motion_keyframes: next })
+                setCtxMenu(null)
+              }}
+            >
+              <Pencil size={11} /> Mover keyframe p/ playhead
+            </button>
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={ctxKfAtPlayheadIx < 0}
+              onClick={() => {
+                if (!ctxClip || ctxKfAtPlayheadIx < 0) { setCtxMenu(null); return }
+                const next = ctxKfs.filter((_, ix) => ix !== ctxKfAtPlayheadIx)
+                updateClip(ctxMenu.clipId, { motion_keyframes: next })
+                setCtxMenu(null)
+              }}
+            >
+              <Trash2 size={11} /> Remover keyframe no playhead
+            </button>
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={ctxKfs.length === 0}
+              onClick={() => {
+                if (!ctxClip || ctxKfs.length === 0) { setCtxMenu(null); return }
+                updateClip(ctxMenu.clipId, { motion_keyframes: [] })
+                setCtxMenu(null)
+              }}
+            >
+              <Trash2 size={11} /> Limpar keyframes
             </button>
 
             {/* Linked-clip toggle: only show if a pair exists */}
@@ -1329,6 +2356,15 @@ function TrackRow({
             })()}
 
             <div className="border-t border-border my-1" />
+            <button
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-white hover:bg-bg-surface transition-colors"
+              onClick={() => {
+                closeGapAfterClip(ctxMenu.clipId)
+                setCtxMenu(null)
+              }}
+            >
+              <ChevronsLeft size={11} /> Fechar gap a direita
+            </button>
             <button
               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-bg-surface transition-colors"
               onClick={() => {
@@ -1460,15 +2496,18 @@ function ThumbFrame({ src, width }: { src: string; width: number }) {
 function WaveformBars({
   width, height,
   waveform = [], clipStart = 0, clipEnd = 0, totalDuration = 0,
-  sourceWaveform,
+  sourceWaveform, volumePct = 100,
 }: {
   width: number; height: number
   waveform?: number[]; clipStart?: number; clipEnd?: number; totalDuration?: number
   sourceWaveform?: number[]   // F5: per-clip waveform for imported music
+  volumePct?: number
 }) {
   const barW  = 2
   const gap   = 1
   const count = Math.max(1, Math.floor((width - 8) / (barW + gap)))
+  const volumeScale = Math.max(0, Math.min(2, volumePct / 100))
+  const applyVolume = (v: number) => Math.max(0.02, Math.min(1, v * volumeScale))
 
   // Prefer per-clip waveform (imported audio) over sliced global waveform
   let bars: number[]
@@ -1476,7 +2515,7 @@ function WaveformBars({
     // F5: use the imported audio's own waveform directly
     bars = Array.from({ length: count }, (_, i) => {
       const idx = Math.floor((i / count) * sourceWaveform.length)
-      return Math.max(0.05, Math.min(1, sourceWaveform[idx] ?? 0))
+      return applyVolume(Math.max(0.05, Math.min(1, sourceWaveform[idx] ?? 0)))
     })
   } else if (waveform.length > 0 && totalDuration > 0 && clipEnd > clipStart) {
     const startRatio = clipStart / totalDuration
@@ -1487,13 +2526,13 @@ function WaveformBars({
     bars = Array.from({ length: count }, (_, i) => {
       const src = (i / count) * slice.length
       const val = slice[Math.floor(src)] ?? 0
-      return Math.max(0.05, Math.min(1, val))
+      return applyVolume(Math.max(0.05, Math.min(1, val)))
     })
   } else {
     // Fallback: synthetic waveform
     bars = Array.from({ length: count }, (_, i) => {
       const v = (Math.sin(i * 1.7 + 0.3) * 0.45 + Math.sin(i * 0.5 + 2.1) * 0.4 + 0.5) * 0.85 + 0.15
-      return Math.max(0.1, Math.min(1, v))
+      return applyVolume(Math.max(0.1, Math.min(1, v)))
     })
   }
 
@@ -1594,16 +2633,41 @@ function ClipLinkOverlay({
 // ═══════════════════════════════════════════════════════════════════════════════
 function Toolbar({
   zoom, onZoomIn, onZoomOut, onZoomFit,
-  onAddMedia, onSplit, onDelete, onUndo, onRedo, canUndo, canRedo, hasSelection,
+  onAddMedia, onAddText, onDuplicate, onSplit, onDelete, onCloseGap, onUndo, onRedo, canUndo, canRedo, hasSelection,
+  onLayerUp, onLayerDown, canLayerMove,
+  onCompile, onUncompile, canCompile, canUncompile, onAddMarker,
   snapEnabled, onToggleSnap,
+  rippleMode, onToggleRipple,
+  onOpenAudioTab, onOpenEffectsTab,
+  recording, recordingSeconds, onToggleRecording,
+  onAddVideoTrack, onAddAudioTrack,
 }: {
   zoom: number; onZoomIn: () => void; onZoomOut: () => void; onZoomFit: () => void
   onAddMedia: () => void
+  onAddText: () => void
+  onDuplicate: () => void
   onSplit: () => void; onDelete: () => void
+  onCloseGap: () => void
   onUndo: () => void; onRedo: () => void
   canUndo: boolean; canRedo: boolean; hasSelection: boolean
+  onLayerUp: () => void; onLayerDown: () => void; canLayerMove: boolean
+  onCompile: () => void; onUncompile: () => void; canCompile: boolean; canUncompile: boolean
+  onAddMarker: () => void
   snapEnabled: boolean; onToggleSnap: () => void
+  rippleMode: boolean; onToggleRipple: () => void
+  onOpenAudioTab: () => void
+  onOpenEffectsTab: () => void
+  recording: boolean
+  recordingSeconds: number
+  onToggleRecording: () => void
+  onAddVideoTrack: () => void
+  onAddAudioTrack: () => void
 }) {
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const chooseAdd = (action: () => void) => {
+    action()
+    setAddMenuOpen(false)
+  }
   return (
     <div
       className="flex items-center flex-shrink-0 px-2 gap-0.5"
@@ -1612,15 +2676,42 @@ function Toolbar({
     >
       {/* Left: Add + cursor */}
       <TBtn icon={<Plus size={14} />}           title="Adicionar mídia"  onClick={onAddMedia} />
-      <TBtn icon={<ChevronDown size={13} />}    title="Ferramentas" />
+      <TBtn icon={<Type size={14} />}           title="Adicionar texto no cursor" onClick={onAddText} />
+      <div className="relative">
+        <TBtn icon={<ChevronDown size={13} />} title="Adicionar faixa" onClick={() => setAddMenuOpen((v) => !v)} />
+        {addMenuOpen && (
+          <div
+            className="absolute left-0 top-8 z-50 min-w-40 rounded border border-border bg-bg-panel shadow-xl overflow-hidden"
+            onMouseLeave={() => setAddMenuOpen(false)}
+          >
+            <button className="block w-full px-3 py-2 text-left text-[11px] text-text-muted hover:bg-bg-surface hover:text-white" onClick={() => chooseAdd(onAddMedia)}>
+              Adicionar mídia
+            </button>
+            <button className="block w-full px-3 py-2 text-left text-[11px] text-text-muted hover:bg-bg-surface hover:text-white" onClick={() => chooseAdd(onAddVideoTrack)}>
+              Nova faixa de vídeo
+            </button>
+            <button className="block w-full px-3 py-2 text-left text-[11px] text-text-muted hover:bg-bg-surface hover:text-white" onClick={() => chooseAdd(onAddAudioTrack)}>
+              Nova faixa de áudio
+            </button>
+          </div>
+        )}
+      </div>
       <Sep />
       <TBtn icon={<Undo2 size={14} />}          title="Desfazer (Ctrl+Z)"  onClick={onUndo}   disabled={!canUndo} />
       <TBtn icon={<Redo2 size={14} />}          title="Refazer (Ctrl+Y)"   onClick={onRedo}   disabled={!canRedo} />
       <Sep />
+      <TBtn icon={<Copy size={14} />}           title="Duplicar seleção no playhead" onClick={onDuplicate} disabled={!hasSelection} />
       <TBtn icon={<Scissors size={14} />}       title="Dividir no cursor (S)" onClick={onSplit}  disabled={!hasSelection} />
       <TBtn icon={<Trash2 size={14} />}         title="Excluir clipe (Del)"   onClick={onDelete} disabled={!hasSelection} />
-      <TBtn icon={<Zap size={14} />}            title="Velocidade" />
-      <TBtn icon={<Volume2 size={14} />}        title="Volume" />
+      <TBtn icon={<ChevronsLeft size={14} />}   title="Fechar gap a direita do clipe selecionado" onClick={onCloseGap} disabled={!hasSelection} />
+      <TBtn icon={<Layers size={14} />}         title="Ações de camada" disabled={!canLayerMove} />
+      <TBtn icon={<Flag size={14} />}           title="Adicionar marcador no playhead" onClick={onAddMarker} />
+      <TBtn icon={<Layers size={14} />}         title="Compilar selecao de clipes" onClick={onCompile} disabled={!canCompile} />
+      <TBtn icon={<Minus size={13} />}          title="Descompilar grupo selecionado" onClick={onUncompile} disabled={!canUncompile} />
+      <TBtn icon={<ArrowUp size={14} />}        title="Trazer camada para frente" onClick={onLayerUp} disabled={!canLayerMove} />
+      <TBtn icon={<ArrowDown size={14} />}      title="Enviar camada para trás" onClick={onLayerDown} disabled={!canLayerMove} />
+      <TBtn icon={<Zap size={14} />}            title="Abrir aba de efeitos" onClick={onOpenEffectsTab} />
+      <TBtn icon={<Volume2 size={14} />}        title="Abrir aba de áudio" onClick={onOpenAudioTab} />
       <TBtn icon={<Sliders size={14} />}        title="Adicionar camada de ajuste (color grading global)"
             onClick={() => useStore.getState().addAdjustmentLayer()} />
       <Sep />
@@ -1638,6 +2729,52 @@ function Toolbar({
       >
         <Magnet size={14} />
       </button>
+      <button
+        title={rippleMode ? 'Ripple delete ATIVO — excluir fecha o gap automaticamente' : 'Ripple delete DESATIVADO — excluir mantém gap'}
+        onClick={onToggleRipple}
+        className="flex items-center justify-center rounded flex-shrink-0 transition-colors"
+        style={{
+          width: 28, height: 26,
+          color:      rippleMode ? '#ffb454' : '#3e3e58',
+          background: rippleMode ? 'rgba(255,180,84,0.14)' : 'transparent',
+          border: 'none', cursor: 'pointer',
+        }}
+      >
+        <Scissors size={14} />
+      </button>
+      <Sep />
+      <button
+        title={recording ? 'Parar gravação de áudio (microfone)' : 'Gravar áudio em tempo real (microfone)'}
+        onClick={onToggleRecording}
+        className="flex items-center justify-center rounded flex-shrink-0 transition-colors"
+        style={{
+          width: 28,
+          height: 26,
+          color: recording ? '#fda4af' : '#3e3e58',
+          background: recording ? 'rgba(244,63,94,0.2)' : 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+        }}
+      >
+        {recording ? <Square size={13} /> : <Mic size={14} />}
+      </button>
+      {recording && (
+        <div
+          className="tabular-nums"
+          title="Tempo de gravação"
+          style={{
+            marginLeft: 4,
+            fontSize: 10,
+            color: '#fda4af',
+            background: '#1a0f16',
+            border: '1px solid #3a1a27',
+            borderRadius: 3,
+            padding: '2px 6px',
+          }}
+        >
+          REC {fmtTime(recordingSeconds)}
+        </div>
+      )}
 
       <div className="flex-1" />
 

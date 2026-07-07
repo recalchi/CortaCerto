@@ -42,8 +42,12 @@ def _find_in_winget_packages(base: Path) -> str | None:
     """Search WinGet package directory for any ffmpeg.exe."""
     if not base.is_dir():
         return None
-    for candidate in base.glob("Gyan.FFmpeg*/**/ffmpeg.exe"):
-        return str(candidate.parent)
+    for package_dir in base.glob("Gyan.FFmpeg*"):
+        if not package_dir.is_dir():
+            continue
+        for candidate in package_dir.rglob("ffmpeg.*"):
+            if candidate.is_file() and candidate.name.lower() == "ffmpeg.exe":
+                return str(candidate.parent)
     return None
 
 

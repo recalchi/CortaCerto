@@ -6,7 +6,7 @@ import { Preview } from './components/Preview/Preview'
 import { Timeline } from './components/Timeline/Timeline'
 import { Inspector } from './components/Inspector/Inspector'
 import { api } from './api/client'
-import { useStore, type ProjectState } from './store/useStore'
+import { useStore, buildPersistableProject, type ProjectState } from './store/useStore'
 import { getRecentFiles, addRecentFile } from './utils/recentFiles'
 
 // â”€â”€ Welcome overlay (shown when no project is loaded) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -38,7 +38,7 @@ function WelcomeOverlay() {
     setLoading(true)
     try {
       const proj = await api.post('/api/load-project', { path: filePath })
-      setProject(proj.data)
+      setProject({ ...proj.data, _projectPath: filePath })
       setPreviewTime(0)
       addRecentFile(filePath, 'project')
       setRecents(getRecentFiles())
@@ -93,13 +93,13 @@ function WelcomeOverlay() {
             </div>
             <div>
               <h1 className="text-xl font-bold text-white tracking-tight">CortaCerto</h1>
-              <p className="text-xs text-text-dim">Editor com corte automÃ¡tico</p>
+              <p className="text-xs text-text-dim">Editor com corte automatico</p>
             </div>
           </div>
 
           {/* Features summary */}
           <div className="w-full space-y-1.5 text-xs text-text-muted">
-            {['âœ‚ï¸  Remove silÃªncio automaticamente', 'ðŸŽ¬  Preview em tempo real com filtros', 'ðŸŽµ  ImportaÃ§Ã£o de trilha sonora', 'âš¡  ExportaÃ§Ã£o rÃ¡pida com ffmpeg'].map((f) => (
+            {['Remove silencio automaticamente', 'Preview em tempo real com filtros', 'Importacao de trilha sonora', 'Exportacao rapida com ffmpeg'].map((f) => (
               <div key={f} className="flex items-center gap-2">{f}</div>
             ))}
           </div>
@@ -112,8 +112,8 @@ function WelcomeOverlay() {
               className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover disabled:opacity-60 disabled:cursor-wait text-white font-semibold text-sm px-6 py-3 rounded-xl transition-colors shadow-lg shadow-accent/20"
             >
               {loading
-                ? <><Loader2 size={16} className="animate-spin" /> Analisandoâ€¦</>
-                : <><Upload size={16} /> Abrir VÃ­deo</>
+                ? <><Loader2 size={16} className="animate-spin" /> Analisando...</>
+                : <><Upload size={16} /> Abrir Video</>
               }
             </button>
             <button
@@ -126,7 +126,7 @@ function WelcomeOverlay() {
           </div>
 
           <p className="text-[11px] text-text-dim text-center">
-            {dragging ? 'Solte para abrir' : 'ou arraste um arquivo de vÃ­deo aqui'}
+            {dragging ? 'Solte para abrir' : 'ou arraste um arquivo de video aqui'}
           </p>
         </div>
 
@@ -156,7 +156,7 @@ function WelcomeOverlay() {
                       {f.name}
                     </p>
                     <p className="text-[9px] text-text-dim truncate mt-0.5 opacity-60">
-                      {f.type === 'project' ? 'projeto' : 'vÃ­deo'}
+                      {f.type === 'project' ? 'projeto' : 'video'}
                     </p>
                   </span>
                 </button>
@@ -339,7 +339,30 @@ function ResizablePane({
 
 // â”€â”€ App root â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function App() {
-  const { project, setProject, workspaceLayout, setWorkspaceLayout } = useStore()
+  const {
+    project,
+    setProject,
+    setPreviewTime,
+    workspaceLayout,
+    setWorkspaceLayout,
+    projectName,
+    projectFilePath,
+    isDirty,
+    markSaved,
+  } = useStore()
+
+  useEffect(() => {
+    let cancelled = false
+    api.get('/api/settings')
+      .then((res) => {
+        if (cancelled) return
+        const theme = res.data?.general?.ui_theme || 'violet'
+        document.body.classList.remove('theme-violet', 'theme-graphite', 'theme-midnight', 'theme-emerald')
+        document.body.classList.add(`theme-${theme}`)
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -365,18 +388,110 @@ export default function App() {
     localStorage.setItem('cortacerto_workspace_layout', workspaceLayout)
   }, [workspaceLayout])
 
-  // On mount: restore project from backend, or fall back to localStorage autosave.
+  // On mount: bootstrap from startup target, else restore project from backend
+  // or localStorage autosave.
   //
   // RACE GUARD (bug 3.5): if the user opens a video before this async restore
   // completes, we'd otherwise OVERWRITE their fresh selection with whatever was
   // in /api/project (stale server state) or localStorage (stale autosave).
-  // We check useStore.getState().project at the moment of resolution â€” if a
+  // We check useStore.getState().project at the moment of resolution; if a
   // project is already loaded, we silently abort the restore.
   useEffect(() => {
     const restoreIfNoProjectLoaded = (data: ProjectState | null) => {
       if (!data?.loaded || !data?.videoPath) return
-      if (useStore.getState().project) return   // user already loaded something â€” don't clobber
+      if (useStore.getState().project) return   // user already loaded something; don't clobber
       setProject(data)
+    }
+
+    const boot = new URLSearchParams(window.location.search)
+    const bootKind = (boot.get('boot_kind') || '').trim()
+    const bootPath = (boot.get('boot_path') || '').trim()
+    const bootName = (boot.get('boot_name') || '').trim()
+
+    const clearBootParams = () => {
+      if (!boot.has('boot_kind') && !boot.has('boot_path') && !boot.has('boot_name')) return
+      const next = new URLSearchParams(window.location.search)
+      next.delete('boot_kind')
+      next.delete('boot_path')
+      next.delete('boot_name')
+      const qs = next.toString()
+      const nextUrl = `${window.location.pathname}${qs ? `?${qs}` : ''}`
+      window.history.replaceState({}, '', nextUrl)
+    }
+
+    if (bootPath && (bootKind === 'video' || bootKind === 'project' || bootKind === 'new')) {
+      const bootstrap = async () => {
+        try {
+          if (bootKind === 'video') {
+            const { exportSettings } = useStore.getState()
+            const res = await api.post('/api/open-project', {
+              path: bootPath,
+              silence_style: exportSettings.silenceStyle,
+              auto_cut: exportSettings.silenceEnabled,
+            })
+            if (!useStore.getState().project) {
+              setProject(res.data)
+              setPreviewTime(0)
+              addRecentFile(bootPath, 'video')
+            }
+          } else if (bootKind === 'project') {
+            const res = await api.post('/api/load-project', { path: bootPath })
+            if (!useStore.getState().project) {
+              setProject({ ...res.data, _projectPath: bootPath })
+              setPreviewTime(0)
+              addRecentFile(bootPath, 'project')
+            }
+          } else {
+            const name = bootName || bootPath.replace(/\\/g, '/').split('/').pop()?.replace(/\.[^.]+$/, '') || 'Projeto sem nome'
+            const blankProject: ProjectState = {
+              loaded: true,
+              videoPath: null,
+              duration_s: 0,
+              waveform: [],
+              aspect_ratio: '16:9',
+              video_track: { name: 'Video', clips: [] },
+              audio_track: { name: 'Audio', clips: [] },
+              text_track: { name: 'Texto', clips: [] },
+              overlay_track: { name: 'Overlay', clips: [] },
+              extra_video_tracks: [],
+              extra_audio_tracks: [],
+              extra_overlay_tracks: [],
+              removed_ranges: [],
+              saved_time_s: 0,
+            }
+            const projectWithName = { ...blankProject, _projectName: name, _projectPath: bootPath }
+            await api.post('/api/save-project', { path: bootPath, project: projectWithName })
+            if (!useStore.getState().project) {
+              setProject(projectWithName as ProjectState)
+              setPreviewTime(0)
+              addRecentFile(bootPath, 'project')
+            }
+          }
+        } catch {
+          // fall through to standard restore below
+          api.get('/api/project')
+            .then((res) => {
+              if (res.data?.loaded) {
+                restoreIfNoProjectLoaded(res.data)
+              } else {
+                try {
+                  const saved = localStorage.getItem(AUTOSAVE_KEY)
+                  if (saved) restoreIfNoProjectLoaded(JSON.parse(saved))
+                } catch { /* ignore */ }
+              }
+            })
+            .catch(() => {
+              try {
+                const saved = localStorage.getItem(AUTOSAVE_KEY)
+                if (saved) restoreIfNoProjectLoaded(JSON.parse(saved))
+              } catch { /* ignore */ }
+            })
+        } finally {
+          clearBootParams()
+        }
+      }
+      bootstrap()
+      return
     }
 
     api.get('/api/project')
@@ -387,7 +502,7 @@ export default function App() {
           try {
             const saved = localStorage.getItem(AUTOSAVE_KEY)
             if (saved) restoreIfNoProjectLoaded(JSON.parse(saved))
-          } catch { /* corrupt autosave â€” ignore */ }
+              } catch { /* corrupt autosave; ignore */ }
         }
       })
       .catch(() => {
@@ -398,14 +513,54 @@ export default function App() {
       })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-save project state to localStorage (debounced 2 s)
+  // Auto-save project state to localStorage and, when the project already has
+  // a .ccproj path, silently persist to disk too. This keeps "Salvar rapido"
+  // and reopen behavior aligned with the actual editor state.
   useEffect(() => {
-    if (!project?.videoPath) return
+    if (!project?.loaded) return
+    const snapshot = buildPersistableProject(project, projectName, projectFilePath)
     const timer = setTimeout(() => {
-      try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(project)) } catch { /* quota full */ }
-    }, 2000)
+      try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snapshot)) } catch { /* quota full */ }
+    }, 1200)
     return () => clearTimeout(timer)
-  }, [project])
+  }, [project, projectName, projectFilePath])
+
+  useEffect(() => {
+    if (!project?.loaded || !projectFilePath || !isDirty) return
+    const snapshot = buildPersistableProject(project, projectName, projectFilePath)
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      api.post('/api/save-project', { path: projectFilePath, project: snapshot })
+        .then(() => {
+          if (!cancelled) markSaved()
+        })
+        .catch((err) => {
+          console.warn('[CortaCerto] autosave .ccproj failed:', err)
+        })
+    }, 3500)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [project, projectName, projectFilePath, isDirty, markSaved])
+
+  useEffect(() => {
+    if (!project?.loaded || !projectFilePath) return
+    let cancelled = false
+    const ping = () => {
+      if (cancelled) return
+      api.post('/api/project-usage/ping', {
+        path: projectFilePath,
+        name: projectName || projectFilePath.replace(/\\/g, '/').split('/').pop()?.replace(/\.[^.]+$/, '') || 'Projeto',
+      }).catch(() => {})
+    }
+    ping()
+    const timer = window.setInterval(ping, 30000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [project?.loaded, projectFilePath, projectName])
 
   // Global drag-and-drop router.
   // WebView2 has erratic drop handling and our local React onDrop handlers
@@ -439,7 +594,7 @@ export default function App() {
     let dragEnterCount = 0
 
     const onDragEnter = (e: DragEvent) => {
-      // WebView2 sometimes omits 'Files' from types â€” be permissive: show overlay
+      // WebView2 sometimes omits 'Files' from types; be permissive: show overlay
       // for any drag that ISN'T our internal clip drag.
       if (e.dataTransfer?.types.includes('application/x-cortacerto-clip')) return
       dragEnterCount++
@@ -495,13 +650,13 @@ export default function App() {
     }
 
     const onDrop = async (e: DragEvent) => {
-      // Always prevent default first â€” otherwise WebView2 navigates to file://
+      // Always prevent default first; otherwise WebView2 navigates to file://
       e.preventDefault()
       dragEnterCount = 0
       overlayEl.style.display = 'none'
 
       if (!e.dataTransfer) return
-      // Internal clip drags (MediaTab â†’ Timeline) use a custom MIME type;
+      // Internal clip drags (MediaTab -> Timeline) use a custom MIME type;
       // let the local Timeline drop handler process them.
       if (e.dataTransfer.types.includes('application/x-cortacerto-clip')) return
 
@@ -514,7 +669,7 @@ export default function App() {
       if (uriList) {
         for (const line of uriList.split('\n').map((l) => l.trim()).filter(Boolean)) {
           if (line.startsWith('file:///')) {
-            // Decode file:///C:/path â†’ C:\path (Windows) or /path (Unix)
+            // Decode file:///C:/path -> C:\path (Windows) or /path (Unix)
             let p = decodeURIComponent(line.replace(/^file:\/\/\//, ''))
             if (/^[a-zA-Z]:/.test(p)) p = p.replace(/\//g, '\\')
             else p = '/' + p
@@ -568,9 +723,38 @@ export default function App() {
       <Header />
 
       {workspaceLayout === 'capcut' ? <CapCutWorkspace project={project} /> : <DefaultWorkspace project={project} />}
+      <RenderStatusFooter />
     </div>
   )
 }
+
+function RenderStatusFooter() {
+  const { isRendering, renderProgress, renderMessage, renderError, renderOutputPath } = useStore()
+  if (!isRendering && !renderError && !renderOutputPath) return null
+  const statusText = isRendering
+    ? (renderMessage || 'Exportando video...')
+    : renderError
+      ? renderError
+      : renderOutputPath
+        ? `Exportado: ${renderOutputPath.replace(/\\/g, '/').split('/').pop()}`
+        : ''
+  return (
+    <div className="h-8 flex-shrink-0 border-t border-border bg-black/80 px-3 flex items-center gap-3 text-[11px] text-text-muted">
+      <span className={`font-medium ${renderError ? 'text-red-300' : isRendering ? 'text-accent' : 'text-emerald-300'}`}>
+        {renderError ? 'Erro no render' : isRendering ? 'Renderizando' : 'Concluido'}
+      </span>
+      <div className="h-1.5 w-44 rounded-full bg-bg-surface overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-300 ${renderError ? 'bg-red-400' : 'bg-accent'}`}
+          style={{ width: `${renderError ? 100 : Math.max(0, Math.min(100, renderProgress))}%` }}
+        />
+      </div>
+      <span className="w-10 text-right tabular-nums">{Math.round(renderError ? 100 : renderProgress)}%</span>
+      <span className="min-w-0 flex-1 truncate" title={statusText}>{statusText}</span>
+    </div>
+  )
+}
+
 function DefaultWorkspace({ project }: { project: ProjectState | null }) {
   const [sizes, setSizes] = useLayoutSizes()
 
@@ -689,10 +873,145 @@ function InspectorPanel({ className = '', width }: { className?: string; width?:
       <div className="h-8 border-b border-border flex items-center px-3 bg-bg-panel">
         <span className="text-[10px] text-text-dim uppercase tracking-wider font-semibold">Propriedades</span>
       </div>
+      <LayersPanel />
       <div className="flex-1 overflow-hidden">
         <Inspector />
       </div>
     </aside>
+  )
+}
+
+function LayersPanel() {
+  const {
+    project,
+    selectedClipId,
+    setSelectedClip,
+    updateClip,
+    trackStates,
+    setTrackState,
+  } = useStore()
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('cc_layers_panel_collapsed') === '1')
+
+  useEffect(() => {
+    localStorage.setItem('cc_layers_panel_collapsed', collapsed ? '1' : '0')
+  }, [collapsed])
+
+  if (!project) return null
+
+  const sections = [
+    { id: 'overlay', stateId: 'overlay', label: 'Overlay', muted: false, hidden: trackStates.overlay?.hidden, clips: project.overlay_track.clips },
+    ...(project.extra_overlay_tracks ?? []).map((t, ix) => {
+      const stateId = `overlay-${ix + 1}`
+      return { id: `overlay_${ix + 1}`, stateId, label: t.name || `Overlay ${ix + 2}`, muted: false, hidden: trackStates[stateId]?.hidden, clips: t.clips }
+    }),
+    { id: 'text', stateId: 'text', label: 'Texto', muted: false, hidden: trackStates.text?.hidden, clips: project.text_track.clips },
+    { id: 'video', stateId: 'video', label: 'Video', muted: false, hidden: trackStates.video?.hidden, clips: project.video_track.clips },
+    ...(project.extra_video_tracks ?? []).map((t, ix) => {
+      const stateId = `video-${ix + 1}`
+      return { id: `video_${ix + 1}`, stateId, label: t.name || `Video ${ix + 2}`, muted: false, hidden: trackStates[stateId]?.hidden, clips: t.clips }
+    }),
+    { id: 'audio', stateId: 'audio', label: 'Audio', muted: trackStates.audio?.muted, hidden: trackStates.audio?.hidden, clips: project.audio_track.clips },
+    ...(project.extra_audio_tracks ?? []).map((t, ix) => {
+      const stateId = `audio-${ix + 1}`
+      return { id: `audio_${ix + 1}`, stateId, label: t.name || `Audio ${ix + 2}`, muted: trackStates[stateId]?.muted, hidden: trackStates[stateId]?.hidden, clips: t.clips }
+    }),
+  ]
+
+  const allClips = sections.flatMap((section) => (
+    section.clips.map((clip) => ({ ...clip, sectionId: section.id, sectionStateId: section.stateId, sectionLabel: section.label }))
+  )).sort((a, b) => (b.z_order ?? 0) - (a.z_order ?? 0) || a.start_s - b.start_s)
+
+  return (
+    <div className="border-b border-border bg-bg-panel">
+      <button
+        onClick={() => setCollapsed((v) => !v)}
+        className="flex h-8 w-full items-center justify-between px-3 text-left text-[10px] uppercase tracking-wider text-text-dim hover:text-white"
+      >
+        <span>Camadas</span>
+        <span>{collapsed ? '+' : '-'}</span>
+      </button>
+      {!collapsed && (
+        <div className="max-h-44 overflow-y-auto px-2 pb-2 space-y-1">
+          <div className="grid grid-cols-2 gap-1 pb-1">
+            {(['overlay', 'text', 'video', 'audio'] as const).map((id) => (
+              <button
+                key={id}
+                onClick={() => setTrackState(id, id === 'audio'
+                  ? { muted: !(trackStates[id]?.muted ?? false) }
+                  : { hidden: !(trackStates[id]?.hidden ?? false) })}
+                className="rounded border border-border bg-bg-surface px-2 py-1 text-[9px] text-text-muted hover:text-white"
+              >
+                {id === 'audio'
+                  ? `${trackStates[id]?.muted ? 'Ativar' : 'Mutar'} audio`
+                  : `${trackStates[id]?.hidden ? 'Mostrar' : 'Ocultar'} ${id}`}
+              </button>
+            ))}
+          </div>
+          {allClips.length === 0 ? (
+            <p className="rounded border border-dashed border-border p-2 text-center text-[10px] text-text-dim">
+              Sem camadas na timeline.
+            </p>
+          ) : allClips.map((clip) => {
+            const selected = clip.id === selectedClipId
+            return (
+              <div
+                key={clip.id}
+                onClick={() => setSelectedClip(clip.id)}
+                className={`group rounded border px-2 py-1 cursor-pointer ${selected ? 'border-accent bg-accent/15' : 'border-border bg-bg-surface hover:border-border-light'}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-[10px] text-white">{clip.label || clip.clip_type}</p>
+                    <p className="truncate text-[9px] text-text-dim">
+                      {clip.sectionLabel} | {clip.clip_type} | {clip.start_s.toFixed(1)}s
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const state = trackStates[clip.sectionStateId]
+                        if (clip.sectionStateId.startsWith('audio')) {
+                          setTrackState(clip.sectionStateId, { muted: !(state?.muted ?? false) })
+                        } else {
+                          setTrackState(clip.sectionStateId, { hidden: !(state?.hidden ?? false) })
+                        }
+                      }}
+                      className="rounded bg-bg-panel px-1.5 py-0.5 text-[9px] text-text-muted hover:text-white"
+                      title={clip.sectionStateId.startsWith('audio') ? 'Mutar/ativar esta faixa' : 'Ocultar/mostrar esta faixa'}
+                    >
+                      {clip.sectionStateId.startsWith('audio')
+                        ? (trackStates[clip.sectionStateId]?.muted ? 'M' : 'S')
+                        : (trackStates[clip.sectionStateId]?.hidden ? 'V' : 'O')}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        updateClip(clip.id, { z_order: (clip.z_order ?? 0) + 1 })
+                      }}
+                      className="rounded bg-bg-panel px-1.5 py-0.5 text-[9px] text-text-muted hover:text-white"
+                      title="Subir camada"
+                    >
+                      ^
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        updateClip(clip.id, { z_order: (clip.z_order ?? 0) - 1 })
+                      }}
+                      className="rounded bg-bg-panel px-1.5 py-0.5 text-[9px] text-text-muted hover:text-white"
+                      title="Descer camada"
+                    >
+                      v
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 

@@ -52,23 +52,60 @@ class ExportSmokeTests(unittest.TestCase):
             self.assertTrue(Path(result.main_video).exists())
             self.assertGreater(Path(result.main_video).stat().st_size, 0)
 
+    def test_export_video_without_audio_does_not_crash_loudnorm(self) -> None:
+        if os.environ.get("CORTACERTO_EXPORT_SMOKE") != "1":
+            self.skipTest("Defina CORTACERTO_EXPORT_SMOKE=1 ou use --include-export-smoke.")
+        try:
+            ffmpeg()
+        except RuntimeError as exc:
+            self.skipTest(str(exc))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            main_video = root / "noaudio.mp4"
+            _make_synthetic_video(main_video, "blue", tone_hz=None)
 
-def _make_synthetic_video(path: Path, color: str, tone_hz: int) -> None:
+            config = ProcessingConfig(
+                remove_silence=True,
+                noise_reduction=False,
+                audio_normalization=True,
+                generate_thumbnail=False,
+                generate_vertical=False,
+                manual_segments=[(0.0, 0.5), (0.5, 1.0)],
+            )
+            config.color_grade.enabled = False
+
+            result = run_pipeline(str(main_video), str(root / "out"), config)
+
+            self.assertTrue(result.success, result.error)
+            self.assertTrue(result.main_video)
+            self.assertTrue(Path(result.main_video).exists())
+            self.assertGreater(Path(result.main_video).stat().st_size, 0)
+
+
+def _make_synthetic_video(path: Path, color: str, tone_hz: int | None) -> None:
     import subprocess
 
-    subprocess.run(
-        [
-            ffmpeg(), "-y",
-            "-f", "lavfi",
-            "-i", f"color=c={color}:s=160x90:r=12:d=1",
+    cmd = [
+        ffmpeg(), "-y",
+        "-f", "lavfi",
+        "-i", f"color=c={color}:s=160x90:r=12:d=1",
+    ]
+    if tone_hz is not None:
+        cmd += [
             "-f", "lavfi",
             "-i", f"sine=frequency={tone_hz}:duration=1",
             "-shortest",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            str(path),
-        ],
+        ]
+    cmd += [
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+    ]
+    if tone_hz is not None:
+        cmd += ["-c:a", "aac"]
+    cmd.append(str(path))
+
+    subprocess.run(
+        cmd,
         check=True,
         capture_output=True,
         text=True,

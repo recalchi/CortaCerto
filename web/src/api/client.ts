@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const BASE = 'http://localhost:7472'
+const BASE = 'http://127.0.0.1:7472'
 export const api = axios.create({ baseURL: BASE })
 
-export const ws_url = (path: string) => `ws://localhost:7472${path}`
+export const ws_url = (path: string) => `ws://127.0.0.1:7472${path}`
