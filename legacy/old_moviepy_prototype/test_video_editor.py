@@ -28,10 +28,10 @@ def test_video_processing():
         print("Iniciando teste do processamento de vídeo...")
         
         # Configurações
-    silence_threshold = -40.0
-    min_silence_duration = 1.0  # 1 segundo
-    remove_speech_errors = True
-    audio_padding_ms = 150 # Milissegundos de padding para evitar cortes abruptos
+        silence_threshold = -40.0
+        min_silence_duration = 1.0  # 1 segundo
+        remove_speech_errors = True
+        audio_padding_ms = 150 # Milissegundos de padding para evitar cortes abruptos
         
         print("1. Carregando vídeo...")
         video = VideoFileClip(input_path)
@@ -57,7 +57,7 @@ def test_video_processing():
         for i, (start, end) in enumerate(silences):
             print(f"   Silêncio {i+1}: {start/1000:.2f}s - {end/1000:.2f}s ({(end-start)/1000:.2f}s)")
         
-          print("4. Detectando segmentos de fala...")
+        print("4. Detectando segmentos de fala...")
         speech_segments = []
         last_end = 0
         

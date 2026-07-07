@@ -12,12 +12,12 @@ class StockAssetsTests(unittest.TestCase):
     def test_stock_settings_masks_configured_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / ".env"
-            env_path.write_text('PEXELS_API_KEY="pexels-secret-123456"\n', encoding="utf-8")
+            env_path.write_text('PEXELS_API_KEY="demo"\n', encoding="utf-8")
 
             settings = stock_assets.stock_settings(env_path)
 
         self.assertTrue(settings["keys"]["PEXELS_API_KEY"]["configured"])
-        self.assertNotIn("pexels-secret-123456", json.dumps(settings))
+        self.assertNotIn('"demo"', json.dumps(settings))
         self.assertTrue(any(p["id"] == "pexels" and p["configured"] for p in settings["providers"]))
 
     def test_update_stock_settings_upserts_env_file(self) -> None:
@@ -25,10 +25,10 @@ class StockAssetsTests(unittest.TestCase):
             env_path = Path(tmp) / ".env"
             env_path.write_text('PEXELS_API_KEY="old"\nKEEP=value\n', encoding="utf-8")
 
-            stock_assets.update_stock_settings({"PEXELS_API_KEY": "new-secret-value"}, env_path)
+            stock_assets.update_stock_settings({"PEXELS_API_KEY": "demo2"}, env_path)
             text = env_path.read_text(encoding="utf-8")
 
-        self.assertIn('PEXELS_API_KEY="new-secret-value"', text)
+        self.assertIn('PEXELS_API_KEY="demo2"', text)
         self.assertIn("KEEP=value", text)
 
     def test_download_stock_asset_writes_file_and_metadata(self) -> None:
