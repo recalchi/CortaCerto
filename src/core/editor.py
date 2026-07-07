@@ -18,7 +18,9 @@ from typing import Callable, Optional
 
 from .analyzer import AudioAnalysis
 from .color_grade import ColorGrade, build_filter as build_color_filter
+from .effect_renderer import render_person_removal_pass
 from .process_manager import ProcessManager, CancelledError          # canonical source
+from .text_render import TextStyle, render_text_on_frame
 from ..ffmpeg_env import ffmpeg, ffprobe, detect_video_encoder
 
 
@@ -47,6 +49,15 @@ _LEGACY_PLATFORM_AR = {
     "tiktok":  (9, 16),
     "shorts":  (9, 16),
 }
+_TARGET_CANVAS_BY_AR = {
+    "16:9": (1920, 1080),
+    "9:16": (1080, 1920),
+    "1:1":  (1080, 1080),
+    "4:5":  (1080, 1350),
+    "5:4":  (1350, 1080),
+    "4:3":  (1440, 1080),
+    "3:4":  (1080, 1440),
+}
 
 
 def _resolve_target_aspect(aspect_ratio: Optional[str], platform: str) -> Optional[tuple[int, int]]:
@@ -63,6 +74,53 @@ def _resolve_target_aspect(aspect_ratio: Optional[str], platform: str) -> Option
         if aspect_ratio in _AR_PARSE:
             return _AR_PARSE[aspect_ratio]
     return _LEGACY_PLATFORM_AR.get(platform)
+
+
+def _resolve_target_canvas(aspect_ratio: Optional[str], platform: str) -> Optional[tuple[int, int]]:
+    """Return fixed export dimensions for editor preview/export parity."""
+    if aspect_ratio and aspect_ratio not in ("original", ""):
+        return _TARGET_CANVAS_BY_AR.get(aspect_ratio)
+    legacy_ar = _LEGACY_PLATFORM_AR.get(platform)
+    if legacy_ar == (9, 16):
+        return _TARGET_CANVAS_BY_AR["9:16"]
+    return None
+
+
+def _fit_to_canvas_filter(width: int, height: int) -> str:
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+        "setsar=1,format=yuv420p"
+    )
+
+
+def _drawtext_font_size(size_pct: float, video_height: int) -> int:
+    height = max(240, int(video_height or 1080))
+    return max(14, int(round(height * 0.045 * max(10.0, float(size_pct)) / 100.0)))
+
+
+def _probe_video_size(video_path: str) -> tuple[int, int]:
+    try:
+        result = subprocess.run(
+            [
+                ffprobe(), "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=p=0", video_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        parts = result.stdout.strip().split(",")
+        if len(parts) >= 2:
+            return max(1, int(parts[0])), max(1, int(parts[1]))
+    except Exception:
+        pass
+    return 1920, 1080
+
+
+def _is_cut_transition(name: str) -> bool:
+    return str(name or "").strip().lower() in ("", "corte", "cut")
 
 
 # -- Data --------------------------------------------------------------------
@@ -83,11 +141,21 @@ class SegmentEffect:
     brightness:      float = 0.0    # -100..100  (0 = no change)
     contrast:        float = 0.0    # -100..100  (0 = no change)
     saturation:      float = 0.0    # -100..100  (0 = no change)
+    temperature:     float = 0.0
+    hue:             float = 0.0
+    exposure:        float = 0.0
+    sharpness:       float = 0.0
+    vignette:        float = 0.0
+    blur_type:       str   = "none"     # none|gaussian|box|pixelate
+    blur_intensity:  float = 0.0        # 0..100
+    blur_direction:  str   = "both"     # both|horizontal|vertical
     crop_top_pct:    float = 0.0    # 0..50 percent of height to crop from top
     crop_bottom_pct: float = 0.0
     crop_left_pct:   float = 0.0
     crop_right_pct:  float = 0.0
     scale_pct:       float = 100.0  # 10..300 (100 = original size)
+    position_x:      float = 0.0    # px in the project frame
+    position_y:      float = 0.0
     opacity_pct:     float = 100.0  # 0..100
     rotation_deg:    float = 0.0    # -180..180
     # Text overlay
@@ -103,6 +171,10 @@ class SegmentEffect:
     chroma_enabled:   bool  = False
     chroma_color:     str   = "#00ff00"
     chroma_tolerance: float = 45.0
+    # Person removal / moving subject mask
+    person_remove_enabled: bool = False
+    person_remove_strength: float = 72.0
+    person_remove_feather: float = 10.0
 
 
 @dataclass
@@ -134,7 +206,8 @@ def cut_silence(
     per_clip_data: Optional[list[dict]] = None,   # Etapa 6: per-segment speed + transition
     text_clips: Optional[list[dict]] = None,       # [{text_overlay, start_s, end_s, ...style}]
     image_clips: Optional[list[dict]] = None,      # [{source_path, start_s, end_s, opacity_pct}]
-    normalize_audio: bool = True,                  # Apply loudnorm post-processing
+    audio_clips: Optional[list[dict]] = None,      # [{source_path, start_s, end_s, source_offset_s, volume_pct}]
+    normalize_audio: bool = False,                 # Apply loudnorm post-processing only when enabled
     platform: str = "youtube",                     # legacy: "youtube"|"reels"|"tiktok"|"shorts"
     aspect_ratio: Optional[str] = None,            # NEW: "16:9"|"9:16"|"1:1"|"4:5"|"4:3"|"3:4" (overrides platform)
     # Multi-source support: per-clip source file path and project-time offset.
@@ -153,7 +226,8 @@ def cut_silence(
     encoder, enc_args = detect_video_encoder()
     n         = len(segments)
     total_dur = sum(e - s for s, e in segments)
-    effects   = _plan_effects(segments)
+    effects   = [SegmentEffect() for _ in segments] if per_clip_data else _plan_effects(segments)
+    target_canvas = _resolve_target_canvas(aspect_ratio, platform)
 
     # Etapa 6: apply per-clip speed/transition overrides
     if per_clip_data:
@@ -189,8 +263,18 @@ def cut_silence(
             fx.crop_left_pct   = float(clip_data.get("crop_left_pct",   0.0)   or 0.0)
             fx.crop_right_pct  = float(clip_data.get("crop_right_pct",  0.0)   or 0.0)
             fx.scale_pct       = float(clip_data.get("scale_pct",       100.0) or 100.0)
+            fx.position_x      = float(clip_data.get("position_x",      0.0)   or 0.0)
+            fx.position_y      = float(clip_data.get("position_y",      0.0)   or 0.0)
             fx.opacity_pct     = float(clip_data.get("opacity_pct",     100.0) or 100.0)
             fx.rotation_deg    = float(clip_data.get("rotation_deg",    0.0)   or 0.0)
+            fx.temperature     = float(clip_data.get("temperature",     0.0)   or 0.0)
+            fx.hue             = float(clip_data.get("hue",             0.0)   or 0.0)
+            fx.exposure        = float(clip_data.get("exposure",        0.0)   or 0.0)
+            fx.sharpness       = float(clip_data.get("sharpness",       0.0)   or 0.0)
+            fx.vignette        = float(clip_data.get("vignette",        0.0)   or 0.0)
+            fx.blur_type       = str(clip_data.get("blur_type", "none") or "none")
+            fx.blur_intensity  = max(0.0, min(100.0, float(clip_data.get("blur_intensity", 0.0) or 0.0)))
+            fx.blur_direction  = str(clip_data.get("blur_direction", "both") or "both")
             # Text overlay
             fx.text_overlay        = str(clip_data.get("text_overlay",        "") or "")
             fx.text_position_x_pct = float(clip_data.get("text_position_x_pct", 0.0)   or 0.0)
@@ -204,11 +288,18 @@ def cut_silence(
             fx.chroma_enabled      = bool(clip_data.get("chroma_enabled",      False))
             fx.chroma_color        = str(clip_data.get("chroma_color",        "#00ff00") or "#00ff00")
             fx.chroma_tolerance    = float(clip_data.get("chroma_tolerance",   45.0) or 45.0)
+            fx.person_remove_enabled = bool(clip_data.get("person_remove_enabled", False))
+            fx.person_remove_strength = max(10.0, min(100.0, float(clip_data.get("person_remove_strength", 72.0) or 72.0)))
+            fx.person_remove_feather = max(0.0, min(30.0, float(clip_data.get("person_remove_feather", 10.0) or 10.0)))
+        for i in range(1, n):
+            if _is_cut_transition(effects[i].transition) and not _is_cut_transition(effects[i - 1].transition):
+                effects[i].transition = effects[i - 1].transition
+                effects[i].transition_duration_s = effects[i - 1].transition_duration_s
         # Clear auto-generated segment fades when a user xfade transition is set
         for i, fx in enumerate(effects):
-            if i > 0 and fx.transition.strip().lower() not in ("corte", "cut", ""):
+            if i > 0 and not _is_cut_transition(fx.transition):
                 fx.fade_in_s = 0.0
-            if i < n - 1 and effects[i + 1].transition.strip().lower() not in ("corte", "cut", ""):
+            if i < n - 1 and not _is_cut_transition(effects[i + 1].transition):
                 fx.fade_out_s = 0.0
 
     stats     = RenderStats(
@@ -231,6 +322,8 @@ def cut_silence(
             seg_paths:       list[str]   = []
             output_durations: list[float] = []
             processed_s = 0.0
+            any_real_audio = False
+            source_audio_cache: dict[str, bool] = {}
 
             for i, ((start, end), fx) in enumerate(zip(segments, effects)):
                 pm.check_cancel()
@@ -238,6 +331,10 @@ def cut_silence(
                 # Multi-source: translate project-time → source-file time
                 seg_src  = (source_paths[i] if source_paths and i < len(source_paths) and source_paths[i] else None) or video_path
                 seg_off  = (source_offsets[i] if source_offsets and i < len(source_offsets) else 0.0)
+                if seg_src not in source_audio_cache:
+                    source_audio_cache[seg_src] = _has_audio_stream(seg_src)
+                seg_has_audio = source_audio_cache[seg_src]
+                any_real_audio = any_real_audio or seg_has_audio
                 src_start = max(0.0, start - seg_off)
                 src_end   = max(src_start + 0.01, end - seg_off)
 
@@ -255,16 +352,28 @@ def cut_silence(
                 prog(f"Segmento {i + 1}/{n}  [{encoder}]{speed_tag}{eta_str}", pct)
 
                 seg_path = os.path.join(tmp, f"seg_{i:05d}.ts")
+                raw_seg_path = os.path.join(tmp, f"seg_{i:05d}_raw.ts") if fx.person_remove_enabled else seg_path
                 # Speed factor changes output duration
                 sp       = max(0.1, fx.speed_factor)
                 out_dur  = seg_dur / sp
                 timeout  = max(45.0, seg_dur * 60.0)
 
                 _render_segment(
-                    seg_src, src_start, src_end, seg_path,
+                    seg_src, src_start, src_end, raw_seg_path,
                     fx, "", encoder, enc_args,
-                    pm=pm, timeout_s=timeout,
+                    pm=pm, timeout_s=timeout, has_audio=seg_has_audio,
+                    target_size=target_canvas,
                 )
+                if fx.person_remove_enabled:
+                    prog(f"Removendo pessoa do segmento {i + 1}/{n}...", min(0.79, pct + 0.01))
+                    render_person_removal_pass(
+                        raw_seg_path,
+                        seg_path,
+                        strength=fx.person_remove_strength,
+                        feather=fx.person_remove_feather,
+                        cancel=cancel,
+                        on_progress=lambda msg, p, base=pct: prog(msg, min(0.79, base + p * 0.04)),
+                    )
                 seg_paths.append(seg_path)
                 output_durations.append(out_dur)
                 processed_s += seg_dur
@@ -288,10 +397,20 @@ def cut_silence(
 
             if has_xfade and n > 1:
                 prog("Aplicando transições...", 0.81)
-                _join_with_xfade(
-                    seg_paths, output_durations, transitions, default_td,
-                    joined_path, pm, encoder, enc_args,
-                )
+                try:
+                    _join_with_xfade(
+                        seg_paths, output_durations, transitions, default_td,
+                        joined_path, pm, encoder, enc_args,
+                    )
+                except RuntimeError:
+                    # Robust fallback: if xfade fails in this environment, keep export alive
+                    # by joining with hard cuts instead of crashing.
+                    prog("Falha em transições; retomando com cortes simples...", 0.812)
+                    concat_input = "concat:" + "|".join(seg_paths)
+                    pm.run_checked(
+                        [ffmpeg(), "-y", "-i", concat_input, "-c", "copy", joined_path],
+                        context="unir segmentos (fallback sem transições)", timeout_s=120,
+                    )
             else:
                 concat_input = "concat:" + "|".join(seg_paths)
                 pm.run_checked(
@@ -335,10 +454,12 @@ def cut_silence(
 
             # -- Step B: audio normalization (fast - video stream copied) -----
             af_parts: list[str] = []
-            if noise_reduction:
+            if noise_reduction and any_real_audio:
                 af_parts.append("afftdn=nf=-25")
-            if normalize_audio:
+            if normalize_audio and any_real_audio:
                 af_parts.append("loudnorm=I=-16:TP=-1.5:LRA=11")
+            elif (noise_reduction or normalize_audio) and not any_real_audio:
+                prog("Audio real ausente; pulando reducao/normalizacao para evitar falha no FFmpeg.", 0.875)
 
             pm.check_cancel()
             if af_parts:
@@ -370,19 +491,44 @@ def cut_silence(
                 )
 
             # -- Image overlays (overlay_track image clips) -------------------
-            active_images = [
+            active_visuals = [
                 ic for ic in (image_clips or [])
                 if ic.get("source_path") and os.path.isfile(ic["source_path"])
                 and float(ic.get("end_s", 0)) > float(ic.get("start_s", 0))
             ]
-            if active_images:
+            active_visuals.sort(
+                key=lambda ic: (
+                    float(ic.get("z_order", 0) or 0),
+                    float(ic.get("start_s", 0) or 0),
+                )
+            )
+            if active_visuals:
                 pm.check_cancel()
-                prog("Aplicando imagens de overlay…", 0.91)
+                prog("Aplicando overlays visuais...", 0.91)
                 pre_img   = joined_path
-                joined_path = os.path.join(tmp, "with_images.mp4")
-                _apply_image_overlays(
-                    pre_img, active_images, joined_path,
+                joined_path = os.path.join(tmp, "with_visuals.mp4")
+                _apply_visual_overlays(
+                    pre_img, active_visuals, joined_path,
                     encoder, enc_args, pm,
+                )
+
+            # -- Timeline audio clips --------------------------------------
+            active_audio_clips = [
+                ac for ac in (audio_clips or [])
+                if ac.get("source_path") and os.path.isfile(str(ac.get("source_path")))
+                and float(ac.get("end_s", 0) or 0) > float(ac.get("start_s", 0) or 0)
+            ]
+            if active_audio_clips:
+                pm.check_cancel()
+                prog("Mixando faixas de audio da timeline...", 0.915)
+                pre_audio_clips = joined_path
+                joined_path = os.path.join(tmp, "with_timeline_audio.mp4")
+                _mix_timeline_audio_clips(
+                    pre_audio_clips,
+                    active_audio_clips,
+                    joined_path,
+                    total_dur,
+                    pm=pm,
                 )
 
             # -- Music mix ----------------------------------------------------
@@ -398,7 +544,7 @@ def cut_silence(
             # When `aspect_ratio` is set, we crop the centred region matching its
             # ratio. When it's None, fall back to the legacy platform mapping
             # (reels/tiktok/shorts → 9:16).
-            target_ar = _resolve_target_aspect(aspect_ratio, platform)
+            target_ar = None if target_canvas is not None else _resolve_target_aspect(aspect_ratio, platform)
             if target_ar is not None:
                 pm.check_cancel()
                 ar_w, ar_h = target_ar
@@ -497,6 +643,26 @@ def get_video_fps(video_path: str) -> float:
         return 30.0
 
 
+def _has_audio_stream(video_path: str) -> bool:
+    """Return True when *video_path* has at least one audio stream."""
+    try:
+        result = subprocess.run(
+            [
+                ffprobe(), "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=index",
+                "-of", "csv=p=0",
+                video_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except Exception:
+        return False
+
+
 # -- Effect planning ----------------------------------------------------------
 
 def _plan_effects(segments: list[tuple[float, float]]) -> list[SegmentEffect]:
@@ -593,6 +759,29 @@ _FONT_CANDIDATES_BOLD = [
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 ]
 
+_FONT_BY_NAME_REGULAR = {
+    "arial": r"C:\Windows\Fonts\arial.ttf",
+    "helvetica": r"C:\Windows\Fonts\arial.ttf",
+    "georgia": r"C:\Windows\Fonts\georgia.ttf",
+    "courier": r"C:\Windows\Fonts\cour.ttf",
+    "courier new": r"C:\Windows\Fonts\cour.ttf",
+    "impact": r"C:\Windows\Fonts\impact.ttf",
+    "verdana": r"C:\Windows\Fonts\verdana.ttf",
+    "times": r"C:\Windows\Fonts\times.ttf",
+    "times new roman": r"C:\Windows\Fonts\times.ttf",
+}
+_FONT_BY_NAME_BOLD = {
+    "arial": r"C:\Windows\Fonts\arialbd.ttf",
+    "helvetica": r"C:\Windows\Fonts\arialbd.ttf",
+    "georgia": r"C:\Windows\Fonts\georgiab.ttf",
+    "courier": r"C:\Windows\Fonts\courbd.ttf",
+    "courier new": r"C:\Windows\Fonts\courbd.ttf",
+    "impact": r"C:\Windows\Fonts\impact.ttf",
+    "verdana": r"C:\Windows\Fonts\verdanab.ttf",
+    "times": r"C:\Windows\Fonts\timesbd.ttf",
+    "times new roman": r"C:\Windows\Fonts\timesbd.ttf",
+}
+
 
 def _find_font(bold: bool = False) -> str:
     """Return path to best available font file, or empty string for built-in."""
@@ -601,6 +790,17 @@ def _find_font(bold: bool = False) -> str:
         if os.path.exists(c):
             return c
     return ""
+
+
+def _find_font_by_name(name: str, bold: bool = False) -> str:
+    """Best-effort font picker by name, with fallback to default candidates."""
+    key = (name or "").strip().lower()
+    if key:
+        table = _FONT_BY_NAME_BOLD if bold else _FONT_BY_NAME_REGULAR
+        candidate = table.get(key)
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return _find_font(bold=bold)
 
 
 def _escape_drawtext(text: str) -> str:
@@ -613,6 +813,21 @@ def _escape_drawtext(text: str) -> str:
     text = text.replace("[",  "\\[")
     text = text.replace("]",  "\\]")
     return text
+
+
+def _hex_to_ff_color(hex_color: str, alpha: float = 1.0, fallback: str = "white") -> str:
+    """Convert #rrggbb + alpha(0..1) -> ffmpeg color 0xRRGGBBAA."""
+    if not isinstance(hex_color, str):
+        return fallback
+    h = hex_color.strip().lstrip("#")
+    if len(h) != 6:
+        return fallback
+    try:
+        int(h, 16)
+    except ValueError:
+        return fallback
+    aa = max(0, min(255, int(round(max(0.0, min(1.0, alpha)) * 255.0))))
+    return f"0x{h}{aa:02x}"
 
 
 # -- Segment renderer ---------------------------------------------------------
@@ -631,6 +846,26 @@ def _build_atempo(speed: float) -> str:
     return f"atempo={speed:.4f}"
 
 
+def _build_blur_filter(blur_type: str, intensity: float, direction: str = "both") -> str:
+    kind = str(blur_type or "none").strip().lower()
+    amount = max(0.0, min(100.0, float(intensity or 0.0)))
+    if kind in ("", "none") or amount <= 0.5:
+        return ""
+    direction = str(direction or "both").strip().lower()
+    if kind == "pixelate":
+        block = max(4, min(80, int(4 + amount * 0.72)))
+        return f"pixelize=width={block}:height={block}:mode=avg"
+    if kind == "box":
+        radius = max(1, min(40, int(round(amount * 0.38))))
+        return f"boxblur=luma_radius={radius}:luma_power=2:chroma_radius={max(1, radius // 2)}:chroma_power=1"
+    sigma = max(0.2, min(30.0, amount * 0.26))
+    if direction == "horizontal":
+        return f"gblur=sigma={sigma:.3f}:sigmaV=0.001"
+    if direction == "vertical":
+        return f"gblur=sigma=0.001:sigmaV={sigma:.3f}"
+    return f"gblur=sigma={sigma:.3f}"
+
+
 def _render_segment(
     video_path: str,
     start: float,
@@ -642,12 +877,18 @@ def _render_segment(
     enc_args: list[str],
     pm: ProcessManager,
     timeout_s: float,
+    has_audio: Optional[bool] = None,
+    target_size: Optional[tuple[int, int]] = None,
 ) -> None:
     duration = end - start
     sp       = max(0.1, fx.speed_factor)
     # Output duration after speed change (used for fade timing)
     out_dur  = duration / sp
     vf_parts: list[str] = []
+    if target_size is not None:
+        target_w, target_h = target_size
+        if target_w > 0 and target_h > 0:
+            vf_parts.append(_fit_to_canvas_filter(target_w, target_h))
 
     if color_vf:
         vf_parts.append(color_vf)
@@ -669,6 +910,10 @@ def _render_segment(
         sa_clamped = max(0.0, min(3.0,    sa))
         vf_parts.append(f"eq=brightness={br:.4f}:contrast={ct_clamped:.4f}:saturation={sa_clamped:.4f}")
 
+    blur_filter = _build_blur_filter(fx.blur_type, fx.blur_intensity, fx.blur_direction)
+    if blur_filter:
+        vf_parts.append(blur_filter)
+
     # 2. Crop (percentages 0-50 each edge)
     cl = fx.crop_left_pct   / 100.0
     cr = fx.crop_right_pct  / 100.0
@@ -683,7 +928,25 @@ def _render_segment(
 
     # 3. Scale (100 = original; keep even dimensions for encoder)
     sc = max(0.1, fx.scale_pct / 100.0)
-    if abs(sc - 1.0) > 0.005:
+    pos_x = float(getattr(fx, "position_x", 0.0) or 0.0)
+    pos_y = float(getattr(fx, "position_y", 0.0) or 0.0)
+    if target_size is not None and (abs(sc - 1.0) > 0.005 or abs(pos_x) > 0.01 or abs(pos_y) > 0.01):
+        target_w, target_h = target_size
+        if sc >= 1.0:
+            crop_x = f"max(0\\,min(iw-{target_w}\\,(iw-{target_w})/2{-pos_x:+.3f}))"
+            crop_y = f"max(0\\,min(ih-{target_h}\\,(ih-{target_h})/2{-pos_y:+.3f}))"
+            vf_parts.append(
+                f"scale=ceil(iw*{sc:.4f}/2)*2:ceil(ih*{sc:.4f}/2)*2,"
+                f"crop={target_w}:{target_h}:{crop_x}:{crop_y}"
+            )
+        else:
+            pad_x = f"max(0\\,min(ow-iw\\,(ow-iw)/2{pos_x:+.3f}))"
+            pad_y = f"max(0\\,min(oh-ih\\,(oh-ih)/2{pos_y:+.3f}))"
+            vf_parts.append(
+                f"scale=ceil(iw*{sc:.4f}/2)*2:ceil(ih*{sc:.4f}/2)*2,"
+                f"pad={target_w}:{target_h}:{pad_x}:{pad_y}:color=black"
+            )
+    elif abs(sc - 1.0) > 0.005:
         vf_parts.append(f"scale=ceil(iw*{sc:.4f}/2)*2:ceil(ih*{sc:.4f}/2)*2")
 
     # 4. Rotation (degrees → radians; expand canvas to fit rotated frame)
@@ -703,7 +966,8 @@ def _render_segment(
         # Convert #rrggbb → 0xrrggbbff (ffmpeg color with full alpha)
         hex_col = fx.text_color.lstrip("#")
         col_ffmpeg = f"0x{hex_col}ff" if len(hex_col) == 6 else "white"
-        font_size = max(12, int(24 * fx.text_size_pct / 100.0))
+        video_h = target_size[1] if target_size is not None else _probe_video_size(video_path)[1]
+        font_size = _drawtext_font_size(fx.text_size_pct, video_h)
         # x: centre + percentage offset; y: percentage of height
         x_off = fx.text_position_x_pct / 100.0
         y_pct = fx.text_position_y_pct / 100.0
@@ -736,17 +1000,6 @@ def _render_segment(
         fade_st = max(0.0, out_dur - fx.fade_out_s)
         vf_parts.append(f"fade=t=out:st={fade_st:.2f}:d={fx.fade_out_s:.2f}")
 
-    cmd = [
-        ffmpeg(), "-y",
-        "-hwaccel", "auto",
-        "-ss", f"{start:.4f}", "-to", f"{end:.4f}",
-        "-i", video_path,
-        "-map", "0:v:0", "-map", "0:a:0",
-    ]
-
-    if vf_parts:
-        cmd += ["-vf", ",".join(vf_parts)]
-
     # Audio filters: tempo + volume + pan + fades (Etapa C)
     af_parts: list[str] = []
     if abs(sp - 1.0) > 0.001:
@@ -768,17 +1021,180 @@ def _render_segment(
     if fx.fade_out_s > 0:
         afo_st = max(0.0, out_dur - fx.fade_out_s)
         af_parts.append(f"afade=t=out:st={afo_st:.2f}:d={fx.fade_out_s:.2f}")
-    if af_parts:
-        cmd += ["-af", ",".join(af_parts)]
+    has_audio = _has_audio_stream(video_path) if has_audio is None else bool(has_audio)
 
-    cmd += ["-c:v", encoder, *enc_args, "-c:a", "aac", "-b:a", "192k",
-            "-f", "mpegts", output_path]
+    def build_cmd(selected_encoder: str, selected_args: list[str], use_hwaccel: bool = True) -> list[str]:
+        cmd = [ffmpeg(), "-y"]
+        if use_hwaccel:
+            cmd += ["-hwaccel", "auto"]
+        cmd += [
+            "-ss", f"{start:.4f}", "-to", f"{end:.4f}",
+            "-i", video_path,
+        ]
+        if has_audio:
+            cmd += ["-map", "0:v:0", "-map", "0:a:0"]
+        else:
+            cmd += [
+                "-f", "lavfi",
+                "-t", f"{out_dur:.4f}",
+                "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-shortest",
+            ]
+        if vf_parts:
+            cmd += ["-vf", ",".join(vf_parts)]
+        if af_parts and has_audio:
+            cmd += ["-af", ",".join(af_parts)]
+        cmd += [
+            "-c:v", selected_encoder, *selected_args,
+            "-c:a", "aac", "-b:a", "192k",
+            "-f", "mpegts", output_path,
+        ]
+        return cmd
 
-    pm.run_checked(cmd, context=f"segmento {Path(output_path).stem}",
-                   timeout_s=timeout_s)
+    context = f"segmento {Path(output_path).stem}"
+    primary_cmd = build_cmd(encoder, enc_args, use_hwaccel=True)
+    try:
+        pm.run_checked(primary_cmd, context=context, timeout_s=timeout_s)
+    except RuntimeError:
+        if encoder == "libx264":
+            raise
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+        fallback_cmd = build_cmd("libx264", ["-crf", "18", "-preset", "fast"], use_hwaccel=False)
+        pm.run_checked(
+            fallback_cmd,
+            context=f"{context} (fallback libx264)",
+            timeout_s=timeout_s,
+        )
 
 
 # -- Text-overlay burn-in (text_track → drawtext over joined video) -----------
+
+def _text_style_from_export_clip(tc: dict, frame_height: int) -> TextStyle:
+    side_margin = max(0.0, min(35.0, float(tc.get("text_side_margin_pct", 5.0) or 5.0)))
+    size_pct = float(tc.get("text_size_pct", 100.0) or 100.0)
+    bg_enabled = bool(tc.get("text_background_enabled", False))
+    shadow_enabled = bool(tc.get("text_shadow_enabled", not bg_enabled))
+    return TextStyle(
+        text=str(tc.get("text_overlay") or "").strip(),
+        font_family=str(tc.get("text_font") or "default"),
+        bold=bool(tc.get("text_bold", False)),
+        italic=bool(tc.get("text_italic", False)),
+        font_size=max(14, int(max(240, frame_height) * 0.045)),
+        size_pct=size_pct,
+        color=str(tc.get("text_color") or "#ffffff"),
+        align=str(tc.get("text_align") or "center"),
+        pos_x_pct=50.0 + float(tc.get("text_position_x_pct", 0.0) or 0.0),
+        pos_y_pct=float(tc.get("text_position_y_pct", 72.0) or 72.0),
+        bg_enabled=bg_enabled,
+        bg_color=str(tc.get("text_background_color") or "#000000"),
+        bg_alpha=float(tc.get("text_background_alpha", 0.65) or 0.65),
+        bg_padding=12 if bg_enabled else 4,
+        bg_rounded=True,
+        shadow_enabled=shadow_enabled,
+        shadow_color=str(tc.get("text_shadow_color") or "#000000"),
+        shadow_offset_x=2,
+        shadow_offset_y=2,
+        shadow_blur=4,
+        stroke_enabled=bool(tc.get("text_stroke_enabled", False)),
+        stroke_color=str(tc.get("text_stroke_color") or "#000000"),
+        stroke_width=max(0, int(round(float(tc.get("text_stroke_width", 2) or 2)))),
+        max_width_pct=max(30.0, min(100.0, 100.0 - side_margin * 2.0)),
+        line_spacing=float(tc.get("text_line_spacing", 1.25) or 1.25),
+    )
+
+
+def _apply_text_overlays_framepass(
+    input_path: str,
+    text_clips: list[dict],
+    output_path: str,
+    encoder: str,
+    enc_args: list[str],
+    pm: "ProcessManager",
+) -> None:
+    import cv2
+
+    active = [
+        tc for tc in text_clips
+        if str(tc.get("text_overlay") or "").strip()
+        and float(tc.get("end_s", 0) or 0) > float(tc.get("start_s", 0) or 0)
+    ]
+    if not active:
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return
+
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        raise RuntimeError("Nao foi possivel abrir video para renderizar texto.")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    if width <= 0 or height <= 0:
+        cap.release()
+        raise RuntimeError("Dimensoes invalidas para renderizar texto.")
+
+    tmp_video = str(Path(output_path).with_suffix(".text_video.mp4"))
+    writer = cv2.VideoWriter(tmp_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    if not writer.isOpened():
+        cap.release()
+        raise RuntimeError("Nao foi possivel criar video temporario de texto.")
+
+    styles = [(float(tc.get("start_s", 0) or 0), float(tc.get("end_s", 0) or 0), _text_style_from_export_clip(tc, height)) for tc in active]
+    frame_idx = 0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+            t = frame_idx / fps
+            for start_s, end_s, style in styles:
+                if start_s <= t < end_s:
+                    frame = render_text_on_frame(frame, style)
+            writer.write(frame)
+            frame_idx += 1
+    finally:
+        cap.release()
+        writer.release()
+
+    mux_cmd = [
+        ffmpeg(), "-y",
+        "-i", tmp_video,
+        "-i", input_path,
+        "-map", "0:v:0",
+        "-map", "1:a:0?",
+        "-c:v", encoder, *enc_args,
+        "-c:a", "copy",
+        "-shortest",
+        output_path,
+    ]
+    try:
+        pm.run_checked(mux_cmd, context="texto/legendas framepass", timeout_s=max(60.0, (frame_idx / fps) * 12.0))
+    except RuntimeError:
+        if encoder == "libx264":
+            raise
+        fallback = [
+            ffmpeg(), "-y",
+            "-i", tmp_video,
+            "-i", input_path,
+            "-map", "0:v:0",
+            "-map", "1:a:0?",
+            "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+            "-c:a", "copy",
+            "-shortest",
+            output_path,
+        ]
+        pm.run_checked(fallback, context="texto/legendas framepass (fallback libx264)", timeout_s=max(60.0, (frame_idx / fps) * 12.0))
+    finally:
+        try:
+            os.remove(tmp_video)
+        except OSError:
+            pass
+
 
 def _apply_text_overlays(
     input_path: str,
@@ -789,7 +1205,15 @@ def _apply_text_overlays(
     pm: "ProcessManager",
 ) -> None:
     """Burn text_track clips onto the video using ffmpeg drawtext with time ranges."""
+    try:
+        _apply_text_overlays_framepass(input_path, text_clips, output_path, encoder, enc_args, pm)
+        return
+    except Exception:
+        # Fallback to drawtext below if Pillow/OpenCV frame rendering is unavailable.
+        pass
+
     vf_parts: list[str] = []
+    _video_w, video_h = _probe_video_size(input_path)
     for tc in text_clips:
         text = tc.get("text_overlay", "").strip()
         if not text:
@@ -802,25 +1226,57 @@ def _apply_text_overlays(
         escaped   = _escape_drawtext(text)
         x_pct     = float(tc.get("text_position_x_pct", 0))   / 100.0
         y_pct     = float(tc.get("text_position_y_pct", 72))  / 100.0
-        size_pct  = float(tc.get("text_size_pct",       100)) / 100.0
-        font_size = max(12, int(24 * size_pct))
-        hex_col   = tc.get("text_color", "#ffffff").lstrip("#")
-        col_ffmpeg = f"0x{hex_col}ff" if len(hex_col) == 6 else "white"
+        size_pct  = float(tc.get("text_size_pct",       100))
+        font_size = _drawtext_font_size(size_pct, video_h)
+        col_ffmpeg = _hex_to_ff_color(str(tc.get("text_color", "#ffffff")), 1.0, "white")
         bold      = bool(tc.get("text_bold", False))
-        font_path = _find_font(bold)
-        font_part = f":fontfile='{font_path}'" if font_path else ""
-        x_expr    = f"(w-text_w)/2+w*{x_pct:.4f}"
+        font_name = str(tc.get("text_font", ""))
+        font_path = _find_font_by_name(font_name, bold=bold)
+        # Windows paths (e.g. C:\...) need ":" escaped for ffmpeg filter syntax.
+        # Also normalize to "/" to reduce backslash escaping pitfalls.
+        if font_path:
+            font_path_esc = font_path.replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+            font_part = f":fontfile='{font_path_esc}'"
+        else:
+            font_part = ""
+        align_mode = str(tc.get("text_align", "center") or "center").strip().lower()
+        if align_mode == "left":
+            x_expr = f"w*0.5+w*{x_pct:.4f}"
+        elif align_mode == "right":
+            x_expr = f"w*0.5+w*{x_pct:.4f}-text_w"
+        else:
+            x_expr = f"(w-text_w)/2+w*{x_pct:.4f}"
         y_expr    = f"h*{y_pct:.4f}-text_h/2"
         # ffmpeg drawtext enable expression: commas inside must be escaped with backslash
         enable    = f"between(t\\,{start_s:.3f}\\,{end_s:.3f})"
 
-        vf_parts.append(
+        bg_enabled = bool(tc.get("text_background_enabled", False))
+        bg_color   = _hex_to_ff_color(
+            str(tc.get("text_background_color", "#000000")),
+            float(tc.get("text_background_alpha", 0.65) or 0.65),
+            "black@0.65",
+        )
+        stroke_enabled = bool(tc.get("text_stroke_enabled", False))
+        stroke_width   = max(0, float(tc.get("text_stroke_width", 2) or 2))
+        stroke_color   = _hex_to_ff_color(str(tc.get("text_stroke_color", "#000000")), 1.0, "black")
+        shadow_enabled = bool(tc.get("text_shadow_enabled", True))
+
+        draw = (
             f"drawtext=text='{escaped}'{font_part}"
             f":fontcolor={col_ffmpeg}:fontsize={font_size}"
             f":x={x_expr}:y={y_expr}"
-            f":shadowcolor=black@0.75:shadowx=2:shadowy=2"
             f":enable='{enable}'"
         )
+        if shadow_enabled:
+            draw += f":shadowcolor=black@0.75:shadowx=2:shadowy=2"
+        else:
+            draw += f":shadowcolor=black@0.0:shadowx=0:shadowy=0"
+        if bg_enabled:
+            draw += f":box=1:boxcolor={bg_color}:boxborderw=8"
+        if stroke_enabled and stroke_width > 0:
+            draw += f":borderw={stroke_width:.2f}:bordercolor={stroke_color}"
+
+        vf_parts.append(draw)
 
     if not vf_parts:
         import shutil
@@ -863,12 +1319,7 @@ def _apply_image_overlays(
     enc_args: list[str],
     pm: "ProcessManager",
 ) -> None:
-    """Burn image overlay clips onto the video using ffmpeg overlay filter.
-
-    Each image is scaled (with letterbox) to match the video frame size, then
-    overlaid for the clip's [start_s, end_s] window.  Multiple clips (even from
-    different files) are chained through successive overlay stages.
-    """
+    """Burn visual overlays (image + video) onto the base video."""
     # Probe video dimensions for scaling
     vid_w, vid_h = 1920, 1080
     total_dur = 0.0
@@ -961,6 +1412,141 @@ def _apply_image_overlays(
     pm.run_checked(cmd, context="image overlays", timeout_s=timeout)
 
 
+def _apply_visual_overlays(
+    input_path: str,
+    visual_clips: list[dict],
+    output_path: str,
+    encoder: str,
+    enc_args: list[str],
+    pm: "ProcessManager",
+) -> None:
+    """Apply image/video overlays in one pass (full-frame, timeline-timed)."""
+
+    # Probe base dimensions + duration
+    vid_w, vid_h = 1920, 1080
+    total_dur = 0.0
+    try:
+        r = subprocess.run(
+            [ffprobe(), "-v", "quiet", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", input_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        parts = r.stdout.strip().split(",")
+        if len(parts) == 2:
+            vid_w, vid_h = int(parts[0]), int(parts[1])
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            [ffprobe(), "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "csv=p=0", input_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        total_dur = float(r.stdout.strip() or 0)
+    except Exception:
+        pass
+
+    valid: list[dict] = []
+    for c in visual_clips:
+        try:
+            src = str(c.get("source_path") or "").strip()
+            if not src or not os.path.isfile(src):
+                continue
+            start_s = float(c.get("start_s", 0.0) or 0.0)
+            end_s = float(c.get("end_s", start_s) or start_s)
+            if end_s <= start_s:
+                continue
+            valid.append({
+                "source_path": src,
+                "start_s": start_s,
+                "end_s": end_s,
+                "opacity_pct": float(c.get("opacity_pct", 100.0) or 100.0),
+                "clip_type": str(c.get("clip_type", "image") or "image").strip().lower(),
+                "z_order": float(c.get("z_order", 0.0) or 0.0),
+                "position_x": float(c.get("position_x", 0.0) or 0.0),
+                "position_y": float(c.get("position_y", 0.0) or 0.0),
+                "scale_pct": float(c.get("scale_pct", 100.0) or 100.0),
+                "rotation_deg": float(c.get("rotation_deg", 0.0) or 0.0),
+            })
+        except Exception:
+            continue
+
+    if not valid:
+        import shutil
+        shutil.copy2(input_path, output_path)
+        return
+
+    valid.sort(key=lambda c: (float(c.get("z_order", 0.0)), float(c.get("start_s", 0.0))))
+
+    cmd = [ffmpeg(), "-y", "-i", input_path]
+    for c in valid:
+        if c["clip_type"] == "image":
+            cmd += ["-loop", "1", "-i", c["source_path"]]
+        else:
+            cmd += ["-i", c["source_path"]]
+
+    parts: list[str] = []
+    current = "[0:v]"
+    for i, c in enumerate(valid):
+        src_idx = i + 1
+        start_s = float(c["start_s"])
+        end_s = float(c["end_s"])
+        clip_dur = max(0.01, end_s - start_s)
+        opacity = max(0.0, min(1.0, float(c["opacity_pct"]) / 100.0))
+        pos_x = float(c.get("position_x", 0.0) or 0.0)
+        pos_y = float(c.get("position_y", 0.0) or 0.0)
+        user_scale = max(0.1, min(5.0, float(c.get("scale_pct", 100.0) or 100.0) / 100.0))
+        user_rot = float(c.get("rotation_deg", 0.0) or 0.0)
+        is_last = i == len(valid) - 1
+        out_label = "[outv]" if is_last else f"[ov{i}]"
+        x_expr = f"(W-w)/2+{pos_x:.2f}"
+        y_expr = f"(H-h)/2+{pos_y:.2f}"
+
+        prep_parts = [
+            f"scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease",
+        ]
+        if abs(user_scale - 1.0) > 0.001:
+            prep_parts.append(f"scale=iw*{user_scale:.5f}:ih*{user_scale:.5f}")
+        if abs(user_rot) > 0.01:
+            prep_parts.append(f"rotate={user_rot:.5f}*PI/180:c=none:ow=rotw(iw):oh=roth(ih)")
+        prep_parts.extend([
+            "format=rgba",
+        ])
+        prep = ",".join(prep_parts)
+        if opacity < 0.995:
+            prep += f",colorchannelmixer=aa={opacity:.4f}"
+
+        if c["clip_type"] == "image":
+            parts.append(f"[{src_idx}:v]{prep}[vov{i}]")
+            parts.append(
+                f"{current}[vov{i}]overlay=x='{x_expr}':y='{y_expr}'"
+                f":enable='between(t\\,{start_s:.3f}\\,{end_s:.3f})'"
+                f"{out_label}"
+            )
+        else:
+            parts.append(
+                f"[{src_idx}:v]setpts=PTS-STARTPTS,"
+                f"trim=duration={clip_dur:.3f},"
+                f"{prep},"
+                f"setpts=PTS+{start_s:.3f}/TB"
+                f"[vov{i}]"
+            )
+            parts.append(
+                f"{current}[vov{i}]overlay=x='{x_expr}':y='{y_expr}':eof_action=pass"
+                f"{out_label}"
+            )
+        current = out_label
+
+    cmd += [
+        "-filter_complex", ";".join(parts),
+        "-map", "[outv]", "-map", "0:a?",
+        "-c:v", encoder, *enc_args,
+        "-c:a", "copy",
+        output_path,
+    ]
+    pm.run_checked(cmd, context="visual overlays", timeout_s=max(60.0, total_dur * 10.0))
+
+
 # -- Transition join (xfade) --------------------------------------------------
 
 _XFADE_MAP: dict[str, str] = {
@@ -1048,18 +1634,101 @@ def _join_with_xfade(
         for i in range(1, n)
     )
     timeout = max(120.0, total_dur * 30.0)
+    def _run_with_encoder(enc_name: str, enc_extra: list[str], context: str) -> None:
+        run_cmd = cmd + [
+            "-filter_complex", fc_str,
+            "-map", "[outv]", "-map", "[outa]",
+            "-c:v", enc_name, *enc_extra,
+            "-c:a", "aac", "-b:a", "192k",
+            output,
+        ]
+        pm.run_checked(run_cmd, context=context, timeout_s=timeout)
 
-    cmd += [
-        "-filter_complex", fc_str,
-        "-map", "[outv]", "-map", "[outa]",
-        "-c:v", encoder, *enc_args,
-        "-c:a", "aac", "-b:a", "192k",
-        output,
-    ]
-    pm.run_checked(cmd, context="xfade join", timeout_s=timeout)
+    try:
+        _run_with_encoder(encoder, enc_args, "xfade join")
+    except RuntimeError:
+        # Hardware encoders (especially QSV/AMF) can fail with xfade filter graphs
+        # depending on driver/runtime. Retry on CPU to avoid export crash.
+        if encoder != "libx264":
+            _run_with_encoder("libx264", ["-crf", "18", "-preset", "fast"], "xfade join (fallback libx264)")
+        else:
+            raise
 
 
 # -- Music mixer --------------------------------------------------------------
+
+def _valid_timeline_audio_clips(audio_clips: list[dict]) -> list[dict]:
+    valid: list[dict] = []
+    for clip in audio_clips:
+        path = str(clip.get("source_path") or "")
+        start_s = float(clip.get("start_s", 0.0) or 0.0)
+        end_s = float(clip.get("end_s", 0.0) or 0.0)
+        if not path or end_s <= start_s:
+            continue
+        valid.append(clip)
+    return valid
+
+
+def _build_timeline_audio_mix_filter(audio_clips: list[dict]) -> str:
+    valid = _valid_timeline_audio_clips(audio_clips)
+    parts = ["[0:a]anull[a0]"]
+    labels = ["[a0]"]
+    for idx, clip in enumerate(valid, start=1):
+        start_s = max(0.0, float(clip.get("start_s", 0.0) or 0.0))
+        end_s = max(start_s, float(clip.get("end_s", start_s) or start_s))
+        duration = max(0.01, end_s - start_s)
+        source_offset = float(clip.get("source_offset_s", start_s) or 0.0)
+        source_start = max(0.0, start_s - source_offset)
+        delay_ms = max(0, int(round(start_s * 1000.0)))
+        volume = max(0.0, min(2.0, float(clip.get("volume_pct", 100.0) or 100.0) / 100.0))
+        fade_in = max(0.0, float(clip.get("fade_in_s", 0.0) or 0.0))
+        fade_out = max(0.0, float(clip.get("fade_out_s", 0.0) or 0.0))
+        chain = (
+            f"[{idx}:a]atrim=start={source_start:.3f}:duration={duration:.3f},"
+            "asetpts=PTS-STARTPTS,"
+            f"volume={volume:.4f}"
+        )
+        if fade_in > 0.001:
+            chain += f",afade=t=in:st=0:d={min(fade_in, duration):.3f}"
+        if fade_out > 0.001:
+            chain += f",afade=t=out:st={max(0.0, duration - fade_out):.3f}:d={min(fade_out, duration):.3f}"
+        chain += f",adelay={delay_ms}|{delay_ms}[a{idx}]"
+        parts.append(chain)
+        labels.append(f"[a{idx}]")
+    parts.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:dropout_transition=0[outa]")
+    return ";".join(parts)
+
+
+def _mix_timeline_audio_clips(
+    video_path: str,
+    audio_clips: list[dict],
+    output_path: str,
+    video_duration: float,
+    pm: ProcessManager,
+) -> None:
+    valid = [
+        clip for clip in _valid_timeline_audio_clips(audio_clips)
+        if os.path.isfile(str(clip.get("source_path") or ""))
+    ]
+    if not valid:
+        import shutil
+        shutil.copy2(video_path, output_path)
+        return
+    cmd = [ffmpeg(), "-y", "-i", video_path]
+    for clip in valid:
+        cmd += ["-i", str(clip.get("source_path") or "")]
+    filter_complex = _build_timeline_audio_mix_filter(valid)
+    cmd += [
+        "-filter_complex", filter_complex,
+        "-map", "0:v:0",
+        "-map", "[outa]",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-shortest",
+        output_path,
+    ]
+    pm.run_checked(cmd, context="mix audio timeline", timeout_s=max(60.0, video_duration * 6.0))
 
 def _mix_music(
     video_path: str,

@@ -1,41 +1,29 @@
 from __future__ import annotations
 
-import sys
 import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 
 def _webview_user_data_dir() -> str:
-    """Return a stable, controlled directory for WebView2's user data.
-
-    Default behaviour of pywebview is to create a fresh tempfile.mkdtemp()
-    every launch, then try to delete it on exit. Windows often refuses with
-    `[WinError 32] file in use` because WebView2's child processes haven't
-    fully released their handles yet. We use a fixed location under temp so:
-      • The same folder is reused across launches (no per-run rm)
-      • Stale folders can be cleaned with retry on the NEXT launch
-    """
+    """Return a stable directory for WebView2 user data."""
     base = os.path.join(tempfile.gettempdir(), "cortacerto_webview2")
     os.makedirs(base, exist_ok=True)
     return base
 
 
 def _cleanup_stale_webview_folder() -> None:
-    """Best-effort cleanup of stale WebView2 user-data subfolders from previous
-    crashed runs. Retries with backoff to handle Windows file locks gracefully.
-    Failures are silent — a leftover folder is harmless (WebView2 just reuses it).
-    """
+    """Best-effort cleanup of stale WebView2 lock directories."""
     base = _webview_user_data_dir()
     if not os.path.isdir(base):
         return
-    # Don't delete the base itself (we WANT it persistent), just truncate stale
-    # lock files that prevented WebView2 from starting cleanly last time.
     for name in ("EBWebView", "EdgeWebView"):
         lock_dir = os.path.join(base, name, "Default", "BrowsingTopicsSiteData")
         if not os.path.isdir(lock_dir):
@@ -47,8 +35,9 @@ def _cleanup_stale_webview_folder() -> None:
             except (OSError, PermissionError):
                 time.sleep(0.3 * (attempt + 1))
 
+
 def _wait_for_url(url: str, timeout: float = 20.0) -> bool:
-    """Poll until the URL responds or timeout expires."""
+    """Poll until URL responds or timeout expires."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -58,16 +47,31 @@ def _wait_for_url(url: str, timeout: float = 20.0) -> bool:
             time.sleep(0.3)
     return False
 
-def _force_exit(*_):
-    """Force-kill the process — used for SIGINT (Ctrl+C) and window-close."""
+
+def _force_exit(*_) -> None:
+    """Force-kill process, used for Ctrl+C and window close."""
     try:
         from src.api.server import stop_server
         stop_server()
     except Exception:
         pass
-    # Give uvicorn 0.5 s to flush; then hard-exit regardless
     time.sleep(0.5)
     os._exit(0)
+
+
+def _reopen_manager_process() -> None:
+    """Open a fresh project-manager flow after the editor window is closed."""
+    try:
+        root = _project_root()
+        subprocess.Popen(
+            [sys.executable, str(root / "main.py"), "--web"],
+            cwd=str(root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except Exception:
+        pass
 
 
 def _project_root() -> Path:
@@ -89,7 +93,7 @@ def _latest_mtime(paths: list[Path]) -> float:
 
 
 def _ensure_web_build_current() -> None:
-    """Build React when source files are newer than web/dist."""
+    """Build React when web sources are newer than web/dist."""
     root = _project_root()
     web_dir = root / "web"
     dist_index = web_dir / "dist" / "index.html"
@@ -122,87 +126,175 @@ def _ensure_web_build_current() -> None:
         print(f"[CortaCerto] AVISO: nao foi possivel atualizar web/dist automaticamente: {exc}")
 
 
-def launch(dev_mode: bool = False):
-    """Start the FastAPI server and open pywebview pointing to the React app."""
-    # Register SIGINT (Ctrl+C) handler so the terminal can kill the process cleanly
-    signal.signal(signal.SIGINT,  _force_exit)
+def _pick_startup_target() -> dict[str, str] | None:
+    """Open project manager first and return selection for web bootstrap."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        from .project_manager import ProjectManagerScreen, register_recent_project
+    except Exception:
+        # Fallback: if manager UI cannot be created, continue with normal editor boot.
+        return {"kind": "none", "path": "", "name": ""}
+
+    selection: dict[str, str] = {}
+    video_exts = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+
+    root = tk.Tk()
+    root.title("CortaCerto")
+    root.geometry("1280x780")
+    root.minsize(1000, 660)
+    root.configure(bg="#0c0b0f")
+
+    def _finish(kind: str, path: str, name: str = "") -> None:
+        if not path:
+            return
+        selection["kind"] = kind
+        selection["path"] = path
+        if name:
+            selection["name"] = name
+        try:
+            root.quit()
+        except Exception:
+            pass
+
+    def _on_open(path: str) -> None:
+        ext = Path(path).suffix.lower()
+        kind = "video" if ext in video_exts else "project"
+        try:
+            register_recent_project(path)
+        except Exception:
+            pass
+        _finish(kind, path)
+
+    def _on_create(path: str, name: str, category: str, template: str) -> None:
+        try:
+            if path:
+                register_recent_project(path, name=name, category=category, status="draft")
+        except Exception:
+            pass
+        selection["kind"] = "new"
+        selection["path"] = path or ""
+        selection["name"] = name or "Projeto sem nome"
+        selection["category"] = category or "youtube"
+        selection["template"] = template or "blank"
+        try:
+            root.quit()
+        except Exception:
+            pass
+
+    def _on_quick() -> None:
+        path = filedialog.askopenfilename(
+            title="Abrir video",
+            filetypes=[("Videos", "*.mp4;*.mov;*.avi;*.mkv;*.webm;*.m4v"), ("Todos", "*.*")],
+        )
+        if path:
+            _finish("video", path)
+
+    def _on_restore() -> None:
+        path = filedialog.askopenfilename(
+            title="Abrir projeto",
+            filetypes=[("Projeto CortaCerto", "*.ccproj;*.ccp;*.json"), ("Todos", "*.*")],
+        )
+        if path:
+            _finish("project", path)
+
+    ProjectManagerScreen(
+        root,
+        on_open=_on_open,
+        on_create=_on_create,
+        on_quick=_on_quick,
+        on_restore=_on_restore,
+    )
+    root.protocol("WM_DELETE_WINDOW", root.quit)
+    root.mainloop()
+    try:
+        root.destroy()
+    except Exception:
+        pass
+    if not selection:
+        return None
+    return selection
+
+
+def launch(dev_mode: bool = False) -> None:
+    """Start FastAPI and open pywebview with manager -> editor flow."""
+    signal.signal(signal.SIGINT, _force_exit)
     try:
         signal.signal(signal.SIGTERM, _force_exit)
     except (AttributeError, OSError):
-        pass   # SIGTERM not available on all platforms
+        pass
+
+    try:
+        import webview
+    except ImportError:
+        print("[CortaCerto] pywebview nao esta instalado neste Python.")
+        print("[CortaCerto] Para abrir na interface normal, instale/ative pywebview no venv do projeto.")
+        return
+
+    startup_target = _pick_startup_target()
+    if startup_target is None:
+        return
 
     if not dev_mode:
         _ensure_web_build_current()
 
     from src.api.server import run_server
 
-    # Start API server in background thread
     run_server(host="127.0.0.1", port=7472)
-
-    # Wait for the API to be ready before creating the window
     ready = _wait_for_url("http://127.0.0.1:7472/api/health", timeout=20.0)
     if not ready:
-        print("[CortaCerto] ERRO: servidor API não respondeu em 20 s. Verifique a porta 7472.")
+        print("[CortaCerto] ERRO: servidor API nao respondeu em 20s. Verifique porta 7472.")
 
-    try:
-        import webview
-    except ImportError:
-        print("[CortaCerto] pywebview not installed. Opening in browser instead.")
-        import webbrowser
-        # Always use 127.0.0.1 — avoids localhost→::1 IPv6 resolution on Windows
-        url = "http://127.0.0.1:5173" if dev_mode else "http://127.0.0.1:7472"
-        webbrowser.open(url)
-        input("Press Enter to quit...")
-        return
+    startup_qs = urllib.parse.urlencode({
+        "boot_kind": startup_target.get("kind", ""),
+        "boot_path": startup_target.get("path", ""),
+        "boot_name": startup_target.get("name", ""),
+    })
 
     if dev_mode:
-        # In dev mode, wait for Vite to be ready too
         _wait_for_url("http://127.0.0.1:5173", timeout=30.0)
-        # Use 127.0.0.1, not localhost — Windows may resolve localhost→::1 (IPv6)
-        # while uvicorn/vite only listen on IPv4
-        url = "http://127.0.0.1:5173"
+        app_url = f"http://127.0.0.1:5173/?{startup_qs}"
     else:
-        # Production: serve from the API server (avoids file:// CORS issues)
-        # Always 127.0.0.1 — never "localhost" to avoid IPv6 resolution issues
-        url = f"http://127.0.0.1:7472/?v={int(time.time())}"
+        app_url = f"http://127.0.0.1:7472/?v={int(time.time())}&{startup_qs}"
 
     window = webview.create_window(
         "CortaCerto",
-        url=url,
+        url=app_url,
         width=1440,
         height=860,
         min_size=(900, 600),
         background_color="#0d0d0d",
     )
+    reopen_on_close = {"value": True}
 
-    # Give the API server a reference to the pywebview window so it can open
-    # native file dialogs via webview.OPEN_DIALOG / webview.SAVE_DIALOG.
-    # This is safe to call before webview.start() — the window object already
-    # exists; create_file_dialog will only be called after start() is running.
+    def _on_editor_started() -> None:
+        try:
+            window.maximize()
+        except Exception:
+            pass
+
     try:
         from src.api.server import set_webview_window
         set_webview_window(window)
     except Exception:
         pass
 
-    # Best-effort cleanup of stale lock dirs from previous crashed runs.
     _cleanup_stale_webview_folder()
 
-    # Use a controlled user-data folder so pywebview doesn't try to delete a
-    # fresh tempdir on exit (Windows refuses with WinError 32 because WebView2
-    # child processes haven't released their handles yet).
     try:
         webview.start(
+            _on_editor_started,
             debug=dev_mode,
-            private_mode=False,                  # persistent storage between launches
+            private_mode=False,
             storage_path=_webview_user_data_dir(),
         )
     except TypeError:
-        # Older pywebview versions don't accept storage_path → fall back
-        webview.start(debug=dev_mode)
+        webview.start(_on_editor_started, debug=dev_mode)
 
-    # Window was closed — force-exit so no daemon thread keeps the process alive
+    if reopen_on_close["value"]:
+        _reopen_manager_process()
     _force_exit()
+
 
 def _dist_index() -> str:
     base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

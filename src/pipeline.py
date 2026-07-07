@@ -19,6 +19,7 @@ from .core.effect_renderer import render_clip_source_pass, render_effects_pass
 from .core.editor import (
     cut_silence, convert_to_vertical,
     get_video_duration, RenderStats, CancelledError, _mix_music,
+    _has_audio_stream,
 )
 from .core.process_manager import ProcessManager
 from .core.thumbnail import detect_person_from_video
@@ -76,6 +77,7 @@ def run_pipeline(
     try:
         # ── 1. Original duration ────────────────────────────────────────────
         result.original_duration_s = get_video_duration(video_path)
+        source_has_audio = _has_audio_stream(video_path)
         encoder, _ = detect_video_encoder()
         prog(f"[GPU] Selected mode: encode={encoder}; efeitos OpenCV/bokeh rodam em CPU.", 0.01)
         prog(f"[EXPORT] Saídas selecionadas: {_export_output_plan(config)}.", 0.01)
@@ -249,6 +251,9 @@ def run_pipeline(
                 prog("[5/6] Volume por clipe aplicado.", 0.74)
 
         audio_filters = _build_audio_postprocess_filters(config)
+        if audio_filters and not source_has_audio:
+            prog("[5/6] Audio real ausente; pulando reducao/normalizacao.", 0.74)
+            audio_filters = []
         if audio_filters or config.music_path:
             with ProcessManager(cancel) as pm:
                 audio_out = os.path.join(output_dir, f"{base}_audio.mp4")
@@ -444,6 +449,7 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
     audio = 0
     transitions = 0
     chroma = 0
+    blur = 0
     overlays = 0
     for option in clip_options:
         try:
@@ -454,6 +460,11 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
         transition = str(option.get("transition") or "Corte")
         text_overlay = str(option.get("text_overlay") or "").strip()
         chroma_enabled = bool(option.get("chroma_enabled", False))
+        blur_type = str(option.get("blur_type") or "none").strip().lower()
+        try:
+            blur_intensity = float(option.get("blur_intensity", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            blur_intensity = 0.0
         if _is_overlay_clip_option(option):
             overlays += 1
         if abs(scale_pct - 100.0) > 0.01:
@@ -466,6 +477,8 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
             text += 1
         if chroma_enabled:
             chroma += 1
+        if blur_type not in ("", "none") and blur_intensity > 0.01:
+            blur += 1
     parts: list[str] = []
     if adjusted:
         parts.append(f"escala em {adjusted} clipe(s)")
@@ -477,6 +490,8 @@ def _clip_option_plan(clip_options: list[dict[str, object]]) -> str:
         parts.append(f"texto em {text} clipe(s)")
     if chroma:
         parts.append(f"chroma em {chroma} clipe(s)")
+    if blur:
+        parts.append(f"desfoque em {blur} clipe(s)")
     if overlays:
         parts.append(f"{overlays} overlay(s) visual(is)")
     return ", ".join(parts)
@@ -601,7 +616,7 @@ def _build_clip_volume_filter(clip_options: list[dict[str, object]]) -> str:
 
 
 def _build_per_clip_data(clip_options: list[dict[str, object]]) -> list[dict]:
-    """Extract speed_factor + transition per base-layer clip for cut_silence (Etapa 6)."""
+    """Extract per-base-clip edits for cut_silence."""
     result: list[dict] = []
     for opt in clip_options:
         if str(opt.get("layer") or "base").strip().lower() == "overlay":
@@ -615,7 +630,20 @@ def _build_per_clip_data(clip_options: list[dict[str, object]]) -> list[dict]:
             td = float(opt.get("transition_duration_s", 0.4) or 0.4)
         except (TypeError, ValueError):
             td = 0.4
-        result.append({"speed_factor": sf, "transition": tr, "transition_duration_s": td})
+        try:
+            blur_intensity = float(opt.get("blur_intensity", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            blur_intensity = 0.0
+        result.append(
+            {
+                "speed_factor": sf,
+                "transition": tr,
+                "transition_duration_s": td,
+                "blur_type": str(opt.get("blur_type") or "none"),
+                "blur_intensity": max(0.0, min(100.0, blur_intensity)),
+                "blur_direction": str(opt.get("blur_direction") or "both"),
+            }
+        )
     return result
 
 

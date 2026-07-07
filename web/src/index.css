@@ -19,6 +19,61 @@ body {
     linear-gradient(180deg, #0a090c 0%, #0d0b11 100%);
 }
 
+body.theme-graphite {
+  background:
+    radial-gradient(ellipse 80% 55% at 5% 0%, rgba(90,100,120,0.16) 0%, transparent 62%),
+    radial-gradient(ellipse 70% 50% at 95% 100%, rgba(80,90,110,0.12) 0%, transparent 60%),
+    linear-gradient(180deg, #08090b 0%, #111318 100%);
+}
+body.theme-midnight {
+  background:
+    radial-gradient(ellipse 90% 60% at 10% 0%, rgba(35,90,170,0.22) 0%, transparent 64%),
+    radial-gradient(ellipse 70% 50% at 96% 100%, rgba(36,170,160,0.13) 0%, transparent 60%),
+    linear-gradient(180deg, #050812 0%, #0a1020 100%);
+}
+body.theme-emerald {
+  background:
+    radial-gradient(ellipse 90% 60% at 5% 0%, rgba(20,150,110,0.18) 0%, transparent 64%),
+    radial-gradient(ellipse 70% 50% at 95% 100%, rgba(180,140,60,0.12) 0%, transparent 60%),
+    linear-gradient(180deg, #050c0a 0%, #0d1310 100%);
+}
+
+body.theme-graphite .bg-bg { background-color: #08090b; }
+body.theme-graphite .bg-bg-panel { background-color: #111318; }
+body.theme-graphite .bg-bg-surface { background-color: #181b22; }
+body.theme-graphite .bg-bg-rail { background-color: #0d0f13; }
+body.theme-graphite .bg-accent { background-color: #6f7f95; }
+body.theme-graphite .hover\:bg-accent-hover:hover { background-color: #8190a6; }
+body.theme-graphite .text-accent { color: #a8b3c5; }
+body.theme-graphite .border-border { border-color: rgba(190,200,215,0.14); }
+body.theme-graphite .border-border-light { border-color: rgba(190,200,215,0.22); }
+body.theme-graphite .text-text-muted { color: #9aa4b5; }
+body.theme-graphite .text-text-dim { color: #667084; }
+
+body.theme-midnight .bg-bg { background-color: #050812; }
+body.theme-midnight .bg-bg-panel { background-color: #0a1020; }
+body.theme-midnight .bg-bg-surface { background-color: #0f1830; }
+body.theme-midnight .bg-bg-rail { background-color: #070b16; }
+body.theme-midnight .bg-accent { background-color: #2f8cff; }
+body.theme-midnight .hover\:bg-accent-hover:hover { background-color: #4aa3ff; }
+body.theme-midnight .text-accent { color: #69b7ff; }
+body.theme-midnight .border-border { border-color: rgba(90,150,255,0.18); }
+body.theme-midnight .border-border-light { border-color: rgba(90,150,255,0.28); }
+body.theme-midnight .text-text-muted { color: #8da3c7; }
+body.theme-midnight .text-text-dim { color: #53678e; }
+
+body.theme-emerald .bg-bg { background-color: #050c0a; }
+body.theme-emerald .bg-bg-panel { background-color: #0d1310; }
+body.theme-emerald .bg-bg-surface { background-color: #122019; }
+body.theme-emerald .bg-bg-rail { background-color: #07100d; }
+body.theme-emerald .bg-accent { background-color: #13a075; }
+body.theme-emerald .hover\:bg-accent-hover:hover { background-color: #18b987; }
+body.theme-emerald .text-accent { color: #50d9ad; }
+body.theme-emerald .border-border { border-color: rgba(80,217,173,0.17); }
+body.theme-emerald .border-border-light { border-color: rgba(80,217,173,0.28); }
+body.theme-emerald .text-text-muted { color: #88a99d; }
+body.theme-emerald .text-text-dim { color: #536f65; }
+
 /* Frosted-glass panel mixin — apply via inline style or wrapper class */
 .glass {
   background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.018));

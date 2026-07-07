@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import tempfile
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -144,8 +145,27 @@ def _transcribe_openai_api(
             "Content-Type":   f"multipart/form-data; boundary={boundary}",
         },
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        payload = ""
+        try:
+            payload = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            payload = ""
+        lower = payload.lower()
+        if exc.code in (401, 403) or "invalid_api_key" in lower:
+            raise TranscriptionUnavailable(
+                "OPENAI_API_KEY invalida ou sem permissao para transcricao."
+            ) from exc
+        if exc.code == 429:
+            raise TranscriptionUnavailable(
+                "Limite de uso da API atingido (HTTP 429)."
+            ) from exc
+        raise TranscriptionUnavailable(
+            f"Falha na API de transcricao (HTTP {exc.code})."
+        ) from exc
 
     segments = []
     for seg in data.get("segments", []):
@@ -319,7 +339,14 @@ def transcribe_video(
                     raise
 
         if provider in ("auto", "whisper"):
-            return _transcribe_openai_whisper(audio_tmp, model_size, language, on_progress)
+            try:
+                return _transcribe_openai_whisper(audio_tmp, model_size, language, on_progress)
+            except TranscriptionUnavailable:
+                if provider == "whisper":
+                    raise
+            except Exception:
+                if provider == "whisper":
+                    raise
 
         raise TranscriptionUnavailable(
             "Nenhum provider de transcrição disponível.\n"
@@ -334,10 +361,10 @@ def transcribe_video(
                 pass
 
 
-def available_providers() -> list[str]:
+def available_providers(openai_api_key: Optional[str] = None) -> list[str]:
     """Return names of transcription providers that can be used right now."""
     found: list[str] = []
-    if os.environ.get("OPENAI_API_KEY"):
+    if openai_api_key or os.environ.get("OPENAI_API_KEY"):
         found.append("openai-api")
     try:
         import faster_whisper  # type: ignore  # noqa: F401

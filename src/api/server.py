@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
@@ -83,6 +83,15 @@ def _wv_open_dialog_type():
         import webview
         return webview.OPEN_DIALOG      # pywebview < 4.x (deprecated)
 
+def _wv_folder_dialog_type():
+    """Return the correct folder-dialog constant for the installed pywebview version."""
+    try:
+        from webview import FileDialog
+        return FileDialog.FOLDER          # pywebview >= 4.x
+    except (ImportError, AttributeError):
+        import webview
+        return webview.FOLDER_DIALOG      # pywebview < 4.x (deprecated)
+
 
 def _wv_save_dialog_type():
     """Return the correct save-dialog constant for the installed pywebview version."""
@@ -110,6 +119,19 @@ def _native_open_dialog(title: str, filetypes_wv: tuple, filetypes_tk: list) -> 
     # Subprocess fallback: spawn a fresh Python process so tkinter runs on its own
     # main thread (avoids the "main thread is not in main loop" crash).
     return _subprocess_tk_dialog("open", {"title": title, "filetypes": filetypes_tk})
+
+def _native_open_folder_dialog(title: str = "Selecionar pasta") -> str:
+    """Open a native folder selection dialog. Thread-safe; works from any thread."""
+    if _webview_window is not None:
+        try:
+            paths = _webview_window.create_file_dialog(
+                _wv_folder_dialog_type(),
+                allow_multiple=False,
+            )
+            return paths[0] if paths else ""
+        except Exception:
+            pass
+    return _subprocess_tk_dialog("directory", {"title": title})
 
 
 def _native_save_dialog(title: str, default_name: str,
@@ -150,6 +172,8 @@ def _subprocess_tk_dialog(dialog_type: str, kwargs: dict) -> str:
         "dialog_type = " + repr(dialog_type) + "\n"
         "if dialog_type == 'open':\n"
         "    path = filedialog.askopenfilename(**kwargs)\n"
+        "elif dialog_type == 'directory':\n"
+        "    path = filedialog.askdirectory(**kwargs)\n"
         "else:\n"
         "    path = filedialog.asksaveasfilename(**kwargs)\n"
         "root.destroy()\n"
@@ -183,6 +207,7 @@ def _cache_key(path: str, silence_style: str, auto_cut: bool = True) -> str:
 # cached in the system temp directory; they persist across runs so we only encode once.
 
 _proxy_jobs: dict[str, dict] = {}   # md5(normpath) → {status, proxy_path, detail?}
+_proxy_processes: dict[str, subprocess.Popen] = {}
 _proxy_lock = threading.Lock()
 
 # Codecs that WebView2 cannot play without extra Windows codec packs
@@ -246,19 +271,33 @@ def _run_proxy_transcode(video_path: str, proxy_path: str, key: str) -> None:
             "-movflags", "+faststart",
             proxy_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, timeout=1800)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         with _proxy_lock:
-            if result.returncode == 0 and os.path.isfile(proxy_path):
+            _proxy_processes[key] = proc
+        stdout, stderr = proc.communicate(timeout=1800)
+        with _proxy_lock:
+            _proxy_processes.pop(key, None)
+            if proc.returncode == 0 and os.path.isfile(proxy_path):
                 _proxy_jobs[key]["status"] = "ready"
             else:
                 _proxy_jobs[key]["status"] = "error"
-                _proxy_jobs[key]["detail"] = result.stderr.decode(errors="replace")[-400:]
+                _proxy_jobs[key]["detail"] = stderr.decode(errors="replace")[-400:]
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()  # type: ignore[name-defined]
+        except Exception:
+            pass
+        with _proxy_lock:
+            _proxy_processes.pop(key, None)
+            _proxy_jobs[key]["status"] = "error"
+            _proxy_jobs[key]["detail"] = "Timeout ao gerar proxy de preview"
     except Exception as e:
         with _proxy_lock:
+            _proxy_processes.pop(key, None)
             _proxy_jobs[key]["status"] = "error"
             _proxy_jobs[key]["detail"] = str(e)
 
-def _start_proxy_if_needed(video_path: str) -> tuple[str, str, str]:
+def _start_proxy_if_needed(video_path: str, force: bool = False) -> tuple[str, str, str]:
     """Check codec; start background transcode if necessary.
 
     Returns (codec, proxy_status, proxy_path).
@@ -266,7 +305,7 @@ def _start_proxy_if_needed(video_path: str) -> tuple[str, str, str]:
     """
     info = _get_video_stream_info(video_path)
     codec = info["codec"]
-    if not _needs_preview_proxy(video_path, info):
+    if not force and not _needs_preview_proxy(video_path, info):
         return codec, "not_needed", ""
 
     key = hashlib.md5(os.path.normpath(video_path).encode()).hexdigest()
@@ -275,12 +314,15 @@ def _start_proxy_if_needed(video_path: str) -> tuple[str, str, str]:
     with _proxy_lock:
         if key in _proxy_jobs:
             job = _proxy_jobs[key]
-            return codec, job["status"], proxy_path
-        # Check if a previous run already created the file
-        if os.path.isfile(proxy_path):
+            if force and job.get("status") == "error":
+                _proxy_jobs[key] = {"status": "transcoding", "proxy_path": proxy_path}
+            else:
+                return codec, job["status"], proxy_path
+        elif os.path.isfile(proxy_path):
             _proxy_jobs[key] = {"status": "ready", "proxy_path": proxy_path}
             return codec, "ready", proxy_path
-        _proxy_jobs[key] = {"status": "transcoding", "proxy_path": proxy_path}
+        else:
+            _proxy_jobs[key] = {"status": "transcoding", "proxy_path": proxy_path}
 
     t = threading.Thread(
         target=_run_proxy_transcode,
@@ -298,7 +340,11 @@ class OpenProjectRequest(BaseModel):
     auto_cut: bool = False           # when False, import as a single clip with full duration (CapCut-style)
 
 class OpenFileDialogRequest(BaseModel):
-    type: str = "video"
+    type: str = "video"  # "media" | "video" | "audio" | "image" | "project"
+
+class VideoProxyEnsureRequest(BaseModel):
+    path: str
+    force: bool = False
 
 class OpenSaveDialogRequest(BaseModel):
     default_name: str = "output.mp4"
@@ -308,6 +354,11 @@ class OpenSaveDialogRequest(BaseModel):
 class SaveProjectRequest(BaseModel):
     path: str
     project: dict
+
+
+class ProjectUsagePingRequest(BaseModel):
+    path: str
+    name: str = ""
 
 class StockSearchRequest(BaseModel):
     provider: str
@@ -321,10 +372,33 @@ class StockDownloadRequest(BaseModel):
 class StockSettingsRequest(BaseModel):
     values: dict[str, str]
 
+class SpaceListRequest(BaseModel):
+    path: str
+    recursive: bool = True
+    limit: int = 800
+
 class ApiSettingsRequest(BaseModel):
     values: dict[str, str]
 
+class PremiumColorAssistRequest(BaseModel):
+    mode: str = "auto"          # auto | palette | correct
+    strength: float = 0.6       # 0..1
+    brightness: float = 0.0
+    contrast: float = 0.0
+    saturation: float = 0.0
+    temperature: float = 0.0
+    hue: float = 0.0
+    exposure: float = 0.0
+    sharpness: float = 0.0
+    vignette: float = 0.0
+
 # -- Helpers -------------------------------------------------------------------
+
+def _recordings_root() -> Path:
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return Path(base) / "CortaCerto" / "assets" / "recordings"
+    return Path.home() / ".cortacerto" / "assets" / "recordings"
 
 def _clip_to_dict(clip, track_name: str, video_path: str = "") -> dict:
     return {
@@ -349,6 +423,9 @@ def _clip_to_dict(clip, track_name: str, video_path: str = "") -> dict:
         "chroma_enabled":        getattr(clip, "chroma_enabled",        False),
         "chroma_color":          getattr(clip, "chroma_color",          "#00ff00"),
         "chroma_tolerance":      getattr(clip, "chroma_tolerance",      45.0),
+        "person_remove_enabled":  getattr(clip, "person_remove_enabled",  False),
+        "person_remove_strength": getattr(clip, "person_remove_strength", 72.0),
+        "person_remove_feather":  getattr(clip, "person_remove_feather",  10.0),
         "brightness": clip.brightness,
         "contrast": clip.contrast,
         "saturation": clip.saturation,
@@ -362,6 +439,10 @@ def _clip_to_dict(clip, track_name: str, video_path: str = "") -> dict:
         "opacity_pct":  getattr(clip, "opacity_pct",  100),
         "z_order": clip.z_order,
     }
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, float(v)))
 
 def _track_to_dict(track, track_name: str, video_path: str = "") -> dict:
     return {
@@ -423,6 +504,21 @@ def video_proxy_status(path: str):
             return {"status": "ready", "proxy_path": proxy_path}
         return {"status": "not_started", "proxy_path": ""}
     return {"status": job["status"], "proxy_path": job.get("proxy_path", "")}
+
+
+@app.post("/api/video-proxy-ensure")
+def video_proxy_ensure(req: VideoProxyEnsureRequest):
+    """Probe one source and start/provide preview proxy when WebView cannot decode it."""
+    path = os.path.normpath(req.path)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail=f"Arquivo não encontrado: {path}")
+    codec, proxy_status, proxy_path = _start_proxy_if_needed(path, force=bool(req.force))
+    return {
+        "path": path,
+        "video_codec": codec,
+        "proxy_status": proxy_status,
+        "proxy_path": proxy_path,
+    }
 
 
 @app.get("/api/audio-waveform")
@@ -548,6 +644,88 @@ def clear_app_cache():
     return {"cache": clear_cache()}
 
 
+@app.post("/api/ai/premium-color-assist")
+def premium_color_assist(req: PremiumColorAssistRequest):
+    from src.core.api_usage import record_openai_usage
+
+    strength = _clamp(req.strength, 0.0, 1.0)
+    mode = (req.mode or "auto").strip().lower()
+    if mode not in {"auto", "palette", "correct"}:
+        mode = "auto"
+
+    current = {
+        "brightness": float(req.brightness or 0.0),
+        "contrast": float(req.contrast or 0.0),
+        "saturation": float(req.saturation or 0.0),
+        "temperature": float(req.temperature or 0.0),
+        "hue": float(req.hue or 0.0),
+        "exposure": float(req.exposure or 0.0),
+        "sharpness": float(req.sharpness or 0.0),
+        "vignette": float(req.vignette or 0.0),
+    }
+
+    # Premium IA local: deterministic suggestions tuned for short-form edits.
+    if mode == "auto":
+        patch = {
+            "contrast": _clamp(current["contrast"] + (8 + 10 * strength), -100, 100),
+            "saturation": _clamp(current["saturation"] + (6 + 12 * strength), -100, 100),
+            "exposure": _clamp(current["exposure"] + (2 + 8 * strength), -100, 100),
+            "sharpness": _clamp(current["sharpness"] + (5 + 15 * strength), 0, 100),
+            "vignette": _clamp(current["vignette"] + (2 + 6 * strength), 0, 100),
+        }
+        explanation = "IA Premium: contraste, saturacao e nitidez equilibrados para maior presenca visual."
+    elif mode == "palette":
+        patch = {
+            "temperature": _clamp(current["temperature"] + (4 + 18 * strength), -100, 100),
+            "hue": _clamp(current["hue"] + (1 + 6 * strength), -180, 180),
+            "saturation": _clamp(current["saturation"] + (8 + 10 * strength), -100, 100),
+            "contrast": _clamp(current["contrast"] + (4 + 8 * strength), -100, 100),
+        }
+        explanation = "IA Premium: combinacao de cores com tonalidade mais cinematica e vibrante."
+    else:  # correct
+        patch = {
+            "brightness": _clamp(current["brightness"] + (2 + 8 * strength), -100, 100),
+            "exposure": _clamp(current["exposure"] + (4 + 10 * strength), -100, 100),
+            "contrast": _clamp(current["contrast"] + (4 + 6 * strength), -100, 100),
+            "temperature": _clamp(current["temperature"] - (2 + 8 * strength), -100, 100),
+        }
+        explanation = "IA Premium: correcao de cor para pele/luz mais natural com estabilidade tonal."
+
+    record_openai_usage(
+        feature=f"premium_color_ai_{mode}",
+        model="cortacerto-premium-local",
+        input_tokens=120,
+        output_tokens=45,
+        estimated_cost_usd=0.0,
+        ok=True,
+    )
+
+    return {
+        "mode": mode,
+        "strength": strength,
+        "patch": patch,
+        "engine": "premium-local-ai",
+        "explanation": explanation,
+    }
+
+
+@app.post("/api/logs/open-dir")
+def open_logs_dir():
+    from src.core.error_log import default_error_log_dir
+    logs_dir = default_error_log_dir()
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if os.name == "nt":
+            os.startfile(str(logs_dir))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(logs_dir)])
+        else:
+            subprocess.Popen(["xdg-open", str(logs_dir)])
+        return {"ok": True, "path": str(logs_dir)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Nao foi possivel abrir pasta de logs: {exc}")
+
+
 @app.post("/api/open-file-dialog")
 def open_file_dialog(req: OpenFileDialogRequest):
     """Open a native file-open dialog.
@@ -557,7 +735,19 @@ def open_file_dialog(req: OpenFileDialogRequest):
     Sync `def` so FastAPI routes it through its thread-pool executor (non-blocking
     for the uvicorn event loop).
     """
-    if req.type == "video":
+    if req.type == "media":
+        path = _native_open_dialog(
+            title="Importar midia",
+            filetypes_wv=(
+                "Midias (*.mp4;*.mov;*.avi;*.mkv;*.webm;*.m4v;*.mp3;*.wav;*.aac;*.m4a;*.flac;*.ogg;*.opus;*.wma;*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.ccproj;*.ccp;*.json)",
+                "Todos os arquivos (*.*)",
+            ),
+            filetypes_tk=[
+                ("Midias", "*.mp4 *.mov *.avi *.mkv *.webm *.m4v *.mp3 *.wav *.aac *.m4a *.flac *.ogg *.opus *.wma *.png *.jpg *.jpeg *.webp *.gif *.bmp *.ccproj *.ccp *.json"),
+                ("Todos", "*.*"),
+            ],
+        )
+    elif req.type == "video":
         path = _native_open_dialog(
             title="Abrir vídeo",
             filetypes_wv=("Vídeo (*.mp4;*.mov;*.avi;*.mkv;*.webm;*.m4v)", "Todos os arquivos (*.*)",),
@@ -590,13 +780,110 @@ def open_file_dialog(req: OpenFileDialogRequest):
     return {"path": path or ""}
 
 
+@app.post("/api/open-folder-dialog")
+def open_folder_dialog():
+    path = _native_open_folder_dialog("Selecionar pasta de midias")
+    return {"path": path or ""}
+
+
+def _media_type_from_path(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}:
+        return "video"
+    if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
+        return "image"
+    if ext in {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg", ".opus", ".wma"}:
+        return "audio"
+    return "other"
+
+
+@app.post("/api/space/list-media")
+def list_space_media(req: SpaceListRequest):
+    base = Path(os.path.normpath(req.path))
+    if not base.is_dir():
+        raise HTTPException(status_code=404, detail="Pasta nao encontrada")
+
+    limit = max(50, min(int(req.limit or 800), 5000))
+    recursive = bool(req.recursive)
+
+    files_iter = base.rglob("*") if recursive else base.glob("*")
+    items: list[dict] = []
+    for file_path in files_iter:
+        if not file_path.is_file():
+            continue
+        media_type = _media_type_from_path(file_path)
+        if media_type == "other":
+            continue
+        try:
+            stat = file_path.stat()
+        except OSError:
+            continue
+        items.append({
+            "id": str(file_path),
+            "provider": "space",
+            "type": media_type,
+            "title": file_path.name,
+            "local_path": str(file_path),
+            "source_url": "",
+            "download_url": "",
+            "license": "",
+            "author": "",
+            "duration_s": None,
+            "thumbnail_url": "",
+            "size_bytes": int(stat.st_size),
+            "modified_s": float(stat.st_mtime),
+        })
+        if len(items) >= limit:
+            break
+
+    items.sort(key=lambda x: x.get("modified_s", 0), reverse=True)
+    return {
+        "path": str(base),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@app.post("/api/audio-recording/save")
+async def save_audio_recording(
+    audio: UploadFile = File(...),
+):
+    filename = (audio.filename or "recording.webm").strip() or "recording.webm"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".webm", ".wav", ".ogg", ".mp3", ".m4a", ".aac"}:
+        suffix = ".webm"
+    root = _recordings_root()
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    out_path = root / f"rec-{stamp}-{uuid.uuid4().hex[:8]}{suffix}"
+    try:
+        payload = await audio.read()
+        if not payload:
+            raise HTTPException(status_code=400, detail="Arquivo de audio vazio")
+        out_path.write_bytes(payload)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha ao salvar gravacao: {exc}")
+    finally:
+        try:
+            await audio.close()
+        except Exception:
+            pass
+    return {
+        "ok": True,
+        "path": str(out_path),
+        "size_bytes": out_path.stat().st_size,
+    }
+
+
 @app.post("/api/open-save-dialog")
 def open_save_dialog(req: OpenSaveDialogRequest):
     """Open a native file-save dialog.
 
     Same threading strategy as open_file_dialog.
     """
-    from src.core.app_settings import general_settings
+    from src.core.app_settings import general_settings, remember_default_save_dir
     configured_dir = str(req.initial_dir or general_settings().get("default_save_dir") or "").strip()
     initial_dir = configured_dir if configured_dir and os.path.isdir(configured_dir) else ""
     if req.type == "project":
@@ -617,6 +904,8 @@ def open_save_dialog(req: OpenSaveDialogRequest):
             default_ext=".mp4",
             initial_dir=initial_dir,
         )
+    if path:
+        remember_default_save_dir(path)
     return {"path": path or ""}
 
 @app.post("/api/save-project")
@@ -624,11 +913,37 @@ def save_project(req: SaveProjectRequest):
     """Persist the current frontend project state as a JSON file (.ccproj)."""
     save_path = os.path.normpath(req.path)
     try:
+        from src.core.app_settings import remember_default_save_dir
+        payload = dict(req.project)
+        payload.setdefault("_projectPath", save_path)
+        payload.setdefault("project_path", save_path)
+        if not payload.get("_projectName"):
+            payload["_projectName"] = Path(save_path).stem
         with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(req.project, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        remember_default_save_dir(save_path)
         return {"ok": True, "path": save_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {e}")
+
+
+@app.post("/api/project-usage/ping")
+def project_usage_ping(req: ProjectUsagePingRequest):
+    """Track lightweight local editing-time KPIs while a project is open."""
+    try:
+        from src.core.project_usage import record_project_ping
+        return record_project_ping(req.path, req.name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao registrar uso: {e}")
+
+
+@app.get("/api/project-usage")
+def project_usage():
+    try:
+        from src.core.project_usage import usage_summary
+        return usage_summary()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao ler uso: {e}")
 
 @app.post("/api/load-project")
 def load_saved_project(req: OpenProjectRequest):
@@ -639,6 +954,10 @@ def load_saved_project(req: OpenProjectRequest):
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        if isinstance(data, dict):
+            data.setdefault("_projectPath", path)
+            data.setdefault("project_path", path)
+            data.setdefault("_projectName", Path(path).stem)
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao carregar: {e}")
@@ -873,7 +1192,7 @@ async def transcribe_endpoint(req: TranscribeRequest):
         # the transcriber would only see env vars and miss the .env that the project
         # ships with — same convention used elsewhere via load_api_credentials.
         openai_key = os.environ.get("OPENAI_API_KEY") or load_env_file().get("OPENAI_API_KEY", "")
-        providers = available_providers()
+        providers = available_providers(openai_key or None)
         if not providers and not openai_key:
             raise HTTPException(
                 status_code=503,
@@ -900,6 +1219,8 @@ async def transcribe_endpoint(req: TranscribeRequest):
                 for s in transcript.segments
             ],
         }
+    except TranscriptionUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except HTTPException:
         raise
     except Exception as e:
@@ -911,9 +1232,17 @@ async def transcribe_status():
     """Report which transcription providers are available right now."""
     try:
         from src.core.transcriber import available_providers
-        return {"providers": available_providers()}
+        from src.api_settings import load_env_file
+        openai_key = os.environ.get("OPENAI_API_KEY") or load_env_file().get("OPENAI_API_KEY", "")
+        providers = available_providers(openai_key or None)
+        return {
+            "providers": providers,
+            "openai_configured": bool(openai_key),
+            "can_transcribe": len(providers) > 0,
+            "recommended_provider": "openai-api" if "openai-api" in providers else (providers[0] if providers else "auto"),
+        }
     except Exception as e:
-        return {"providers": [], "error": str(e)}
+        return {"providers": [], "openai_configured": False, "can_transcribe": False, "error": str(e)}
 
 
 @app.get("/api/project")
@@ -1087,30 +1416,42 @@ async def ws_render(ws: WebSocket):
         text_clips:     list[dict] = data.get("text_clips",   []) or []
         # Image overlay clips from overlay_track (burnt-in with ffmpeg overlay filter)
         image_clips:    list[dict] = data.get("image_clips",  []) or []
+        # Timeline audio clips from imported/recorded audio tracks
+        audio_clips:    list[dict] = data.get("audio_clips",  []) or []
         # Export quality (H.264 CRF — lower = better quality)
         export_crf:     int        = int(data.get("crf", 18))
         # ffmpeg encoder preset (speed/compression trade-off)
         export_preset:  str        = str(data.get("preset", "fast"))
         # Audio normalization toggle
-        normalize_audio: bool      = bool(data.get("normalize_audio", True))
+        normalize_audio: bool      = bool(data.get("normalize_audio", False))
         # Target platform — legacy aspect-ratio crop (youtube=16:9, reels/tiktok/shorts=9:16)
         export_platform: str       = str(data.get("platform", "youtube"))
         # New: explicit aspect-ratio overrides the legacy platform when set
         export_aspect_ratio = data.get("aspect_ratio")   # str or None
+        request_video_path: str = str(data.get("video_path", "") or "")
 
         with _project_lock:
             proj = _current_project
 
-        if not proj:
-            await ws.send_json({"type": "error", "detail": "Nenhum projeto carregado"})
-            return
         if not output_path:
             await ws.send_json({"type": "error", "detail": "Caminho de saída não informado"})
             return
 
-        timeline  = proj["timeline"]
-        video_path: str   = proj["path"]
-        duration_s: float = proj.get("duration_s", timeline.duration_s)
+        if not proj:
+            first_source = next((str(c.get("source_path") or "") for c in frontend_clips if c.get("source_path")), "")
+            fallback_path = request_video_path or first_source
+            if not frontend_clips or not fallback_path:
+                await ws.send_json({"type": "error", "detail": "Nenhum projeto carregado"})
+                return
+            timeline = None
+            video_path = fallback_path
+            duration_s = max((float(c.get("end_s") or 0.0) for c in frontend_clips), default=0.0)
+            removed_ranges = []
+        else:
+            timeline  = proj["timeline"]
+            video_path: str   = proj["path"]
+            duration_s: float = proj.get("duration_s", timeline.duration_s)
+            removed_ranges = getattr(timeline, "removed_ranges", []) if timeline is not None else []
 
         # Build segments + per_clip from frontend clips when available (handles splits/trims).
         # TimelineClip has no id field, so we match purely by position / frontend order.
@@ -1118,12 +1459,15 @@ async def ws_render(ws: WebSocket):
             speed_factor=1.0, transition="Corte", transition_duration_s=0.4,
             volume_pct=100.0, pan_pct=0.0, fade_in_s=0.0, fade_out_s=0.0,
             brightness=0.0, contrast=0.0, saturation=0.0,
+            temperature=0.0, hue=0.0, exposure=0.0, sharpness=0.0, vignette=0.0,
+            blur_type="none", blur_intensity=0.0, blur_direction="both",
             crop_top_pct=0.0, crop_bottom_pct=0.0, crop_left_pct=0.0, crop_right_pct=0.0,
-            scale_pct=100.0, opacity_pct=100.0, rotation_deg=0.0,
+            scale_pct=100.0, position_x=0.0, position_y=0.0, opacity_pct=100.0, rotation_deg=0.0,
             text_overlay="", text_position_x_pct=0.0, text_position_y_pct=72.0,
             text_size_pct=100.0, text_color="#ffffff", text_bold=False,
             text_italic=False, text_align="center",
             chroma_enabled=False, chroma_color="#00ff00", chroma_tolerance=45.0,
+            person_remove_enabled=False, person_remove_strength=72.0, person_remove_feather=10.0,
         )
 
         if frontend_clips:
@@ -1172,8 +1516,8 @@ async def ws_render(ws: WebSocket):
                 from src.core.editor import cut_silence
 
                 silence_total = sum(
-                    e - s for s, e in timeline.removed_ranges
-                ) if timeline.removed_ranges else 0.0
+                    e - s for s, e in removed_ranges
+                ) if removed_ranges else 0.0
                 silence_ratio = silence_total / duration_s if duration_s > 0 else 0.0
 
                 analysis = AudioAnalysis(
@@ -1192,6 +1536,7 @@ async def ws_render(ws: WebSocket):
                     music_path=music_path if music_path and os.path.isfile(music_path) else None,
                     text_clips=text_clips if text_clips else None,
                     image_clips=image_clips if image_clips else None,
+                    audio_clips=audio_clips if audio_clips else None,
                     crf=export_crf,
                     preset=export_preset,
                     normalize_audio=normalize_audio,
@@ -1299,6 +1644,14 @@ _uvicorn_server: uvicorn.Server | None = None
 def stop_server() -> None:
     """Gracefully stop the uvicorn server (called on window close)."""
     global _uvicorn_server
+    with _proxy_lock:
+        processes = list(_proxy_processes.values())
+        _proxy_processes.clear()
+    for proc in processes:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
     if _uvicorn_server is not None:
         _uvicorn_server.should_exit = True
 

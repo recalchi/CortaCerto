@@ -1,6 +1,6 @@
 # Checks Dev
 
-Atualizado em: 2026-05-21
+Atualizado em: 2026-07-06
 
 ## Checklist manual por versao
 
@@ -12,7 +12,23 @@ Atualizado em: 2026-05-21
 - [ ] Confirmar que video `.MOV` cria/usa proxy de preview sem tela preta.
 - [ ] Adicionar imagem e b-roll na caixa de midia.
 - [ ] Abrir `python main.py --web`.
+- [ ] Abrir `python main.py --web` e validar fluxo: Gerenciador de projetos -> clique no projeto -> editor web.
+- [ ] Criar novo projeto e confirmar caminho de salvamento autopreenchido com a ultima pasta usada.
+- [ ] Criar novo projeto e confirmar que o arquivo `.ccproj` e salvo no local escolhido.
+- [ ] Editar projeto novo sem video principal e confirmar que autosave local preserva nome/caminho.
+- [ ] Editar projeto com `.ccproj` aberto e confirmar autosave silencioso no arquivo sem perguntar.
+- [ ] Usar `Ctrl+S` em projeto com caminho conhecido e confirmar salvar rapido sem dialogo.
+- [ ] Reabrir `.ccproj` salvo e confirmar nome do projeto, midias, tracks, marcadores e caminho de save.
+- [ ] Exportar video e confirmar que o dialogo abre na ultima pasta usada.
 - [ ] Usar abas do Media Bin: Meus, Videos, Imagens, Audio, Sons, Favoritos e Baixados.
+- [ ] Em `Midia`, validar novo visual estilo CapCut com barra lateral (Seus, Midia IA, Espacos, Biblioteca).
+- [ ] Em `Midia`, validar thumbs retangulares padronizadas no grid.
+- [ ] Em `Midia`, usar categoria `Seus` para importar video/audio/imagem/projeto.
+- [ ] Em `Midia`, importar audio e confirmar loading/estado visivel ate a waveform aparecer.
+- [ ] Em `Midia`, usar categoria `Midia IA` e gerar busca assistida por prompt.
+- [ ] Em `Midia`, usar categoria `Espacos`, selecionar pasta e listar todas as midias locais.
+- [ ] Em `Midia`, usar categoria `Biblioteca` e validar lista das APIs encontradas (status configurado/nao configurado).
+- [ ] Em `Midia`, aplicar preset de biblioteca (Populares/Tela verde/Plano de fundo etc.) e inserir item na timeline.
 - [ ] Configurar chaves de stock media pela engrenagem e recarregar.
 - [ ] Abrir configuracoes pela engrenagem do topo.
 - [ ] Abrir aba `Geral` em configuracoes.
@@ -40,6 +56,7 @@ Atualizado em: 2026-05-21
 - [ ] Confirmar renderizacao por GPU desmarcada por padrao e GPU identificada.
 - [ ] Definir pasta padrao para salvar.
 - [ ] Ver tamanho do cache e limpar pelo icone de lixo.
+- [ ] Abrir pasta de logs pelo botao na aba `Geral`.
 - [ ] Editar campo `OPENAI_API_KEY` sem expor a chave na tela.
 - [ ] Ajustar orcamento mensal e tarifas estimadas de GPT/OpenAI.
 - [ ] Conferir aba `Uso GPT` com chamadas, custo estimado e log local.
@@ -52,23 +69,123 @@ Atualizado em: 2026-05-21
 - [ ] Usar asset baixado pelo botao `Usar`.
 - [ ] Arrastar imagem da caixa de midia para `MIDIA`.
 - [ ] Arrastar b-roll da caixa de midia para `MIDIA`.
+- [ ] Arrastar video da caixa de midia para track `OVERLAY`.
 - [ ] Inserir midia pelo botao `Inserir na timeline`.
+- [ ] Usar botao direto `Adicionar texto no cursor` na toolbar da timeline.
+- [ ] Usar botao de microfone na toolbar da timeline para iniciar/parar gravacao em tempo real.
+- [ ] Confirmar que gravacao salva automaticamente e entra na faixa de audio.
+- [ ] Confirmar contador `REC` durante gravacao e parada sem travar UI.
+- [ ] Usar botao direto `Duplicar selecao no playhead` na toolbar da timeline.
+- [ ] Usar botao direto `Trazer camada para frente` para overlay/texto selecionado.
+- [ ] Usar botao direto `Enviar camada para tras` para overlay/texto selecionado.
+- [ ] Usar atalho `Ctrl+D` para duplicar selecao no playhead.
+- [ ] Usar menu de contexto `Duplicar no playhead (Ctrl+D)` em um clipe.
+- [ ] Usar menu de contexto `Trazer camada para frente` em overlay/texto.
+- [ ] Usar menu de contexto `Enviar camada para tras` em overlay/texto.
+- [ ] Usar atalho `Alt+Seta cima/baixo` para ordem de camada.
+- [ ] Usar botao `Abrir aba de audio` e confirmar troca para guia Audio.
+- [ ] Usar botao `Abrir aba de efeitos` e confirmar troca para guia Efeitos.
+- [ ] Em Efeitos/Filtros, validar grade visual tipo cubo com preview.
+- [ ] Em Efeitos/Filtros, validar mini-loop em hover dos cards.
+- [ ] Em Efeitos/Filtros, validar estrela aparece apenas no hover.
+- [ ] Em Efeitos/Filtros, trocar categoria e validar filtro da lista.
+- [ ] Em Efeitos/Filtros, favoritar preset e confirmar em categoria Favoritos.
+- [ ] Em Efeitos/Filtros, desfavoritar preset e confirmar remocao de Favoritos.
+- [ ] Em Efeitos/Filtros, ajustar intensidade global e aplicar preset.
+- [ ] Em Efeitos/Filtros, aplicar preset de desfoque `Soft Focus`.
+- [ ] Em Efeitos/Filtros, aplicar preset de desfoque `Privacidade`.
+- [ ] Em Efeitos/Filtros, aplicar preset de desfoque `Mosaico`.
+- [ ] Em Efeitos/Filtros, alternar aplicacao `No clipe` vs `Nova camada`.
+- [ ] Em Efeitos/Filtros, aplicar como `Nova camada` e validar clip `adjustment` criado na timeline.
+- [ ] Abrir aba `Ajuste` e validar novas sub-abas: Basico, HSL, Curvas, Roda de cores, Mascarar, IA Premium e LUT.
+- [ ] Testar HSL por canal (Master/Red/Yellow/Green/Cyan/Blue/Magenta) e confirmar reflexo visual.
+- [ ] Testar Curvas e Roda de cores e validar atualizacao no preview.
+- [ ] Em `Ajuste`, abrir controles de `Desfoque` no Inspector do clipe.
+- [ ] Em `Ajuste`, testar desfoque Gaussian nos modos X/Y, Horizontal e Vertical.
+- [ ] Em `Ajuste`, testar desfoque Forte e Pixelado.
+- [ ] Testar mascaras (protecao de pele/vinheta) e validar controle.
+- [ ] Aplicar IA Premium: Auto IA.
+- [ ] Aplicar IA Premium: Paleta IA.
+- [ ] Aplicar IA Premium: Correcao IA.
+- [ ] Clicar novamente nos switches de IA Premium e confirmar que desligam sem empilhar novo ajuste.
+- [ ] Em `Ajuste > Mascarar`, ativar `Remover pessoa` e exportar trecho curto para validar segmentacao/inpainting.
+- [ ] Salvar preset LUT como cubo.
+- [ ] Aplicar preset LUT salvo em cubo com controle de intensidade.
+- [ ] Remover preset LUT salvo.
 - [ ] Confirmar que imagem/b-roll nao furam o video base.
 - [ ] Usar `Ver tudo` e confirmar campo vazio para organizar clipes.
 - [ ] Usar `Ctrl+=`, `Ctrl++`, `Ctrl+-` e `Ctrl+0` no zoom da timeline.
 - [ ] Navegar com setas quadro a quadro.
 - [ ] Navegar com `Shift+setas` de 1s em 1s.
 - [ ] Usar `Home` e `End` no playhead.
+- [ ] Validar `Ctrl+Z` apos alterar velocidade do clipe.
+- [ ] Reproduzir espaco vazio intencional entre dois clipes e confirmar playhead fluido sem pular.
+- [ ] Usar botao `Fechar gap a direita` no clipe selecionado e confirmar que junta somente o proximo trecho.
+- [ ] Arrastar em area vazia da timeline e validar retangulo de selecao multipla.
+- [ ] Usar `Shift`/`Ctrl` ao arrastar retangulo e validar adicao a selecao atual.
+- [ ] Selecionar varios clipes com retangulo e arrastar um deles, confirmando que todos movem juntos.
+- [ ] Selecionar varios cortes e usar `Fechar gap a direita`, confirmando que o proximo trecho encosta no bloco selecionado.
 - [ ] Mover overlay pela timeline.
+- [ ] Arrastar overlay de imagem/video no preview para reposicionar.
+- [ ] Arrastar overlay de imagem/video no preview e validar snap no centro com guias visuais.
+- [ ] Arrastar overlay de imagem/video no preview e validar snap nas bordas com guias visuais.
+- [ ] Arrastar overlay no preview e validar snap no centro de outro overlay com guia roxa.
+- [ ] Mover overlay selecionado com `Alt+setas` (1px) e `Alt+Shift+setas` (10px).
 - [ ] Aparar pontas do overlay.
 - [ ] Ajustar duracao e opacidade do overlay no painel direito.
 - [ ] Testar chroma key em overlay e comparar preview.
+- [ ] Reproduzir preview com overlay de video e validar sincronismo no playhead.
+- [ ] Validar que posicao X/Y de overlay arrastado no preview aparece proxima no export.
+- [ ] Ajustar escala e rotacao de overlay pelos handles no preview e validar no export.
 - [ ] Criar texto no playhead.
 - [ ] Reproduzir e confirmar texto sincronizado com o preview.
+- [ ] Em `Texto`, validar listagem de modelos em cards (grid/cubo) com preview visual.
+- [ ] Em `Texto`, buscar modelo por nome e filtrar por categoria.
+- [ ] Em `Texto`, favoritar/desfavoritar modelo e validar categoria Favoritos.
+- [ ] Em `Texto`, aplicar modelo no texto selecionado e em todas as legendas.
+- [ ] Em `Texto`, validar listagem de efeitos em cards com categorias e busca.
+- [ ] Em `Texto`, aplicar efeito no texto selecionado.
+- [ ] Em `Texto`, aplicar efeito sem selecao e validar criacao de novo texto com efeito.
+- [ ] Em `Texto`, favoritar/desfavoritar efeito e validar categoria Favoritos.
 - [ ] Usar botao de atualizar preview manualmente quando o preview travar.
+- [ ] Usar Quick Actions do preview (texto, duplicar, dividir, excluir, camada) com clip selecionado.
 - [ ] Adicionar segundo video, mover para depois do primeiro e confirmar playhead ate o final real.
+- [ ] Reproduzir dois clipes de poucos segundos em sequencia e confirmar troca fluida sem loading infinito.
 - [ ] Importar segundo video por duplo clique e confirmar que entra ao final da track principal.
 - [ ] Editar texto, cor, fundo e tamanho no painel direito.
+- [ ] Gerar legenda automatica no painel de texto.
+- [ ] Trocar provider/idioma da legenda automatica.
+- [ ] Selecionar um clipe especifico com fala e gerar legenda somente para esse clipe.
+- [ ] Validar que legenda respeita o tempo do clipe selecionado na timeline.
+- [ ] Em `Texto`, configurar legenda antes de gerar (fonte, tamanho, Y, max chars) e confirmar resultado.
+- [ ] Em `Texto`, clicar em `Legendar automatico` e confirmar card de loading com etapa e tempo decorrido.
+- [ ] Em `Texto`, ajustar `Margem lateral (%)` da legenda e confirmar menos/quebra de linha conforme valor.
+- [ ] Em `Texto`, ao ajustar configuracoes da legenda automatica, validar preview de teste em tempo real no player.
+- [ ] Em `Texto`, validar quebra automatica por palavras com no maximo 2 linhas por bloco.
+- [ ] Em `Texto`, validar distribuicao temporal mais natural entre blocos longos e curtos.
+- [ ] Em `Texto`, clicar `Usar padrao limpo` e confirmar legenda sem formatacoes extras.
+- [ ] Em `Texto`, aplicar ajuste na legenda selecionada sem perder conteudo.
+- [ ] Em `Texto`, aplicar ajuste em todas as legendas sem perder conteudo.
+- [ ] Em `Texto`, editar o conteudo de uma legenda no Inspector e confirmar que nao replica para as demais.
+- [ ] Validar status de transcricao (provedor disponivel/indisponivel) antes de clicar em legendar.
+- [ ] Com transcricao indisponivel, confirmar mensagem guiando configurar OPENAI_API_KEY ou instalar faster-whisper.
+- [ ] Clicar em `Legendar automatico` com provider indisponivel e confirmar que o botao nao fica travado em loading eterno.
+- [ ] Com erro de provider (401/429), confirmar mensagem clara no painel de texto.
+- [ ] Favoritar modelo de fonte de legenda e reabrir o app para validar persistencia.
+- [ ] Aplicar modelo de fonte na legenda selecionada.
+- [ ] Excluir legenda atual selecionada.
+- [ ] Excluir todas as legendas do projeto pela aba de texto.
+- [ ] Abrir aba `Stickers` com busca, categorias e listagem.
+- [ ] Validar cards de figurinha em formato cubo (thumb).
+- [ ] Validar estrela de favoritar aparece apenas em hover no card.
+- [ ] Favoritar/desfavoritar figurinha e validar categoria Favoritos.
+- [ ] Inserir figurinha na timeline e mover como overlay no preview.
+- [ ] Abrir aba `Transicoes` com cards visuais em cubo.
+- [ ] Passar mouse em preset de transicao e validar mini-preview animado.
+- [ ] Favoritar/desfavoritar transicao e validar categoria Favoritos.
+- [ ] Aplicar transicao na selecao e validar marcador entre clipes na timeline.
+- [ ] Aplicar transicao entre clipes com projeto 9:16/16:9 e confirmar preview dentro do enquadro editado.
+- [ ] Exportar com transicao e validar duracao aplicada no render.
 - [ ] Mover texto no preview.
 - [ ] Aparar pontas do texto.
 - [ ] Dividir texto e overlay com `B`.
@@ -76,14 +193,114 @@ Atualizado em: 2026-05-21
 - [ ] Copiar, colar e recortar texto/overlay com `Ctrl+C`, `Ctrl+V`, `Ctrl+X`.
 - [ ] Desfazer/refazer edicoes com `Ctrl+Z`, `Ctrl+Y`, `Ctrl+Shift+Z`.
 - [ ] Alternar selecao de itens sobrepostos por clique repetido.
+- [ ] No preview, clicar repetido em overlays sobrepostos e validar ciclo de selecao por camada (z-order).
 - [ ] Reordenar camadas com `Frente` e `Tras`.
+- [ ] Reordenar camadas com `Frente` e `Tras` em overlays de imagem e video e validar no preview/export.
+- [ ] Ativar `Ripple delete` na timeline e confirmar fechamento automatico de gap ao excluir.
+- [ ] Cortar trecho no inicio/meio do video com ripple ativo e confirmar que o preview remove a regiao correta.
+- [ ] Usar `Fechar gap a direita` depois de apagar corte e confirmar que o clipe movido mantem o mesmo trecho de origem.
+- [ ] Renomear faixa na timeline com duplo clique no nome.
+- [ ] Ocultar/mutar faixa extra de video/audio e confirmar reflexo imediato no preview.
+- [ ] Ativar `Solo` em faixa de video/audio/overlay e confirmar isolamento no preview.
+- [ ] Selecionar clipe em track extra e confirmar que o Inspector abre os controles corretamente.
+- [ ] Criar keyframes no playhead (salvar/remover) e confirmar interpolacao em preview.
+- [ ] Clicar nos diamantes de keyframe na timeline e confirmar salto do playhead.
+- [ ] Ajustar easing de keyframe e validar suavizacao no preview.
+- [ ] Usar menu de contexto do clipe para inserir/duplicar/mover/remover/limpar keyframes.
+- [ ] Arrastar diamante de keyframe na timeline e confirmar atualizacao do tempo com snap no playhead.
+- [ ] Arrastar keyframe com `Shift` e validar passo em grade de frame + tooltip de tempo.
+- [ ] Selecionar multiplos keyframes (Ctrl/Cmd+clique) e mover em bloco mantendo offsets.
 - [ ] Mutar audio e confirmar preview/export.
+- [ ] Alterar volume de um audio nas propriedades e confirmar que a waveform diminui/aumenta proporcionalmente.
+- [ ] Abrir aba `Audio` e validar novo visual em lista com minicapa, nome, autor e duracao.
+- [ ] Em `Audio`, abrir guia `Gravados` e confirmar gravações de microfone listadas.
+- [ ] Em `Audio`, alternar categorias de Musicas e Efeitos e confirmar nova busca.
+- [ ] Em `Audio`, favoritar/desfavoritar item e validar em aba Favoritos.
+- [ ] Em `Audio`, baixar item da busca e inserir direto na timeline.
+- [ ] Em `Audio`, importar audio e confirmar loading/estado visivel durante analise.
+- [ ] Em `Audio`, dar duplo clique em musica/efeito nao baixado e confirmar download local definitivo + insercao na timeline.
+- [ ] Em `Audio`, arrastar audio gravado/baixado/importado para qualquer faixa de audio da timeline.
+- [ ] Em `Audio`, renomear audio gravado/importado pelo painel de propriedades.
+- [ ] Em `Audio > Efeitos`, confirmar sons locais CortaCerto: Magic, Digitando, Papel, Desenhando, Whoosh, Pop e Chime.
+- [ ] Em `Audio > Efeitos`, arrastar som local CortaCerto para timeline e reproduzir.
+- [ ] Em `Audio`, validar listagem de Importados e Baixados separadamente.
+- [ ] Em `Audio`, validar painel de verificacao de direitos autorais por item.
+- [ ] Em `Audio`, confirmar aviso de licenca/direitos autorais mais discreto.
+- [ ] Em `Audio`, copiar credito e abrir origem do item selecionado.
 - [ ] Testar audio sem reducao de ruido.
 - [ ] Testar reducao de ruido leve separada do loudnorm.
 - [ ] Testar loudnorm, filtro de voz e compressao separadamente.
 - [ ] Exportar trecho curto.
+- [ ] Exportar trecho curto de video sem faixa de audio e confirmar que nao quebra com `ffmpeg exit`.
+- [ ] Exportar projeto que falha no encoder de hardware e confirmar fallback automatico para CPU/libx264.
+- [ ] Exportar projeto 9:16 com clipe vertical seguido de clipe horizontal ajustado e confirmar enquadro igual ao preview.
+- [ ] Exportar projeto com texto/legenda grande e confirmar tamanho compativel com preview.
+- [ ] Exportar legenda longa e confirmar quebra por palavras/margem lateral igual ao preview.
+- [ ] Exportar voz gravada sem efeitos de audio e confirmar que nao houve distorcao por normalizacao automatica.
+- [ ] Exportar audio gravado/importado em track extra e confirmar inicio exatamente no ponto da timeline.
+- [ ] Exportar dois clipes com transicao aplicada no clipe da esquerda e confirmar transicao visivel no arquivo final.
+- [ ] Exportar clipe com correcao de cor no primeiro trecho e confirmar que nao ocorre fade/oscilacao automatica.
+- [ ] Exportar trecho curto com overlay de video.
 - [ ] Comparar preview com export.
+- [ ] Em configuracoes, alternar tema visual e confirmar cores consistentes no editor.
+- [ ] Em `Texto`, abrir propriedades e validar lista ampliada de fontes profissionais.
+- [ ] Em `Texto`, alterar fonte/tamanho/escala e confirmar que o texto permanece visivel no preview.
+- [ ] Em `Texto`, ajustar margem lateral e espacamento de linhas no Inspector e confirmar no preview/export.
+- [ ] Em `Texto`, ativar/desativar fundo, sombra e contorno pelo Inspector.
+- [ ] Em `Texto`, testar animacao de entrada/saida `Digitando`.
+- [ ] Em `Texto`, testar animacao de entrada/saida `Magico brilho`.
+- [ ] Em `Texto`, testar animacao de entrada/saida `Desenhando`.
+- [ ] Em `Camadas`, abrir painel minimizavel e confirmar listagem por ordem de sobreposicao.
+- [ ] Em `Camadas`, selecionar clip pelo painel e confirmar selecao no Inspector/timeline.
+- [ ] Em `Camadas`, mover overlay/texto para frente/tras e confirmar reflexo no preview.
+- [ ] Em `Camadas`, ocultar/mutar faixa pelo painel e confirmar reflexo no preview.
+- [ ] Na timeline, adicionar marcador no playhead e confirmar linha/etiqueta no ruler.
+- [ ] Na timeline, remover marcador com duplo clique.
+- [ ] Na timeline, selecionar varios clipes e usar `Compilar selecao`.
+- [ ] Na timeline, clicar em clipe compilado e confirmar selecao do grupo inteiro.
+- [ ] Na timeline, mover clipe compilado e confirmar que o grupo acompanha.
+- [ ] Na timeline, usar `Descompilar grupo selecionado` e confirmar que os clipes voltam a ser independentes.
+- [ ] Rodar teste real de export longo (20min) sem crash: contínuo e multi-segmentado.
 - [ ] Verificar `%LOCALAPPDATA%\CortaCerto\logs\errors.jsonl`.
+- [ ] Confirmar que card de projeto mostra thumbnail real do video quando houver `.ccproj` com midia.
+- [ ] Confirmar que modo lista do gerenciador mostra mini thumbnail real do projeto.
+- [ ] Clicar com botao direito em projeto na grade/lista e validar abrir, pasta, copiar caminho, status, categoria, renomear e remover da lista.
+- [ ] Clicar no avatar do gerenciador e abrir o controle de perfil local.
+- [ ] No controle de perfil, validar abas `Entrar / cadastrar`, `Meu perfil` e `Usuarios` para MASTER.
+- [ ] No controle de perfil, confirmar que usuario comum nao ve a aba `Usuarios`.
+- [ ] Editar avatar e confirmar preview com zoom/deslocamento antes de salvar.
+- [ ] Editar nome/email/plano/avatar do perfil e confirmar persistencia ao reabrir.
+- [ ] Definir senha local em um perfil e confirmar que a senha nao fica visivel no campo.
+- [ ] Bloquear perfil e confirmar que `Entrar` pede a senha local.
+- [ ] Marcar `Manter conectado neste PC` e confirmar que o perfil fica desbloqueado ao reabrir.
+- [ ] Clicar `Bloquear` e confirmar que `Manter conectado neste PC` e removido.
+- [ ] Alternar para perfil com senha e confirmar que senha incorreta nao libera.
+- [ ] Remover senha local do perfil por acao explicita.
+- [ ] Confirmar que o primeiro perfil criado aparece como MASTER.
+- [ ] Com usuario MASTER, visualizar a lista de usuarios locais.
+- [ ] Com usuario MASTER, criar usuario comum sem trocar a sessao ativa.
+- [ ] Com usuario MASTER, alterar nivel/status de outro usuario.
+- [ ] Com usuario comum, confirmar que nao aparece controle dos demais usuarios.
+- [ ] Com usuario comum, confirmar bloqueio ao tentar criar/remover outro usuario.
+- [ ] Criar segundo perfil local e alternar perfil ativo.
+- [ ] Confirmar que projetos novos ficam vinculados ao perfil ativo.
+- [ ] Confirmar que lista de projetos muda conforme perfil ativo.
+- [ ] Remover perfil local e confirmar que projetos nao sao apagados.
+- [ ] Confirmar que novo projeto sugere subpasta pela categoria escolhida.
+- [ ] Mover projeto para categoria Shorts e confirmar que continua Shorts ao reabrir o gerenciador.
+- [ ] Mover projeto para lixeira e confirmar que some da tela principal.
+- [ ] Restaurar projeto pela lixeira e confirmar retorno na categoria original.
+- [ ] Excluir projeto definitivamente da lixeira e confirmar que remove apenas do indice local.
+- [ ] Ajustar zoom discreto dos cards/lista de projetos na tela inicial.
+- [ ] Ajustar zoom dos projetos no gerenciador e confirmar que os cards/lista redimensionam ao soltar o controle.
+- [ ] Editar avatar e confirmar giro, zoom e deslocamento vertical/horizontal no preview antes de salvar.
+- [ ] Confirmar que fechar a janela do editor volta para a gestao de projetos.
+- [ ] Confirmar que configuracoes cobrem as linhas de redimensionamento do layout.
+- [ ] Confirmar que a barra de progresso de render aparece no rodape, nao no cabecalho.
+- [ ] Confirmar que ocultar faixa overlay/efeito remove o efeito do preview.
+- [ ] Confirmar que mutar uma faixa de audio gravado nao muta o audio do video principal.
+- [ ] Confirmar que gravacao de voz cria clipe com duracao proxima ao tempo real gravado.
+- [ ] Confirmar que waveform de gravação curta não ocupa visualmente como áudio longo.
 
 ## Checklist de desenvolvimento
 
@@ -96,6 +313,9 @@ Atualizado em: 2026-05-21
 - [x] Confirmar que preview e export continuam alinhados na area alterada.
 - [x] Criar backend de stock media com cache local e metadados.
 - [x] Criar Media Bin web com abas estilo CapCut.
+- [x] Recriar Media Bin web com categorias laterais `Seus`, `Midia IA`, `Espacos` e `Biblioteca`.
+- [x] Adicionar endpoint de pasta para Espacos (`/api/open-folder-dialog`) e listagem de midias (`/api/space/list-media`).
+- [x] Padronizar thumbnails retangulares no grid de midias.
 - [x] Criar configuracao web de chaves de API com valores mascarados.
 - [x] Validar Pexels, Pixabay, Unsplash e Freesound com busca minima.
 - [x] Rodar build TypeScript/Vite do frontend web.
@@ -104,6 +324,9 @@ Atualizado em: 2026-05-21
 - [x] Adicionar flags de atualizacao, notificacao, GPU UI, pasta padrao e cache.
 - [x] Adicionar endpoint de limpeza de cache.
 - [x] Criar alternancia de layout no cabecalho.
+- [x] Adicionar controle de margem lateral para legenda automatica (config, preview e geracao).
+- [x] Integrar startup web com gerenciador de projetos legado (selecao abre editor web atual).
+- [x] Persistir ultima pasta de salvamento para criacao de projetos e exportacao.
 - [x] Criar layout CapCut com tres paineis no topo e timeline embaixo.
 - [x] Persistir preferencia de layout no navegador.
 - [x] Criar redimensionamento por bordas para paineis e timeline.
@@ -124,3 +347,248 @@ Atualizado em: 2026-05-21
 - [x] Criar toggle para ocultar/reexibir grade do enquadro no preview.
 - [x] Criar aba de uso GPT/OpenAI com consumo local estimado.
 - [x] Registrar uso de transcricao OpenAI Whisper no log local.
+- [x] Adicionar toggle global de `Ripple delete` na toolbar da timeline.
+- [x] Permitir renomear faixas por duplo clique no header da timeline.
+- [x] Fazer preview respeitar hide/mute por faixa extra (video/audio/overlay).
+- [x] Adicionar `Solo` por faixa no header e aplicar isolamento no preview.
+- [x] Fazer Inspector considerar clipes de tracks extras (video/audio/overlay).
+- [x] Adicionar keyframes base de movimento no Inspector e interpolacao no Preview.
+- [x] Exibir keyframes (diamantes) diretamente sobre o clipe na timeline.
+- [x] Adicionar easing por keyframe (linear/ease-in/ease-out/ease-in-out) no Preview.
+- [x] Adicionar acoes de keyframe no menu de contexto do clipe na timeline.
+- [x] Permitir arrastar keyframes (diamantes) diretamente no clipe da timeline.
+- [x] Adicionar modo de arraste de keyframe com `Shift` (passo de frame) e tooltip de tempo.
+- [x] Permitir selecao multipla de keyframes no clipe e arraste em bloco.
+- [x] Rodar teste real de export longo (20min) via pipeline real e salvar relatório em `artifacts/long_export_tests`.
+- [x] Permitir video como overlay (drop na track de overlay + preview + export).
+- [x] Permitir selecao e ciclo de overlays sobrepostos no preview por clique repetido.
+- [x] Permitir arrastar overlays (imagem/video) diretamente no preview para ajuste de posicao.
+- [x] Levar posicao X/Y de overlays para o export visual (imagem/video).
+- [x] Adicionar handles no preview para escalar e girar overlays selecionados.
+- [x] Sincronizar escala/rotacao de overlay entre preview e export.
+- [x] Adicionar snap central com guias visuais ao arrastar overlay no preview.
+- [x] Expandir snap de overlay no preview para bordas (esquerda/direita/topo/base).
+- [x] Adicionar nudge fino de overlay pelo teclado (`Alt+setas` e `Alt+Shift+setas`).
+- [x] Adicionar acoes diretas na toolbar da timeline (texto, duplicar, camada frente/tras).
+- [x] Interligar botoes de contexto para abrir abas de Audio e Efeitos.
+- [x] Criar duplicacao de selecao no playhead preservando a track original.
+- [x] Expandir menu de contexto com duplicar clipe no playhead e ordem de camada.
+- [x] Adicionar atalho de camada (`Alt+Seta cima/baixo`) para item selecionado.
+- [x] Adicionar Quick Actions no preview para editar clip selecionado sem sair da visualizacao.
+- [x] Adicionar acao de abrir pasta de logs na aba `Geral` de configuracoes.
+- [x] Expandir snap de overlay no preview para alinhar com centro de outros overlays ativos.
+- [x] Recriar painel de Ajuste com estrutura completa (Basico/HSL/Curvas/Roda/Mascarar/LUT).
+- [x] Integrar funcoes IA Premium de ajuste de cor com endpoint dedicado.
+- [x] Implementar salvar preset LUT em lista visual tipo cubo.
+- [x] Recriar sistema de filtros com preview visual, categorias e favoritação persistente.
+- [x] Recriar sistema de efeitos com modo de aplicacao no clipe ou em nova camada.
+- [x] Adicionar mini-loop em hover nos cards de efeitos (preview em tempo real).
+- [x] Mostrar botao de favoritar apenas no hover do card de efeito.
+- [x] Criar sistema completo de legenda automatica no painel de texto (provider/idioma/modelo).
+- [x] Fortalecer fluxo de legenda automatica com pre-check de disponibilidade e erros mais claros.
+- [x] Ajustar endpoint de status/transcricao para considerar OPENAI_API_KEY no .env.
+- [x] Ajustar legenda automatica para usar o clipe selecionado como fonte e mapear tempo na timeline.
+- [x] Criar painel de configuracao pre-geracao da legenda (fonte, tamanho, posicao e quebra de texto).
+- [x] Adicionar preset de legenda limpa e opcao de aplicar ajuste em uma ou todas sem alterar conteudo.
+- [x] Proteger apply de estilo para nunca sobrescrever `text_overlay` em lote.
+- [x] Projetar preview de legenda de teste em tempo real durante configuracao da legenda automatica.
+- [x] Melhorar segmentacao da legenda automatica com quebra inteligente por palavra/frase (2 linhas por bloco).
+- [x] Melhorar distribuicao de duracao por bloco de legenda com peso por tamanho do texto.
+- [x] Adicionar modelos de fonte com favoritação persistente local para legendas.
+- [x] Adicionar exclusao da legenda selecionada e limpeza total de legendas.
+- [x] Recriar aba de texto com modelos visuais, efeitos e categorias pesquisaveis.
+- [x] Adicionar favoritos persistentes para modelos e efeitos de texto.
+- [x] Recriar aba de transicoes com categorias, busca e favoricao persistente.
+- [x] Adicionar mini-preview animado por hover nos presets de transicao.
+- [x] Exibir marcador de transicao aplicado entre clipes na timeline.
+- [x] Propagar `transition_duration_s` para o payload de exportacao web.
+- [x] Criar aba dedicada de figurinhas com categorias, busca e favoritos persistentes.
+- [x] Adicionar cards de figurinha em layout cubo com estrelinha no hover.
+- [x] Integrar insercao de figurinha como clip overlay manipulavel no preview/timeline.
+- [x] Adicionar endpoint de salvamento de gravacao de microfone (`/api/audio-recording/save`).
+- [x] Integrar botao de microfone no cabecalho da timeline com gravacao em tempo real.
+- [x] Auto-importar gravacao salva para a faixa de audio do projeto.
+- [x] Recriar aba de audio com layout de cards/lista (minicapa, autor, duracao e acoes).
+- [x] Integrar categorias de busca para musicas e efeitos sonoros na aba Audio.
+- [x] Integrar favoritos e downloads de audio com acao direta de uso na timeline.
+- [x] Adicionar painel de verificacao de direitos autorais para itens de audio.
+- [x] Fazer audio importado/baixado criar faixa de audio propria abaixo da faixa principal.
+- [x] Fazer preview continuar reproduzindo quando houver apenas audio/texto/imagem no playhead.
+- [x] Corrigir bolinha do toggle de normalizacao na aba Audio.
+- [x] Mover criacao de nova faixa para menu compacto no cabecalho da timeline.
+- [x] Remover linhas extras que engordavam a timeline para botao `Nova faixa`.
+- [x] Adicionar pre-carregamento do proximo video no preview.
+- [x] Persistir caminho do `.ccproj` para salvar rapido sem perguntar.
+- [x] Separar `Salvar` rapido de `Salvar como`.
+- [x] Preservar nome/caminho do projeto ao abrir `.ccproj` pelo editor web.
+- [x] Atualizar testes do store para append sequencial e audio em faixa propria.
+- [x] Rodar `npm test -- --run src/__tests__/useStore.test.ts`.
+- [x] Rodar `npm run build` do frontend web.
+- [x] Corrigir hide de faixa overlay/efeito no preview.
+- [x] Fazer exportacao respeitar hide/mute por faixa overlay extra.
+- [x] Separar mute de audio importado/gravado do mute da faixa principal do video.
+- [x] Limitar duracao da gravacao de voz ao tempo real gravado.
+- [x] Evitar waveform do video em clipe de audio gravado sem waveform propria.
+- [x] Elevar modal de configuracoes acima das bordas de redimensionamento.
+- [x] Abrir editor web maximizado no pywebview.
+- [x] Reabrir gerenciador de projetos ao fechar a janela do editor.
+- [x] Criar controles de desfoque no Inspector do clipe (tipo, intensidade e direcao).
+- [x] Adicionar presets visuais de desfoque na aba Efeitos/Filtros.
+- [x] Aplicar desfoque no preview web com aproximacao CSS.
+- [x] Aplicar desfoque no render/export via filtros FFmpeg (`gblur`, `boxblur`, `pixelize`).
+- [x] Propagar desfoque pelo websocket de exportacao e pipeline legado.
+- [x] Registrar desfoque no manifest da timeline.
+- [x] Validar filtros de desfoque com testes Python.
+- [x] Validar persistencia dos campos de desfoque com teste do store web.
+- [x] Tornar busca do FFmpeg WinGet tolerante a `ffmpeg.EXE` em maiusculo.
+- [x] Enriquecer cards do gerenciador com metadados do `.ccproj`.
+- [x] Adicionar thumbnail real de video no card do projeto com cache local.
+- [x] Sugerir subpasta de projeto baseada na categoria escolhida.
+- [x] Criar plano de fase 2 para perfil, conta e saves vinculados.
+- [x] Corrigir waveform de audio gravado para usar amostra propria da gravacao.
+- [x] Evitar troca automatica para aba Audio apos gravar voz.
+- [x] Fazer exclusao normal respeitar ripple delete quando o modo estiver ativo.
+- [x] Fazer velocidade do clipe redimensionar o clipe na timeline.
+- [x] Fazer velocidade do clipe aplicar no playback do preview.
+- [x] Adicionar KPI local de horas em edicao total.
+- [x] Adicionar KPI local de tempo do ultimo projeto editado.
+- [x] Preservar source timing ao dividir clipe acelerado.
+- [x] Fazer atalhos J/Home/Setas respeitarem velocidade do clipe no preview.
+- [x] Fazer ripple delete com selecao multipla fechar gaps em conjunto.
+- [x] Preservar nome explicito de projeto recente ao recarregar gerenciador.
+- [x] Corrigir erro `NameError: rng is not defined` no desenho de thumbnail do gerenciador.
+- [x] Corrigir preview preto/timeline parada em clips principais com `source_path` vazio.
+- [x] Fazer preview auto-preparar proxy H.264 para fonte ativa sem metadados de codec salvos.
+- [x] Exibir erro de carregamento no canvas do preview em vez de falha silenciosa.
+- [x] Forcar proxy de preview quando o player retornar erro de formato `codigo 4`.
+- [x] Considerar container `.MOV` inseguro para WebView mesmo quando o codec for H.264.
+- [x] Adicionar guia `Gravados` na aba Audio listando clipes de microfone das tracks extras.
+- [x] Fazer aba Audio listar clipes de todas as faixas de audio, nao só a faixa principal.
+- [x] Usar duracao decodificada da gravação local para importar o clipe gravado.
+- [x] Priorizar `source_waveform` em qualquer clipe de audio na timeline.
+- [x] Limpar loading do preview em eventos `loadeddata`, `playing` e `seeked`.
+- [x] Corrigir troca de fonte do preview para escolher somente o proximo clipe de video na borda entre clipes.
+- [x] Travar a transicao de fonte do preview para evitar loop de loading entre clipes curtos.
+- [x] Iniciar a reproducao alguns ms dentro do proximo clipe para evitar ambiguidade na emenda.
+- [x] Fazer `updateClip` entrar no historico de undo/redo, incluindo velocidade.
+- [x] Adicionar acao explicita `Fechar gap a direita` sem remover gaps intencionais automaticamente.
+- [x] Fazer preview atravessar gaps vazios intencionais sem pular para o proximo clipe.
+- [x] Criar retangulo de selecao multipla na area vazia da timeline.
+- [x] Fazer drag de selecao multipla mover todos os clipes selecionados em conjunto.
+- [x] Fazer `Fechar gap a direita` considerar o fim do bloco selecionado na mesma track.
+- [x] Remover autopreenchimento `Background` da busca de midias.
+- [x] Deixar aviso de licenca/direitos autorais na aba Audio mais discreto.
+- [x] Tornar switches de IA Premium reversiveis.
+- [x] Adicionar controles de remocao de pessoa por segmentacao em `Ajuste > Mascarar`.
+- [x] Propagar remocao de pessoa para API, manifest e render/export por segmento.
+- [x] Adicionar mini thumbnail real na visao lista do gerenciador de projetos.
+- [x] Adicionar menu de contexto por botao direito em projeto na grade/lista.
+- [x] Criar armazenamento local `user_profiles.json` para perfis.
+- [x] Adicionar avatar clicavel no gerenciador de projetos.
+- [x] Criar dialogo de perfil local com nome, email, avatar, plano, criar/usar/remover.
+- [x] Adicionar senha local opcional com hash PBKDF2 e salt.
+- [x] Adicionar Entrar/Bloquear/Remover senha no controle de perfil.
+- [x] Adicionar opcao `Manter conectado neste PC` com sessao persistente local.
+- [x] Adicionar papel `master/member` no perfil local.
+- [x] Promover automaticamente o primeiro perfil local para MASTER.
+- [x] Reorganizar painel de perfil em conta, acesso local e administracao master.
+- [x] Bloquear criacao/edicao/remocao de outros usuarios para perfil comum.
+- [x] Permitir que MASTER controle nivel/status dos demais usuarios locais.
+- [x] Reorganizar controle de perfil em abas de acesso, perfil e gestao master.
+- [x] Adicionar editor de avatar com preview, zoom e deslocamento.
+- [x] Salvar enquadro do avatar no perfil local.
+- [x] Promover perfil ativo real para MASTER no store local.
+- [x] Criar lixeira funcional para projetos recentes.
+- [x] Preservar categoria/status ao reabrir projeto recente.
+- [x] Adicionar zoom discreto para cards de projetos no gerenciador.
+- [x] Corrigir aplicacao do zoom de projetos no gerenciador ao soltar o controle.
+- [x] Adicionar giro ao editor de avatar e corrigir deslocamento vertical com zoom.
+- [x] Vincular projetos recentes ao perfil ativo.
+- [x] Filtrar gestao de projetos pelo perfil ativo preservando projetos antigos/orfaos.
+- [x] Adicionar seletor de tema visual nas configuracoes gerais do editor web.
+- [x] Aplicar tema visual no runtime do editor web sem reiniciar.
+- [x] Permitir drag/drop de audio gravado/baixado/importado da aba Audio para a timeline.
+- [x] Permitir duplo clique em audio/efeito para baixar localmente e inserir na timeline.
+- [x] Permitir renomear clipe/audio pelo painel de propriedades.
+- [x] Ampliar banco de fontes no painel de propriedades de texto.
+- [x] Criar painel minimizavel de camadas no editor web.
+- [x] Permitir selecao, ocultar/mutar faixa e ajustar ordem de camada pelo painel de camadas.
+- [x] Criar pacote local de efeitos sonoros CortaCerto em cache permanente.
+- [x] Integrar efeitos sonoros locais ao catalogo da aba Audio.
+- [x] Adicionar controles de texto para margem lateral, espacamento, fundo, sombra e contorno.
+- [x] Adicionar animacoes de texto `Digitando`, `Magico brilho` e `Desenhando` no preview.
+- [x] Adicionar marcadores visuais persistentes na timeline.
+- [x] Criar acoes de compilar e descompilar grupo de clipes na timeline.
+- [x] Reforcar selecao visual de tema na aba Geral das configuracoes.
+- [x] Fazer trim de clipe pela borda usar preview visual durante arraste e aplicar corte so ao soltar.
+- [x] Separar estado de ocultar/mutar/solo para tracks extras na timeline.
+- [x] Fazer exportacao web enviar snapshot/caminho do projeto para evitar erro `Nenhum projeto carregado`.
+- [x] Adicionar fallback de render no backend quando a sessao do projeto nao estiver carregada mas o frontend enviar clipes validos.
+- [x] Encerrar processos FFmpeg de proxy de preview ao fechar o servidor/editor.
+- [x] Adicionar preview visual simples de transicoes no player.
+- [x] Adicionar controle de duracao de transicao no Inspector.
+- [x] Adicionar controle de volume do audio do video selecionado no Inspector.
+- [x] Fazer texto/legenda respeitar largura util de margem lateral no preview.
+- [x] Adicionar progresso textual na geracao de legenda automatica.
+- [x] Adicionar player de preview nos cards da aba Audio.
+- [x] Adicionar tooltips nos switches de ajuste automatico/combinacao/correcao de cor.
+- [x] Adicionar favoritos para presets LUT em cubo.
+- [x] Aplicar tema salvo nas cores base da tela de gestao de projetos.
+- [x] Rodar `python -m py_compile src\api\server.py src\ui\project_manager.py`.
+- [x] Rodar `python -m pytest tests\test_video_proxy_preview.py tests\test_pipeline_cleanup.py`.
+- [x] Rodar `npm test -- --run src/__tests__/useStore.test.ts`.
+- [x] Rodar `npm run build` do frontend web.
+- [x] Rodar suite Python completa (`python -m pytest tests`).
+- [x] Fazer ripple/fechar gap deslocar `source_offset_s` junto com clipes movidos automaticamente.
+- [x] Adicionar teste automatico para preservar source timing em ripple delete.
+- [x] Adicionar teste automatico para preservar source timing em fechar gap.
+- [x] Sincronizar altura visual da waveform com `volume_pct` do clipe.
+- [x] Adicionar loading textual para importacao/preparo de audio no Media Bin e na aba Audio.
+- [x] Conter overlay visual de transicao dentro do enquadro do preview.
+- [x] Corrigir exportacao de video sem faixa de audio criando audio silencioso por segmento.
+- [x] Evitar `loudnorm`/reducao de ruido em audio base totalmente ausente para nao gerar NaN no AAC.
+- [x] Adicionar smoke real de exportacao para video sem audio.
+- [x] Mover progresso detalhado de render/export para rodape escuro.
+- [x] Melhorar loading de legenda automatica com etapa e tempo decorrido.
+- [x] Corrigir painel de Camadas para usar estado independente de tracks extras (`video-1`, `audio-1`, `overlay-1`).
+- [x] Criar snapshot unico de projeto para save/autosave com `_projectName`, `_projectPath` e `project_path`.
+- [x] Fazer autosave local funcionar tambem em projetos sem `videoPath`.
+- [x] Fazer autosave silencioso gravar no `.ccproj` quando o caminho do projeto ja existe.
+- [x] Fazer backend garantir `_projectPath/project_path` ao salvar e carregar `.ccproj`.
+- [x] Adicionar testes de persistencia do snapshot de projeto.
+- [x] Fazer render de segmento tentar fallback CPU/libx264 quando encoder de hardware falhar.
+- [x] Adicionar teste automatico para fallback de segmento quando `h264_qsv` falha.
+- [x] Destravar botao `Legendar automatico` para revalidar provider ao clicar.
+- [x] Trocar estado de legenda automatica para erro claro em vez de loading/desabilitado permanente.
+- [x] Normalizar cada segmento no canvas final do projeto antes dos ajustes de escala/enquadramento.
+- [x] Enviar posicao X/Y do video principal no payload de exportacao web.
+- [x] Tornar tamanho de texto/legenda no export proporcional a altura do video final.
+- [x] Desligar normalizacao de audio por padrao no export web/backend.
+- [x] Propagar transicao aplicada no clipe da esquerda para a emenda seguinte no render.
+- [x] Renderizar texto/legenda do export por frame com Pillow para respeitar margem, quebra e line-height.
+- [x] Enviar audios importados/gravados como `audio_clips` com timing real de timeline no export web.
+- [x] Mixar audio clips por `atrim + adelay + amix` para preservar posicao na timeline.
+- [x] Desativar fades/zooms automaticos do pipeline legado quando o export vem da timeline manual.
+- [x] Ignorar `.claude/` para nao publicar artefatos locais de agente.
+- [x] Atualizar Vite para `6.4.3` e Vitest para `3.2.7`.
+- [x] Aplicar override de `minimatch` seguro para manter `npm audit` zerado no Node local.
+- [x] Rodar `npm audit --audit-level=high` sem vulnerabilidades.
+- [x] Rodar `npm run lint` sem erros e sem warnings.
+- [x] Rodar `npm test -- --run` com 61 testes web aprovados.
+- [x] Rodar `npm run build` sem alerta de chunk grande.
+- [x] Dividir bundle web em chunks `vendor` e `react-vendor`.
+- [x] Rodar `python -m pytest tests -q` com 275 testes Python aprovados.
+- [x] Rodar `python scripts\run_sprint_checks.py` com checks de sprint aprovados.
+- [x] Rodar `python -m pip check` sem dependencias Python quebradas.
+- [x] Rodar `git diff --check` sem erro de whitespace.
+- [x] Remover textos mojibake detectados na interface web antes do commit.
+- [ ] Validar manualmente trim pela esquerda/direita com waveform visivel e preview sem travar.
+- [ ] Validar manualmente exportacao de projeto aberto via gestor sem erro `Nenhum projeto carregado`.
+- [ ] Validar manualmente preview de transicao Fade/Wipe/Zoom entre dois clipes curtos.
+- [ ] Validar manualmente margem lateral de texto e legenda no preview.
+- [ ] Validar manualmente player de audio nos cards de importados/baixados/gravados.
+- [ ] Validar manualmente tema no editor e na tela de gestao de projetos apos reiniciar.
+- [ ] Validar manualmente gravacao de voz curta e waveform na timeline.
+- [ ] Validar manualmente preview de clipe em 0.5x, 2x e 4x.
+- [ ] Validar manualmente dividir clipe acelerado e reproduzir os dois lados do corte.
+- [ ] Validar manualmente ripple delete com dois clipes selecionados.

@@ -120,6 +120,11 @@ class Clip:
     chroma_color:   str    = "#00ff00"
     chroma_tolerance: float = 45.0
 
+    # Person removal / moving subject mask
+    person_remove_enabled: bool = False
+    person_remove_strength: float = 72.0
+    person_remove_feather: float = 10.0
+
     # ── transition INTO this clip ─────────────────────────────────────────────
     transition_in:   str   = "cut"   # "cut"|"dissolve"|"fade"|"wipe"|"slide"
     transition_in_s: float = 0.4

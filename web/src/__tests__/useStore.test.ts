@@ -1,15 +1,15 @@
-/** Tests for the Zustand store's core actions.
+﻿/** Tests for the Zustand store's core actions.
  *
  * Critical invariants covered here:
- *   - Audio↔video linkage is detected by source_path + matching time range
+ *   - Audio/video linkage is detected by source_path + matching time range
  *   - Deleting/splitting a linked clip cascades to its pair
  *   - appendVideo offsets new clips by the END of the last existing clip
  *     (not duration_s, which may include trailing silence)
  *   - rippleDelete closes the gap left by the deleted (and linked) clip
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useStore, getLinkedClipIds, aspectRatioToCss } from '../store/useStore'
-import { computeAnimationStyle } from '../components/Preview/Preview'
+import { useStore, getLinkedClipIds, aspectRatioToCss, buildPersistableProject } from '../store/useStore'
+import { clipInteriorStartTime, computeAnimationStyle, nextVisibleVideoClipAfter, resolvePreviewClipSource } from '../components/Preview/Preview'
 import { makeProject } from './fixtures'
 
 function resetStore() {
@@ -20,6 +20,7 @@ function resetStore() {
     past: [],
     future: [],
     isDirty: false,
+    rippleMode: false,
   })
 }
 
@@ -41,7 +42,7 @@ describe('getLinkedClipIds', () => {
     expect(getLinkedClipIds(videoId, project)).toEqual([videoId])
   })
 
-  it('respects unlinked flag — does not return paired clip if either is unlinked', () => {
+  it('respects unlinked flag - does not return paired clip if either is unlinked', () => {
     const project = makeProject([[0, 5]])
     project.video_track.clips[0].unlinked = true
     const videoId = project.video_track.clips[0].id
@@ -81,6 +82,24 @@ describe('deleteClip', () => {
     expect(after.audio_track.clips[0].start_s).toBe(10)
   })
 
+  it('ripple delete shifts source offsets with later clips', () => {
+    const project = makeProject([[0, 2], [2, 6]])
+    project.video_track.clips[0].source_offset_s = 0
+    project.audio_track.clips[0].source_offset_s = 0
+    project.video_track.clips[1].source_offset_s = 2
+    project.audio_track.clips[1].source_offset_s = 2
+    useStore.setState({ project, rippleMode: true, selectedClipId: null, selectedClipIds: [] })
+    const firstVideoId = project.video_track.clips[0].id
+
+    useStore.getState().deleteClip(firstVideoId)
+
+    const after = useStore.getState().project!
+    expect(after.video_track.clips[0].start_s).toBe(0)
+    expect(after.video_track.clips[0].end_s).toBe(4)
+    expect(after.video_track.clips[0].source_offset_s).toBe(0)
+    expect(after.audio_track.clips[0].source_offset_s).toBe(0)
+  })
+
   it('does NOT delete audio when the clip is unlinked', () => {
     const project = makeProject([[0, 5]])
     project.video_track.clips[0].unlinked = true
@@ -117,6 +136,39 @@ describe('deleteClip', () => {
     expect(after.video_track.clips).toHaveLength(1)
     expect(after.audio_track.clips).toHaveLength(1)
     expect(after.video_track.clips[0].start_s).toBe(20)
+  })
+
+  it('uses ripple delete when rippleMode is enabled', () => {
+    const project = makeProject([[0, 5], [10, 20], [25, 35]])
+    useStore.setState({ project, rippleMode: true, selectedClipId: null, selectedClipIds: [] })
+    const middleVideoId = project.video_track.clips[1].id
+
+    useStore.getState().deleteClip(middleVideoId)
+
+    const after = useStore.getState().project!
+    expect(after.video_track.clips).toHaveLength(2)
+    expect(after.audio_track.clips).toHaveLength(2)
+    expect(after.video_track.clips[1].start_s).toBe(15)
+    expect(after.video_track.clips[1].end_s).toBe(25)
+    expect(after.audio_track.clips[1].start_s).toBe(15)
+    expect(after.audio_track.clips[1].end_s).toBe(25)
+  })
+
+  it('uses ripple delete for multiple selected clips when rippleMode is enabled', () => {
+    const project = makeProject([[0, 5], [10, 15], [20, 25]])
+    const v1 = project.video_track.clips[0].id
+    const v2 = project.video_track.clips[1].id
+    useStore.setState({ project, rippleMode: true, selectedClipId: v2, selectedClipIds: [v1, v2] })
+
+    useStore.getState().deleteClip(v2)
+
+    const after = useStore.getState().project!
+    expect(after.video_track.clips).toHaveLength(1)
+    expect(after.audio_track.clips).toHaveLength(1)
+    expect(after.video_track.clips[0].start_s).toBe(10)
+    expect(after.video_track.clips[0].end_s).toBe(15)
+    expect(after.audio_track.clips[0].start_s).toBe(10)
+    expect(after.audio_track.clips[0].end_s).toBe(15)
   })
 })
 
@@ -159,6 +211,23 @@ describe('splitClip', () => {
     expect(after.audio_track.clips[0].end_s).toBe(4)
     expect(after.audio_track.clips[1].start_s).toBe(4)
   })
+
+  it('keeps source timing correct when splitting a sped-up linked clip', () => {
+    const project = makeProject([[0, 10]])
+    useStore.setState({ project, selectedClipId: null, selectedClipIds: [] })
+    const videoId = project.video_track.clips[0].id
+
+    useStore.getState().updateClip(videoId, { speed_factor: 2 })
+    useStore.getState().splitClip(videoId, 2.5)
+
+    const after = useStore.getState().project!
+    expect(after.video_track.clips).toHaveLength(2)
+    expect(after.audio_track.clips).toHaveLength(2)
+    expect(after.video_track.clips[0].end_s).toBe(2.5)
+    expect(after.video_track.clips[1].start_s).toBe(2.5)
+    expect(after.video_track.clips[1].source_offset_s).toBe(-2.5)
+    expect(after.audio_track.clips[1].source_offset_s).toBe(-2.5)
+  })
 })
 
 describe('updateClip', () => {
@@ -188,7 +257,7 @@ describe('updateClip', () => {
     useStore.setState({ project })
     const videoId = project.video_track.clips[0].id
 
-    // Simulate a drag of +3s: start_s 10→13, end_s 20→23, source_offset_s 5→8
+    // Simulate a drag of +3s: start_s 10->13, end_s 20->23, source_offset_s 5->8
     useStore.getState().updateClip(videoId, {
       start_s: 13, end_s: 23, source_offset_s: 8,
     })
@@ -198,6 +267,89 @@ describe('updateClip', () => {
     expect(after.audio_track.clips[0].source_offset_s).toBe(8)
     expect(after.audio_track.clips[0].start_s).toBe(13)
     expect(after.audio_track.clips[0].end_s).toBe(23)
+  })
+
+  it('speed changes resize the timeline clip and cascade to linked audio', () => {
+    const project = makeProject([[0, 10]])
+    useStore.setState({ project })
+    const videoId = project.video_track.clips[0].id
+
+    useStore.getState().updateClip(videoId, { speed_factor: 2 })
+
+    const after = useStore.getState().project!
+    expect(after.video_track.clips[0].speed_factor).toBe(2)
+    expect(after.video_track.clips[0].end_s).toBe(5)
+    expect(after.audio_track.clips[0].speed_factor).toBe(2)
+    expect(after.audio_track.clips[0].end_s).toBe(5)
+    expect(after.duration_s).toBe(5)
+  })
+
+  it('undo restores speed changes and resized linked clips', () => {
+    const project = makeProject([[0, 10]])
+    useStore.setState({ project })
+    const videoId = project.video_track.clips[0].id
+
+    useStore.getState().updateClip(videoId, { speed_factor: 2 })
+    useStore.getState().undo()
+
+    const after = useStore.getState().project!
+    expect(after.video_track.clips[0].speed_factor).toBe(1)
+    expect(after.video_track.clips[0].end_s).toBe(10)
+    expect(after.audio_track.clips[0].speed_factor).toBe(1)
+    expect(after.audio_track.clips[0].end_s).toBe(10)
+    expect(after.duration_s).toBe(10)
+  })
+
+  it('closeGapAfterClip joins the next clip while keeping earlier intentional gaps', () => {
+    const project = makeProject([[0, 5], [8, 10], [15, 20]])
+    useStore.setState({ project })
+    const middleVideoId = project.video_track.clips[1].id
+
+    useStore.getState().closeGapAfterClip(middleVideoId)
+
+    const after = useStore.getState().project!
+    expect(after.video_track.clips[0].start_s).toBe(0)
+    expect(after.video_track.clips[1].start_s).toBe(8)
+    expect(after.video_track.clips[2].start_s).toBe(10)
+    expect(after.video_track.clips[2].end_s).toBe(15)
+    expect(after.audio_track.clips[2].start_s).toBe(10)
+    expect(after.duration_s).toBe(15)
+  })
+
+  it('closeGapAfterClip preserves source timing of shifted clips', () => {
+    const project = makeProject([[0, 2], [6, 10]])
+    project.video_track.clips[0].source_offset_s = 0
+    project.audio_track.clips[0].source_offset_s = 0
+    project.video_track.clips[1].source_offset_s = 6
+    project.audio_track.clips[1].source_offset_s = 6
+    useStore.setState({ project })
+    const firstVideoId = project.video_track.clips[0].id
+
+    useStore.getState().closeGapAfterClip(firstVideoId)
+
+    const after = useStore.getState().project!
+    expect(after.video_track.clips[1].start_s).toBe(2)
+    expect(after.video_track.clips[1].end_s).toBe(6)
+    expect(after.video_track.clips[1].source_offset_s).toBe(2)
+    expect(after.audio_track.clips[1].source_offset_s).toBe(2)
+  })
+
+  it('persists blur controls on the targeted video clip', () => {
+    const project = makeProject([[0, 5]])
+    useStore.setState({ project })
+    const videoId = project.video_track.clips[0].id
+
+    useStore.getState().updateClip(videoId, {
+      blur_type: 'gaussian',
+      blur_intensity: 42,
+      blur_direction: 'horizontal',
+    })
+
+    const after = useStore.getState().project!
+    expect(after.video_track.clips[0].blur_type).toBe('gaussian')
+    expect(after.video_track.clips[0].blur_intensity).toBe(42)
+    expect(after.video_track.clips[0].blur_direction).toBe('horizontal')
+    expect(after.audio_track.clips[0].blur_type).toBeUndefined()
   })
 
   it('non-time patches (e.g. volume) only affect the targeted clip', () => {
@@ -212,6 +364,75 @@ describe('updateClip', () => {
     expect(after.video_track.clips[0].volume_pct).toBe(50)
     expect(after.audio_track.clips[0].volume_pct).toBe(100)   // unchanged
     expect(audioId).toBe(after.audio_track.clips[0].id)
+  })
+})
+
+describe('text caption actions', () => {
+  beforeEach(resetStore)
+
+  it('applyTextStyle applies patch only to text track clips', () => {
+    const project = makeProject([[0, 5]])
+    useStore.setState({ project })
+    useStore.getState().addTextClip(0, 2, 'Legenda 1')
+    useStore.getState().addTextClip(2, 4, 'Legenda 2')
+    useStore.getState().applyTextStyle({ text_color: '#ff0000', text_font: 'Impact' })
+
+    const after = useStore.getState().project!
+    expect(after.text_track.clips).toHaveLength(2)
+    expect(after.text_track.clips[0].text_color).toBe('#ff0000')
+    expect(after.text_track.clips[1].text_color).toBe('#ff0000')
+    // non-text clip remains untouched
+    expect(after.video_track.clips[0].text_color).toBeUndefined()
+  })
+
+  it('clearTextClips removes all captions and keeps video/audio tracks', () => {
+    const project = makeProject([[0, 5], [6, 10]])
+    useStore.setState({ project })
+    useStore.getState().addTextClip(0, 2, 'A')
+    useStore.getState().addTextClip(3, 4, 'B')
+
+    useStore.getState().clearTextClips()
+
+    const after = useStore.getState().project!
+    expect(after.text_track.clips).toHaveLength(0)
+    expect(after.video_track.clips).toHaveLength(2)
+    expect(after.audio_track.clips).toHaveLength(2)
+  })
+})
+
+describe('preview source resolution', () => {
+  it('uses project.videoPath for active main clips with empty source_path', () => {
+    expect(resolvePreviewClipSource({ source_path: '' }, 'C:/midia/main.mp4')).toBe('C:/midia/main.mp4')
+  })
+
+  it('does not mount the project video when no clip is active', () => {
+    expect(resolvePreviewClipSource(null, 'C:/midia/main.mp4')).toBeNull()
+  })
+
+  it('keeps explicit per-clip source for appended videos', () => {
+    expect(resolvePreviewClipSource({ source_path: 'C:/midia/broll.mp4' }, 'C:/midia/main.mp4')).toBe('C:/midia/broll.mp4')
+  })
+
+  it('chooses the next video at a boundary and ignores audio clips there', () => {
+    const project = makeProject([[0, 1], [1, 2]], 'C:/midia/a.mp4')
+    project.video_track.clips[1].id = 'v2'
+    project.video_track.clips[1].source_path = 'C:/midia/b.mp4'
+    project.audio_track.clips[1].id = 'a2'
+    project.audio_track.clips[1].source_path = 'C:/midia/audio.mp3'
+    project.audio_track.clips[1].clip_type = 'music'
+
+    expect(nextVisibleVideoClipAfter(project, {}, project.video_track.clips[0])?.id).toBe('v2')
+  })
+
+  it('does not skip intentional empty gaps between video clips', () => {
+    const project = makeProject([[0, 1], [3, 4]], 'C:/midia/a.mp4')
+
+    expect(nextVisibleVideoClipAfter(project, {}, project.video_track.clips[0])).toBeNull()
+  })
+
+  it('nudges video transitions inside the next clip instead of exact boundary', () => {
+    expect(clipInteriorStartTime({ start_s: 1, end_s: 2 })).toBeCloseTo(1.035)
+    expect(clipInteriorStartTime({ start_s: 1, end_s: 1.02 })).toBeCloseTo(1.019)
   })
 })
 
@@ -314,12 +535,12 @@ describe('animations (Phase 6.2)', () => {
 
   it('exit animation activates near the end of the clip', () => {
     const clip = { start_s: 0, end_s: 5, animation_out: 'fade', animation_out_duration_s: 0.5 }
-    // At t=4.5 we're 0.5s before end → IN the exit window
+    // At t=4.5 we're 0.5s before end -> IN the exit window
     expect(computeAnimationStyle(4.8, clip)).not.toBeNull()
   })
 
   it('entry animation has priority over exit when windows overlap', () => {
-    // Tiny clip (0.5s) with both animations of 0.5s — entry should win at t=0
+    // Tiny clip (0.5s) with both animations of 0.5s - entry should win at t=0
     const clip = {
       start_s: 0, end_s: 0.5,
       animation_in:  'fade', animation_in_duration_s:  0.5,
@@ -364,6 +585,27 @@ describe('setProject (load resilience)', () => {
     } as any)
     expect(useStore.getState().projectName).toBe('Meu Projeto')
   })
+
+  it('buildPersistableProject stores project name and quick-save path', () => {
+    const project = makeProject([[0, 5]])
+    const snapshot = buildPersistableProject(project, 'Projeto Shorts', 'C:/Projetos/shorts.ccproj')
+
+    expect(snapshot._projectName).toBe('Projeto Shorts')
+    expect(snapshot._projectPath).toBe('C:/Projetos/shorts.ccproj')
+    expect(snapshot.project_path).toBe('C:/Projetos/shorts.ccproj')
+    expect(snapshot.video_track.clips).toHaveLength(1)
+  })
+
+  it('buildPersistableProject also works for blank projects without videoPath', () => {
+    const project = makeProject([])
+    project.videoPath = null
+
+    const snapshot = buildPersistableProject(project, null, 'C:/Projetos/sem-video.ccproj')
+
+    expect(snapshot._projectName).toBe('sem-video')
+    expect(snapshot._projectPath).toBe('C:/Projetos/sem-video.ccproj')
+    expect(snapshot.loaded).toBe(true)
+  })
 })
 
 describe('multi-track (Phase 2b)', () => {
@@ -376,7 +618,7 @@ describe('multi-track (Phase 2b)', () => {
     const after = useStore.getState().project!
     expect(after.extra_video_tracks).toHaveLength(1)
     expect(after.extra_video_tracks![0].clips).toEqual([])
-    expect(after.extra_video_tracks![0].name).toMatch(/Vídeo/)
+    expect(after.extra_video_tracks![0].name).toMatch(/Video/)
   })
 
   it('addExtraTrack appends an empty audio track', () => {
@@ -385,7 +627,7 @@ describe('multi-track (Phase 2b)', () => {
     useStore.getState().addExtraTrack('audio')
     const after = useStore.getState().project!
     expect(after.extra_audio_tracks).toHaveLength(1)
-    expect(after.extra_audio_tracks![0].name).toMatch(/Áudio/)
+    expect(after.extra_audio_tracks![0].name).toMatch(/Audio/)
   })
 
   it('removeExtraTrack removes by index', () => {
@@ -464,8 +706,8 @@ describe('appendVideo', () => {
     expect(after.extra_video_tracks ?? []).toHaveLength(0)
   })
 
-  it('second video (main track has clips) creates a NEW parallel extra track', () => {
-    const project = makeProject([[0, 10]])   // main track occupied
+  it('second video appends to the main video/audio tracks in sequence', () => {
+    const project = makeProject([[0, 10]])
     useStore.setState({ project })
 
     useStore.getState().appendVideo(
@@ -474,19 +716,18 @@ describe('appendVideo', () => {
     )
 
     const after = useStore.getState().project!
-    // Main track unchanged
-    expect(after.video_track.clips).toHaveLength(1)
+    expect(after.video_track.clips).toHaveLength(2)
     expect(after.video_track.clips[0].start_s).toBe(0)
-    // New extra video + audio tracks created for the second import
-    expect(after.extra_video_tracks).toHaveLength(1)
-    expect(after.extra_video_tracks![0].clips).toHaveLength(1)
-    expect(after.extra_video_tracks![0].clips[0].start_s).toBe(0)
-    expect(after.extra_video_tracks![0].clips[0].source_path).toBe('/tmp/v2.mp4')
-    expect(after.extra_audio_tracks).toHaveLength(1)
-    expect(after.extra_audio_tracks![0].clips).toHaveLength(1)
+    expect(after.video_track.clips[1].start_s).toBe(10)
+    expect(after.video_track.clips[1].end_s).toBe(18)
+    expect(after.video_track.clips[1].source_path).toBe('/tmp/v2.mp4')
+    expect(after.audio_track.clips).toHaveLength(2)
+    expect(after.audio_track.clips[1].start_s).toBe(10)
+    expect(after.extra_video_tracks ?? []).toHaveLength(0)
+    expect(after.extra_audio_tracks ?? []).toHaveLength(0)
   })
 
-  it('third video creates a second extra track (each import gets its own row)', () => {
+  it('third video continues the main-track sequence', () => {
     const project = makeProject([[0, 10]])
     useStore.setState({ project })
 
@@ -500,12 +741,16 @@ describe('appendVideo', () => {
     )
 
     const after = useStore.getState().project!
-    expect(after.extra_video_tracks).toHaveLength(2)
-    expect(after.extra_audio_tracks).toHaveLength(2)
-    expect(after.extra_video_tracks![1].clips[0].source_path).toBe('/tmp/v3.mp4')
+    expect(after.video_track.clips).toHaveLength(3)
+    expect(after.audio_track.clips).toHaveLength(3)
+    expect(after.video_track.clips[1].start_s).toBe(10)
+    expect(after.video_track.clips[2].start_s).toBe(15)
+    expect(after.video_track.clips[2].source_path).toBe('/tmp/v3.mp4')
+    expect(after.extra_video_tracks ?? []).toHaveLength(0)
+    expect(after.extra_audio_tracks ?? []).toHaveLength(0)
   })
 
-  it('duration_s expands to include parallel extra-track clips that are longer', () => {
+  it('duration_s expands to include appended clips in sequence', () => {
     const project = makeProject([[0, 5]])
     useStore.setState({ project })
 
@@ -514,7 +759,21 @@ describe('appendVideo', () => {
       [],
     )
 
-    // Extra clip ends at 12s — longer than main 5s
-    expect(useStore.getState().project!.duration_s).toBe(12)
+    expect(useStore.getState().project!.duration_s).toBe(17)
+  })
+
+  it('standalone imported audio creates its own extra audio track at the playhead', () => {
+    const project = makeProject([[0, 10]])
+    useStore.setState({ project, previewTime: 3 })
+
+    useStore.getState().importAudio('/tmp/music.mp3', 4, [0.1, 0.4])
+
+    const after = useStore.getState().project!
+    expect(after.audio_track.clips).toHaveLength(1)
+    expect(after.extra_audio_tracks).toHaveLength(1)
+    expect(after.extra_audio_tracks![0].clips).toHaveLength(1)
+    expect(after.extra_audio_tracks![0].clips[0].start_s).toBe(3)
+    expect(after.extra_audio_tracks![0].clips[0].end_s).toBe(7)
+    expect(useStore.getState().selectedClipId).toBe(after.extra_audio_tracks![0].clips[0].id)
   })
 })

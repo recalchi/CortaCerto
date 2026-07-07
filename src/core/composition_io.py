@@ -192,6 +192,9 @@ def _tc_to_clip(tc: TimelineClip, clip_type: str) -> Clip:
         chroma_enabled=bool(tc.chroma_enabled),
         chroma_color=str(tc.chroma_color),
         chroma_tolerance=float(tc.chroma_tolerance),
+        person_remove_enabled=bool(getattr(tc, "person_remove_enabled", False)),
+        person_remove_strength=float(getattr(tc, "person_remove_strength", 72.0)),
+        person_remove_feather=float(getattr(tc, "person_remove_feather", 10.0)),
         transition_in=str(tc.transition or "cut").lower().replace("corte", "cut"),
         transition_in_s=float(tc.transition_duration_s),
     )
@@ -217,6 +220,9 @@ def _clip_to_tc(cl: Clip) -> TimelineClip:
         chroma_enabled=cl.chroma_enabled,
         chroma_color=cl.chroma_color,
         chroma_tolerance=cl.chroma_tolerance,
+        person_remove_enabled=cl.person_remove_enabled,
+        person_remove_strength=cl.person_remove_strength,
+        person_remove_feather=cl.person_remove_feather,
     )
     # Restore text fields if present
     if cl.clip_type == "text":
@@ -326,6 +332,9 @@ def _clip_to_dict(c: Clip) -> dict[str, Any]:
         "chroma_enabled": c.chroma_enabled,
         "chroma_color": c.chroma_color,
         "chroma_tolerance": c.chroma_tolerance,
+        "person_remove_enabled": c.person_remove_enabled,
+        "person_remove_strength": c.person_remove_strength,
+        "person_remove_feather": c.person_remove_feather,
         "transition_in": c.transition_in,
         "transition_in_s": c.transition_in_s,
         "keyframes": {
@@ -371,6 +380,9 @@ def _clip_from_dict(d: dict[str, Any]) -> Clip:
         chroma_enabled=bool(d.get("chroma_enabled")),
         chroma_color=str(d.get("chroma_color") or "#00ff00"),
         chroma_tolerance=float(d.get("chroma_tolerance", 45.0)),
+        person_remove_enabled=bool(d.get("person_remove_enabled")),
+        person_remove_strength=float(d.get("person_remove_strength", 72.0)),
+        person_remove_feather=float(d.get("person_remove_feather", 10.0)),
         transition_in=str(d.get("transition_in") or "cut"),
         transition_in_s=float(d.get("transition_in_s", 0.4)),
         keyframes=kfs,

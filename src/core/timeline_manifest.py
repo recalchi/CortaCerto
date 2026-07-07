@@ -167,9 +167,28 @@ def _clip_effects(clip: TimelineClip) -> list[dict[str, Any]]:
                 "tolerance": float(clip.chroma_tolerance),
             }
         )
+    if bool(getattr(clip, "person_remove_enabled", False)):
+        effects.append(
+            {
+                "type": "person_removal",
+                "strength": float(getattr(clip, "person_remove_strength", 72.0)),
+                "feather": float(getattr(clip, "person_remove_feather", 10.0)),
+            }
+        )
     opacity_pct = float(getattr(clip, "opacity_pct", 100.0))
     if abs(opacity_pct - 100.0) > 0.01:
         effects.append({"type": "opacity", "opacity_pct": opacity_pct})
+    blur_type = str(getattr(clip, "blur_type", "none") or "none")
+    blur_intensity = float(getattr(clip, "blur_intensity", 0.0) or 0.0)
+    if blur_type != "none" and blur_intensity > 0.01:
+        effects.append(
+            {
+                "type": "blur",
+                "mode": blur_type,
+                "intensity": blur_intensity,
+                "direction": str(getattr(clip, "blur_direction", "both") or "both"),
+            }
+        )
     if clip.transition and clip.transition != "Corte":
         effects.append({"type": "transition", "name": clip.transition})
     return effects

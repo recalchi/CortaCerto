@@ -21,6 +21,19 @@ class FFmpegEnvTests(unittest.TestCase):
 
             self.assertEqual(_find_in_winget_packages(Path(tmp)), str(ffmpeg_bin))
 
+    def test_find_in_winget_packages_accepts_uppercase_exe_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ffmpeg_bin = (
+                Path(tmp)
+                / "Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe"
+                / "ffmpeg-8.1.1-full_build"
+                / "bin"
+            )
+            ffmpeg_bin.mkdir(parents=True)
+            (ffmpeg_bin / "ffmpeg.EXE").write_bytes(b"")
+
+            self.assertEqual(_find_in_winget_packages(Path(tmp)), str(ffmpeg_bin))
+
     def test_winget_package_roots_include_user_and_machine_locations_once(self) -> None:
         env = {
             "LOCALAPPDATA": "C:/Users/test/AppData/Local",

@@ -69,6 +69,13 @@ class TimelineClip:
     brightness: float = 0.0   # -100..+100 additive; 0 = no change
     contrast:   float = 0.0   # -100..+100 multiplicative around 128; 0 = no change
     saturation: float = 0.0   # -100..+100; 0 = no change, -100 = greyscale
+    blur_type: str = "none"       # none | gaussian | box | pixelate
+    blur_intensity: float = 0.0   # 0..100
+    blur_direction: str = "both"  # both | horizontal | vertical
+    # Person removal / moving subject mask
+    person_remove_enabled: bool = False
+    person_remove_strength: float = 72.0
+    person_remove_feather: float = 10.0
 
 
 @dataclass
