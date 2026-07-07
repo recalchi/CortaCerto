@@ -2,7 +2,7 @@
 # Install with: pip install -r requirements-ml.txt
 #
 # MediaPipe: real-time selfie segmentation (replaces GrabCut)
-mediapipe==0.10.14
+mediapipe==0.10.35
 
 # YOLOv8: person detection + pose estimation
 ultralytics>=8.2.0
